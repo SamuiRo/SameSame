@@ -1,0 +1,28 @@
+{
+  "folders": ["D:/Anime/A", "D:/Anime/B"],
+  "reports": {
+    "html": "reports/samesame.html",
+    "json": "reports/samesame.json"
+  },
+  "cache": {
+    "path": ".cache/samesame.sqlite3"
+  },
+  "matching": {
+    "video": 90,
+    "folder": 50,
+    "name": 92
+  },
+  "names": {
+    "name_provider": "lmstudio",
+    "lmstudio_url": "http://localhost:1234/v1",
+    "lmstudio_model": "local-model"
+  },
+  "video": {
+    "skip": false,
+    "ffmpeg": "ffmpeg",
+    "ffprobe": "ffprobe"
+  },
+  "extensions": [".mkv", ".mp4", ".avi", ".mov", ".ts", ".webm"],
+  "workers": 4,
+  "log_level": "INFO"
+}
