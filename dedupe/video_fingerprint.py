@@ -23,6 +23,7 @@ PIL_AVAILABLE = Image is not None
 
 LOGGER = logging.getLogger(__name__)
 SAMPLE_POINTS = (0.10, 0.30, 0.50, 0.70, 0.90)
+FINGERPRINT_BLOCK_BITS = 8
 
 
 def resolve_binary(name_or_path: str) -> str | None:
@@ -130,6 +131,32 @@ def hamming_similarity(left: list[int], right: list[int], bits_per_hash: int = 6
     return max(0.0, 100.0 * (1.0 - distance / total_bits))
 
 
+def _candidate_pairs(
+    candidates: list[FileRecord],
+    max_candidates_per_bucket: int,
+    block_bits: int = FINGERPRINT_BLOCK_BITS,
+) -> set[tuple[int, int]]:
+    if len(candidates) <= max_candidates_per_bucket:
+        return {(left, right) for left in range(len(candidates)) for right in range(left + 1, len(candidates))}
+
+    blocks: dict[tuple[int, int], list[int]] = defaultdict(list)
+    shift = max(0, 64 - block_bits)
+    for index, record in enumerate(candidates):
+        if not record.fingerprint:
+            continue
+        for sample_index, hash_value in enumerate(record.fingerprint):
+            blocks[(sample_index, hash_value >> shift)].append(index)
+
+    pairs: set[tuple[int, int]] = set()
+    for indexes in blocks.values():
+        if len(indexes) < 2:
+            continue
+        for left_pos, left in enumerate(indexes):
+            for right in indexes[left_pos + 1 :]:
+                pairs.add((min(left, right), max(left, right)))
+    return pairs
+
+
 def _ensure_duration(record: FileRecord, ffprobe: str) -> tuple[str, float | None]:
     if record.duration is not None:
         return record.path_key, record.duration
@@ -152,6 +179,7 @@ def find_video_matches(
     ffprobe: str,
     workers: int = 2,
     duration_tolerance: float = 2.0,
+    max_candidates_per_bucket: int = 250,
 ) -> list[VideoMatch]:
     missing_duration = [record for record in records if record.duration is None]
     if missing_duration:
@@ -189,19 +217,20 @@ def find_video_matches(
         candidates: list[FileRecord] = []
         for nearby in range(int(key - duration_tolerance), int(key + duration_tolerance) + 1):
             candidates.extend(buckets.get(nearby, []))
-        for index, left in enumerate(candidates):
-            for right in candidates[index + 1 :]:
-                pair = tuple(sorted((left.path_key, right.path_key)))
-                if pair in seen or left.full_hash and left.full_hash == right.full_hash:
-                    continue
-                seen.add(pair)
-                if left.duration is None or right.duration is None or left.fingerprint is None or right.fingerprint is None:
-                    continue
-                delta = abs(left.duration - right.duration)
-                if delta > duration_tolerance:
-                    continue
-                similarity = hamming_similarity(left.fingerprint, right.fingerprint)
-                if threshold <= similarity < 100.0:
-                    matches.append(VideoMatch(pair[0], pair[1], round(similarity, 2), round(delta, 3)))
+        for left_index, right_index in _candidate_pairs(candidates, max_candidates_per_bucket):
+            left = candidates[left_index]
+            right = candidates[right_index]
+            pair = tuple(sorted((left.path_key, right.path_key)))
+            if pair in seen or left.full_hash and left.full_hash == right.full_hash:
+                continue
+            seen.add(pair)
+            if left.duration is None or right.duration is None or left.fingerprint is None or right.fingerprint is None:
+                continue
+            delta = abs(left.duration - right.duration)
+            if delta > duration_tolerance:
+                continue
+            similarity = hamming_similarity(left.fingerprint, right.fingerprint)
+            if threshold <= similarity < 100.0:
+                matches.append(VideoMatch(pair[0], pair[1], round(similarity, 2), round(delta, 3)))
     matches.sort(key=lambda item: (-item.similarity, item.left, item.right))
     return matches

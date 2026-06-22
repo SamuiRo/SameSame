@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import json
+import hashlib
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -37,6 +38,7 @@ MODEL_NAME = "claude-haiku-4-5"
 LMSTUDIO_URL = "http://localhost:1234/v1"
 LMSTUDIO_MODEL = "local-model"
 BATCH_SIZE = 150
+FALLBACK_MODEL = "heuristic-v1"
 
 SYSTEM_PROMPT = """Ти отримуєш список назв медіафайлів (аніме, серіали, фільми) у вигляді
 масиву {id, raw}. У назвах може бути:
@@ -58,6 +60,8 @@ SYSTEM_PROMPT = """Ти отримуєш список назв медіафай�
 Не вигадуй те, чого немає в рядку. Якщо назва вже чиста — просто прибери
 підкреслення/крапки і зайві пробіли.
 """
+
+PROMPT_HASH = hashlib.blake2b(SYSTEM_PROMPT.encode("utf-8"), digest_size=12).hexdigest()
 
 TOOL_SCHEMA = {
     "name": "normalize_titles",
@@ -286,17 +290,9 @@ def normalize_names(
     lmstudio_url: str = LMSTUDIO_URL,
     lmstudio_model: str = LMSTUDIO_MODEL,
     workers: int = 3,
+    refresh_names: bool = False,
 ) -> dict[str, NormalizedName]:
     raw_names = sorted({record.raw_name for record in records})
-    normalized: dict[str, NormalizedName] = {}
-    missing: list[str] = []
-    for raw_name in raw_names:
-        cached = cache.get_name(raw_name)
-        if cached:
-            normalized[raw_name] = cached
-        else:
-            missing.append(raw_name)
-
     provider = name_provider.casefold()
     if provider == "none":
         selected_provider = "fallback"
@@ -312,9 +308,33 @@ def normalize_names(
         LOGGER.warning("Unknown name provider '%s'; using local heuristic name normalization.", name_provider)
         selected_provider = "fallback"
 
+    provider_model = {
+        "anthropic": MODEL_NAME,
+        "lmstudio": lmstudio_model,
+        "fallback": FALLBACK_MODEL,
+    }[selected_provider]
+
+    if refresh_names and raw_names:
+        cache.clear_names(raw_names)
+
+    normalized: dict[str, NormalizedName] = {}
+    missing: list[str] = []
+    for raw_name in raw_names:
+        cached = cache.get_name(
+            raw_name,
+            provider=selected_provider,
+            model=provider_model,
+            prompt_hash=PROMPT_HASH,
+        )
+        if cached:
+            normalized[raw_name] = cached
+        else:
+            missing.append(raw_name)
+
     if missing and selected_provider in {"anthropic", "lmstudio"}:
         batches = list(_chunks(missing, BATCH_SIZE))
-        with ThreadPoolExecutor(max_workers=workers) as executor:
+        max_workers = 1 if selected_provider == "lmstudio" else workers
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             if selected_provider == "anthropic":
                 futures = {executor.submit(_normalize_batch_with_claude, batch): batch for batch in batches}
             else:
@@ -326,14 +346,18 @@ def normalize_names(
                 batch = futures[future]
                 try:
                     batch_results = future.result()
+                    cache_provider = selected_provider
+                    cache_model = provider_model
                 except Exception as exc:  # noqa: BLE001 - keep the scan usable if an API batch fails.
                     LOGGER.warning("%s normalization failed for one batch: %s", selected_provider, exc)
                     batch_results = [fallback_normalize(raw) for raw in batch]
-                cache.upsert_names(batch_results)
+                    cache_provider = "fallback"
+                    cache_model = FALLBACK_MODEL
+                cache.upsert_names(batch_results, provider=cache_provider, model=cache_model, prompt_hash=PROMPT_HASH)
                 normalized.update({item.raw_name: item for item in batch_results})
     elif missing:
         fallback_results = [fallback_normalize(raw) for raw in tqdm(missing, desc="Name normalization", unit="name")]
-        cache.upsert_names(fallback_results)
+        cache.upsert_names(fallback_results, provider=selected_provider, model=provider_model, prompt_hash=PROMPT_HASH)
         normalized.update({item.raw_name: item for item in fallback_results})
 
     return normalized

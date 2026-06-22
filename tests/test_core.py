@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
-import json
 from pathlib import Path
 
 from dedupe.cache import Cache
 from dedupe.cli import parse_args
 from dedupe.exact_hash import find_exact_duplicates
 from dedupe.folder_compare import build_cluster_assignments, compare_folders
-from dedupe.models import FileRecord
-from dedupe.name_normalizer import _coerce_normalized_results, _extract_json_object, fallback_normalize
+from dedupe.models import FileRecord, NormalizedName
+from dedupe.name_normalizer import PROMPT_HASH, _coerce_normalized_results, _extract_json_object, fallback_normalize
 
 
 class CoreTests(unittest.TestCase):
@@ -76,6 +76,27 @@ class CoreTests(unittest.TestCase):
         self.assertFalse(config.skip_video)
         self.assertEqual(config.workers, 6)
 
+    def test_inspect_cache_does_not_require_folders(self) -> None:
+        config = parse_args(["--inspect-cache", "--cache", "example.sqlite3"])
+        self.assertTrue(config.inspect_cache)
+        self.assertEqual(config.folders, [])
+
+    def test_name_cache_is_provider_model_prompt_aware(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with Cache(Path(tmp) / "cache.sqlite3") as cache:
+                cache.upsert_name(
+                    NormalizedName(raw_name="Show.Name.01", core_title="Show Name", source="lmstudio"),
+                    provider="lmstudio",
+                    model="local-model",
+                    prompt_hash=PROMPT_HASH,
+                )
+                self.assertIsNotNone(
+                    cache.get_name("Show.Name.01", provider="lmstudio", model="local-model", prompt_hash=PROMPT_HASH)
+                )
+                self.assertIsNone(
+                    cache.get_name("Show.Name.01", provider="anthropic", model="claude-haiku-4-5", prompt_hash=PROMPT_HASH)
+                )
+
     def test_exact_duplicates_and_folder_overlap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -100,12 +121,15 @@ class CoreTests(unittest.TestCase):
                 exact = find_exact_duplicates(records, cache, workers=1)
                 self.assertEqual(len(exact), 1)
                 self.assertEqual(len(exact[0].paths), 2)
+                self.assertTrue(all(record.full_hash_algo for record in records if record.size == len(b"same content")))
 
                 normalized = {record.raw_name: fallback_normalize(record.raw_name) for record in records}
                 assignments = build_cluster_assignments(records, exact, [], normalized)
                 folder_pairs = compare_folders(records, assignments, threshold=50)
                 self.assertEqual(len(folder_pairs), 1)
-                self.assertEqual(folder_pairs[0].similarity, 50.0)
+                self.assertEqual(folder_pairs[0].similarity, 100.0)
+                self.assertEqual(folder_pairs[0].content_similarity, 100.0)
+                self.assertEqual(folder_pairs[0].name_assisted_similarity, 50.0)
 
 
 if __name__ == "__main__":

@@ -33,6 +33,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "lmstudio_model": None,
     "workers": 4,
     "skip_video": False,
+    "refresh_hashes": False,
+    "refresh_video": False,
+    "refresh_names": False,
+    "max_video_candidates_per_bucket": 250,
+    "inspect_cache": False,
     "ffmpeg": "ffmpeg",
     "ffprobe": "ffprobe",
     "log_level": "INFO",
@@ -54,6 +59,11 @@ class Config:
     lmstudio_model: str
     workers: int
     skip_video: bool
+    refresh_hashes: bool
+    refresh_video: bool
+    refresh_names: bool
+    max_video_candidates_per_bucket: int
+    inspect_cache: bool
     ffmpeg: str
     ffprobe: str
     log_level: str
@@ -172,6 +182,16 @@ def parse_args(argv: list[str] | None = None) -> Config:
     parser.add_argument("--no-ai-names", action="store_true", help="Use local heuristic title normalization only.")
     parser.add_argument("--skip-video", dest="skip_video", action="store_true", default=None, help="Skip ffmpeg/ffprobe video fingerprinting.")
     parser.add_argument("--no-skip-video", dest="skip_video", action="store_false", help="Enable ffmpeg/ffprobe video fingerprinting.")
+    parser.add_argument("--refresh-hashes", action="store_true", default=None, help="Recompute partial and full file hashes.")
+    parser.add_argument("--refresh-video", action="store_true", default=None, help="Recompute cached video durations and fingerprints.")
+    parser.add_argument("--refresh-names", action="store_true", default=None, help="Recompute cached title normalization results.")
+    parser.add_argument(
+        "--max-video-candidates-per-bucket",
+        type=int,
+        default=None,
+        help="Use fingerprint blocking when a duration bucket has more candidates than this.",
+    )
+    parser.add_argument("--inspect-cache", action="store_true", default=None, help="Print cache statistics as JSON and exit.")
     parser.add_argument("--ffmpeg", default=None, help="ffmpeg executable path/name.")
     parser.add_argument("--ffprobe", default=None, help="ffprobe executable path/name.")
     parser.add_argument("--log-level", default=None, choices=["DEBUG", "INFO", "WARNING", "ERROR"])
@@ -180,11 +200,11 @@ def parse_args(argv: list[str] | None = None) -> Config:
     file_config: dict[str, Any] = _load_config_file(args.config) if args.config else {}
     merged = _merge_config(file_config, _load_cli_overrides(args))
     folders = merged.get("folders")
-    if not folders:
+    if not folders and not merged.get("inspect_cache"):
         raise SystemExit("At least one folder is required. Use --folders or a config file.")
 
     return Config(
-        folders=[Path(folder) for folder in folders],
+        folders=[Path(folder) for folder in folders or []],
         output=Path(str(merged["output"])),
         json_output=Path(str(merged["json_output"])),
         cache=Path(str(merged["cache"])),
@@ -197,6 +217,11 @@ def parse_args(argv: list[str] | None = None) -> Config:
         lmstudio_model=str(merged["lmstudio_model"]),
         workers=max(1, int(merged["workers"])),
         skip_video=bool(merged["skip_video"]),
+        refresh_hashes=bool(merged["refresh_hashes"]),
+        refresh_video=bool(merged["refresh_video"]),
+        refresh_names=bool(merged["refresh_names"]),
+        max_video_candidates_per_bucket=max(2, int(merged["max_video_candidates_per_bucket"])),
+        inspect_cache=bool(merged["inspect_cache"]),
         ffmpeg=str(merged["ffmpeg"]),
         ffprobe=str(merged["ffprobe"]),
         log_level=str(merged["log_level"]),
@@ -209,6 +234,9 @@ def run(config: Config) -> DedupeReport:
         records = scan_folders(config.folders, config.extensions, cache)
         LOGGER.info("Scanned %d media files", len(records))
 
+        if config.refresh_hashes:
+            LOGGER.info("Refreshing cached hashes for %d files", len(records))
+            cache.clear_hashes(records)
         exact_groups = find_exact_duplicates(records, cache, workers=config.workers)
         LOGGER.info("Found %d exact duplicate groups", len(exact_groups))
 
@@ -227,6 +255,9 @@ def run(config: Config) -> DedupeReport:
                 LOGGER.warning(message)
                 warnings.append(message)
             else:
+                if config.refresh_video:
+                    LOGGER.info("Refreshing cached video metadata for %d files", len(records))
+                    cache.clear_video(records)
                 video_matches = find_video_matches(
                     records,
                     cache,
@@ -234,6 +265,7 @@ def run(config: Config) -> DedupeReport:
                     ffmpeg=ffmpeg,
                     ffprobe=ffprobe,
                     workers=min(config.workers, 4),
+                    max_candidates_per_bucket=config.max_video_candidates_per_bucket,
                 )
         LOGGER.info("Found %d video matches", len(video_matches))
 
@@ -244,6 +276,7 @@ def run(config: Config) -> DedupeReport:
             lmstudio_url=config.lmstudio_url,
             lmstudio_model=config.lmstudio_model,
             workers=min(config.workers, 5),
+            refresh_names=config.refresh_names,
         )
         exact_paths = {path for group in exact_groups for path in group.paths}
         video_paths = {match.left for match in video_matches} | {match.right for match in video_matches}
@@ -276,6 +309,10 @@ def main(argv: list[str] | None = None) -> int:
         level=getattr(logging, config.log_level),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    if config.inspect_cache:
+        with Cache(config.cache) as cache:
+            print(json.dumps(cache.stats(), ensure_ascii=False, indent=2))
+        return 0
     try:
         report = run(config)
     except KeyboardInterrupt:

@@ -65,6 +65,20 @@ The output contains:
 - `report.json`: structured automation-friendly report.
 - `.dedupe_cache.sqlite3`: reusable cache for hashes, durations, fingerprints, and names.
 
+Inspect cache state:
+
+```powershell
+samesame --inspect-cache --cache .dedupe_cache.sqlite3
+```
+
+Refresh one cache layer without deleting the database:
+
+```powershell
+samesame --config samesame.json --refresh-hashes
+samesame --config samesame.json --refresh-video
+samesame --config samesame.json --refresh-names
+```
+
 ## Anthropic Title Normalization
 
 ```powershell
@@ -113,10 +127,10 @@ they have identical full hashes.
 Similar video matches are strong candidates for manual review. They may differ
 by container, bitrate, resolution, or encoding settings.
 
-Folder pairs show how much two scanned roots overlap by canonical file cluster.
-The percent is Jaccard similarity: intersection divided by union.
+Folder pairs show two scores. `content_similarity` uses only exact/video-backed
+clusters. `name_assisted_similarity` also includes name-based clusters. Both are
+Jaccard similarity: intersection divided by union.
 
 Name hints are intentionally low confidence. They are useful for sorting and
 review, but should not be treated as deletion proof unless confirmed by exact
 hashes or video fingerprints.
-

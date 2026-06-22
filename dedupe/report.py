@@ -65,7 +65,7 @@ def write_html_report(report: DedupeReport, path: Path) -> None:
         folder_items.append(
             f"""
             <details>
-              <summary>{pair.similarity:.2f}% · <code>{html.escape(pair.left)}</code> ↔ <code>{html.escape(pair.right)}</code></summary>
+              <summary>content {pair.content_similarity:.2f}% · name-assisted {pair.name_assisted_similarity:.2f}% · <code>{html.escape(pair.left)}</code> ↔ <code>{html.escape(pair.right)}</code></summary>
               <h3>Matches</h3>{matched or '<p class="muted">None</p>'}
               <div class="columns">
                 <div><h3>Left only</h3>{_path_list(pair.left_only)}</div>
@@ -188,7 +188,7 @@ def write_html_report(report: DedupeReport, path: Path) -> None:
 <body>
   <header>
     <h1>Duplicate Media Report</h1>
-    <p class="muted">Scanned {report.scanned_files} files. Exact and video matches are content-backed; name hints are low confidence.</p>
+    <p class="muted">Scanned {report.scanned_files} files. Exact and video matches are content-backed; name hints and name-assisted folder scores are lower confidence.</p>
     <div class="stats">
       <div class="stat"><strong>{len(report.exact_duplicates)}</strong>Exact groups</div>
       <div class="stat"><strong>{len(report.video_matches)}</strong>Video matches</div>
@@ -212,4 +212,3 @@ def write_html_report(report: DedupeReport, path: Path) -> None:
 </html>
 """
     path.write_text(document, encoding="utf-8")
-

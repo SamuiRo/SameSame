@@ -13,7 +13,9 @@ class FileRecord:
     mtime: float
     raw_name: str
     partial_hash: str | None = None
+    partial_hash_algo: str | None = None
     full_hash: str | None = None
+    full_hash_algo: str | None = None
     duration: float | None = None
     fingerprint: list[int] | None = None
 
@@ -79,6 +81,8 @@ class FolderPair:
     left: str
     right: str
     similarity: float
+    content_similarity: float
+    name_assisted_similarity: float
     matched: list[dict[str, Any]]
     left_only: list[str]
     right_only: list[str]
@@ -92,4 +96,3 @@ class DedupeReport:
     folder_pairs: list[FolderPair]
     name_hints: list[NameHint]
     warnings: list[str] = field(default_factory=list)
-

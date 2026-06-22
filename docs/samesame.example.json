@@ -24,5 +24,9 @@
   },
   "extensions": [".mkv", ".mp4", ".avi", ".mov", ".ts", ".webm"],
   "workers": 4,
+  "refresh_hashes": false,
+  "refresh_video": false,
+  "refresh_names": false,
+  "max_video_candidates_per_bucket": 250,
   "log_level": "INFO"
 }

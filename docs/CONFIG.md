@@ -45,7 +45,11 @@ python dedupe.py --config samesame.json
   "lmstudio_url": "http://localhost:1234/v1",
   "lmstudio_model": "local-model",
   "workers": 4,
+  "refresh_hashes": false,
+  "refresh_video": false,
+  "refresh_names": false,
   "skip_video": false,
+  "max_video_candidates_per_bucket": 250,
   "ffmpeg": "ffmpeg",
   "ffprobe": "ffprobe",
   "log_level": "INFO"
@@ -83,6 +87,10 @@ For readability, these nested sections are also supported:
   },
   "extensions": [".mkv", ".mp4", ".avi"],
   "workers": 4,
+  "refresh_hashes": false,
+  "refresh_video": false,
+  "refresh_names": false,
+  "max_video_candidates_per_bucket": 250,
   "log_level": "INFO"
 }
 ```
@@ -123,6 +131,20 @@ The legacy flag still works:
 
 ```powershell
 samesame --config samesame.json --no-ai-names
+```
+
+Refresh one cache layer:
+
+```powershell
+samesame --config samesame.json --refresh-hashes
+samesame --config samesame.json --refresh-video
+samesame --config samesame.json --refresh-names
+```
+
+Inspect cache metadata without scanning folders:
+
+```powershell
+samesame --inspect-cache --cache .dedupe_cache.sqlite3
 ```
 
 ## Name Providers
@@ -167,7 +189,10 @@ $env:LMSTUDIO_MODEL = "qwen2.5-7b-instruct"
 | `lmstudio_model` | `local-model` | Model name sent to LM Studio. |
 | `workers` | `4` | Worker threads for IO-heavy operations. |
 | `skip_video` | `false` | Skip ffmpeg/ffprobe video fingerprints. |
+| `refresh_hashes` | `false` | Recompute partial and full hashes for this run. |
+| `refresh_video` | `false` | Recompute durations and video fingerprints for this run. |
+| `refresh_names` | `false` | Recompute normalized names for this run. |
+| `max_video_candidates_per_bucket` | `250` | Above this duration-bucket size, use pHash blocking before pairwise video comparison. |
 | `ffmpeg` | `ffmpeg` | ffmpeg executable path or name. |
 | `ffprobe` | `ffprobe` | ffprobe executable path or name. |
 | `log_level` | `INFO` | `DEBUG`, `INFO`, `WARNING`, or `ERROR`. |
-

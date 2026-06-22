@@ -70,28 +70,38 @@ def compare_folders(
         by_folder.setdefault(record.root_key, []).append(record)
 
     folder_sets: dict[str, set[str]] = {}
+    content_folder_sets: dict[str, set[str]] = {}
     cluster_to_paths: dict[tuple[str, str], list[str]] = {}
     for folder, folder_records in by_folder.items():
         ids: set[str] = set()
+        content_ids: set[str] = set()
         for record in folder_records:
             assignment = assignments[record.path_key]
             ids.add(assignment.cluster_id)
+            if assignment.level in {"exact", "video"}:
+                content_ids.add(assignment.cluster_id)
             cluster_to_paths.setdefault((folder, assignment.cluster_id), []).append(record.path_key)
         folder_sets[folder] = ids
+        content_folder_sets[folder] = content_ids
 
     pairs: list[FolderPair] = []
     for left, right in combinations(sorted(folder_sets), 2):
         left_set = folder_sets[left]
         right_set = folder_sets[right]
-        union = left_set | right_set
-        if not union:
+        content_left_set = content_folder_sets[left]
+        content_right_set = content_folder_sets[right]
+        name_union = left_set | right_set
+        content_union = content_left_set | content_right_set
+        if not name_union:
             continue
-        intersection = left_set & right_set
-        similarity = 100.0 * len(intersection) / len(union)
-        if similarity < threshold:
+        name_intersection = left_set & right_set
+        content_intersection = content_left_set & content_right_set
+        content_similarity = 100.0 * len(content_intersection) / len(content_union) if content_union else 0.0
+        name_assisted_similarity = 100.0 * len(name_intersection) / len(name_union)
+        if content_similarity < threshold and name_assisted_similarity < threshold:
             continue
         matched = []
-        for cluster_id in sorted(intersection):
+        for cluster_id in sorted(name_intersection):
             sample_path = (cluster_to_paths.get((left, cluster_id)) or cluster_to_paths.get((right, cluster_id)) or [""])[0]
             assignment = assignments.get(sample_path, ClusterAssignment(cluster_id, "unknown", 0.0))
             matched.append(
@@ -99,6 +109,7 @@ def compare_folders(
                     "cluster_id": cluster_id,
                     "level": assignment.level,
                     "confidence": assignment.confidence,
+                    "content_backed": assignment.level in {"exact", "video"},
                     "left_paths": sorted(cluster_to_paths.get((left, cluster_id), [])),
                     "right_paths": sorted(cluster_to_paths.get((right, cluster_id), [])),
                 }
@@ -109,12 +120,13 @@ def compare_folders(
             FolderPair(
                 left=left,
                 right=right,
-                similarity=round(similarity, 2),
+                similarity=round(content_similarity, 2),
+                content_similarity=round(content_similarity, 2),
+                name_assisted_similarity=round(name_assisted_similarity, 2),
                 matched=matched,
                 left_only=left_only,
                 right_only=right_only,
             )
         )
-    pairs.sort(key=lambda item: (-item.similarity, item.left, item.right))
+    pairs.sort(key=lambda item: (-item.content_similarity, -item.name_assisted_similarity, item.left, item.right))
     return pairs
-

@@ -72,6 +72,20 @@ Override any config value from CLI:
 samesame --config samesame.json --name-provider lmstudio --no-skip-video --video-threshold 94
 ```
 
+Refresh only one cache layer when needed:
+
+```powershell
+samesame --config samesame.json --refresh-names
+samesame --config samesame.json --refresh-hashes
+samesame --config samesame.json --refresh-video
+```
+
+Inspect the cache without scanning folders:
+
+```powershell
+samesame --inspect-cache --cache .dedupe_cache.sqlite3
+```
+
 ## Name Providers
 
 Anthropic:
@@ -103,6 +117,8 @@ SameSame writes:
 
 Name-only matches are intentionally not treated as safe deletion candidates.
 They are hints unless confirmed by exact hashes or video fingerprints.
+Folder reports include both content-backed similarity and broader name-assisted
+similarity.
 
 ## Documentation
 
