@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from itertools import combinations
 
-from .models import ClusterAssignment, ExactDuplicateGroup, FileRecord, FolderPair, NormalizedName, VideoMatch
+from .models import ClusterAssignment, ExactDuplicateGroup, FileRecord, FolderPair, ImageMatch, NormalizedName, VideoMatch
 
 
 def build_cluster_assignments(
@@ -10,14 +10,9 @@ def build_cluster_assignments(
     exact_groups: list[ExactDuplicateGroup],
     video_matches: list[VideoMatch],
     normalized: dict[str, NormalizedName],
+    image_matches: list[ImageMatch] | None = None,
 ) -> dict[str, ClusterAssignment]:
     assignments: dict[str, ClusterAssignment] = {}
-
-    for index, group in enumerate(exact_groups, start=1):
-        cluster_id = f"exact:{group.hash_value}"
-        for path in group.paths:
-            assignments[path] = ClusterAssignment(cluster_id=cluster_id, level="exact", confidence=100.0)
-
     parent: dict[str, str] = {}
 
     def find(path: str) -> str:
@@ -32,20 +27,47 @@ def build_cluster_assignments(
         if left_root != right_root:
             parent[right_root] = left_root
 
+    for group in exact_groups:
+        if not group.paths:
+            continue
+        first = group.paths[0]
+        find(first)
+        for path in group.paths[1:]:
+            union(first, path)
     for match in video_matches:
         union(match.left, match.right)
+    for match in image_matches or []:
+        union(match.left, match.right)
 
-    video_groups: dict[str, list[str]] = {}
+    content_groups: dict[str, list[str]] = {}
     for path in parent:
-        video_groups.setdefault(find(path), []).append(path)
-    for root, paths in video_groups.items():
-        cluster_id = "video:" + root
-        confidence = min(
-            [match.similarity for match in video_matches if match.left in paths or match.right in paths],
-            default=90.0,
-        )
+        content_groups.setdefault(find(path), []).append(path)
+    for paths in content_groups.values():
+        path_set = set(paths)
+        component_video_matches = [
+            match for match in video_matches if match.left in path_set and match.right in path_set
+        ]
+        component_image_matches = [
+            match for match in image_matches or [] if match.left in path_set and match.right in path_set
+        ]
+        if component_video_matches and component_image_matches:
+            level = "content"
+            confidence = min(
+                [match.similarity for match in component_video_matches]
+                + [match.similarity for match in component_image_matches]
+            )
+        elif component_video_matches:
+            level = "video"
+            confidence = min(match.similarity for match in component_video_matches)
+        elif component_image_matches:
+            level = "image"
+            confidence = min(match.similarity for match in component_image_matches)
+        else:
+            level = "exact"
+            confidence = 100.0
+        cluster_id = f"{level}:{min(paths)}"
         for path in paths:
-            assignments.setdefault(path, ClusterAssignment(cluster_id=cluster_id, level="video", confidence=confidence))
+            assignments[path] = ClusterAssignment(cluster_id=cluster_id, level=level, confidence=confidence)
 
     for record in records:
         if record.path_key in assignments:
@@ -78,8 +100,14 @@ def compare_folders(
         for record in folder_records:
             assignment = assignments[record.path_key]
             ids.add(assignment.cluster_id)
-            if assignment.level in {"exact", "video"}:
+            if assignment.level in {"exact", "video", "image", "content"}:
                 content_ids.add(assignment.cluster_id)
+            else:
+                # Unconfirmed files cannot contribute to the content-backed
+                # intersection, but they must remain in the union. Otherwise a
+                # single confirmed match makes two mostly different folders
+                # appear 100% identical.
+                content_ids.add(f"unconfirmed:{record.path_key}")
             cluster_to_paths.setdefault((folder, assignment.cluster_id), []).append(record.path_key)
         folder_sets[folder] = ids
         content_folder_sets[folder] = content_ids
@@ -109,7 +137,7 @@ def compare_folders(
                     "cluster_id": cluster_id,
                     "level": assignment.level,
                     "confidence": assignment.confidence,
-                    "content_backed": assignment.level in {"exact", "video"},
+                    "content_backed": assignment.level in {"exact", "video", "image", "content"},
                     "left_paths": sorted(cluster_to_paths.get((left, cluster_id), [])),
                     "right_paths": sorted(cluster_to_paths.get((right, cluster_id), [])),
                 }

@@ -18,6 +18,7 @@ class FileRecord:
     full_hash_algo: str | None = None
     duration: float | None = None
     fingerprint: list[int] | None = None
+    image_fingerprint: list[int] | None = None
 
     @property
     def path_key(self) -> str:
@@ -60,6 +61,14 @@ class VideoMatch:
 
 
 @dataclass(slots=True)
+class ImageMatch:
+    left: str
+    right: str
+    similarity: float
+    level: str = "image"
+
+
+@dataclass(slots=True)
 class NameHint:
     key: str
     similarity: float
@@ -93,6 +102,7 @@ class DedupeReport:
     scanned_files: int
     exact_duplicates: list[ExactDuplicateGroup]
     video_matches: list[VideoMatch]
+    image_matches: list[ImageMatch]
     folder_pairs: list[FolderPair]
     name_hints: list[NameHint]
     warnings: list[str] = field(default_factory=list)

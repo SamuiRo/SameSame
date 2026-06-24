@@ -8,7 +8,7 @@ from .cache import Cache
 from .models import FileRecord
 from .progress import tqdm
 
-DEFAULT_EXTENSIONS = {
+VIDEO_EXTENSIONS = {
     ".mkv",
     ".mp4",
     ".avi",
@@ -23,6 +23,19 @@ DEFAULT_EXTENSIONS = {
     ".m4v",
 }
 
+IMAGE_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".bmp",
+    ".gif",
+    ".tif",
+    ".tiff",
+}
+
+DEFAULT_EXTENSIONS = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -30,6 +43,14 @@ def normalize_extensions(extensions: Iterable[str] | None) -> set[str]:
     if not extensions:
         return set(DEFAULT_EXTENSIONS)
     return {ext.lower() if ext.startswith(".") else f".{ext.lower()}" for ext in extensions}
+
+
+def is_video_path(path: Path) -> bool:
+    return path.suffix.lower() in VIDEO_EXTENSIONS
+
+
+def is_image_path(path: Path) -> bool:
+    return path.suffix.lower() in IMAGE_EXTENSIONS
 
 
 def scan_folders(folders: Iterable[Path], extensions: set[str], cache: Cache) -> list[FileRecord]:

@@ -8,6 +8,7 @@ import shutil
 import subprocess
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
 from pathlib import Path
 
 from .cache import Cache
@@ -23,7 +24,6 @@ PIL_AVAILABLE = Image is not None
 
 LOGGER = logging.getLogger(__name__)
 SAMPLE_POINTS = (0.10, 0.30, 0.50, 0.70, 0.90)
-FINGERPRINT_BLOCK_BITS = 8
 
 
 def resolve_binary(name_or_path: str) -> str | None:
@@ -87,20 +87,29 @@ def _extract_frame(path: Path, timestamp: float, ffmpeg: str) -> Image.Image | N
         return None
 
 
+@lru_cache(maxsize=8)
+def _cosine_table(size: int, hash_size: int) -> tuple[tuple[float, ...], ...]:
+    return tuple(
+        tuple(math.cos(((2 * position + 1) * frequency * math.pi) / (2 * size)) for position in range(size))
+        for frequency in range(hash_size)
+    )
+
+
 def phash(image: Image.Image, hash_size: int = 8, highfreq_factor: int = 4) -> int:
     if Image is None:
         raise RuntimeError("Pillow is required for perceptual video hashing.")
     size = hash_size * highfreq_factor
     image = image.resize((size, size), Image.Resampling.LANCZOS).convert("L")
     pixels = [[image.getpixel((x, y)) for x in range(size)] for y in range(size)]
+    cosines = _cosine_table(size, hash_size)
+    row_coefficients = [
+        [sum(row[x] * cosines[v][x] for x in range(size)) for v in range(hash_size)]
+        for row in pixels
+    ]
     coeffs: list[float] = []
     for u in range(hash_size):
         for v in range(hash_size):
-            total = 0.0
-            for y in range(size):
-                cos_y = math.cos(((2 * y + 1) * u * math.pi) / (2 * size))
-                for x in range(size):
-                    total += pixels[y][x] * cos_y * math.cos(((2 * x + 1) * v * math.pi) / (2 * size))
+            total = sum(row_coefficients[y][v] * cosines[u][y] for y in range(size))
             cu = 1 / math.sqrt(2) if u == 0 else 1
             cv = 1 / math.sqrt(2) if v == 0 else 1
             coeffs.append(0.25 * cu * cv * total)
@@ -134,18 +143,44 @@ def hamming_similarity(left: list[int], right: list[int], bits_per_hash: int = 6
 def _candidate_pairs(
     candidates: list[FileRecord],
     max_candidates_per_bucket: int,
-    block_bits: int = FINGERPRINT_BLOCK_BITS,
+    threshold: float = 90.0,
 ) -> set[tuple[int, int]]:
     if len(candidates) <= max_candidates_per_bucket:
         return {(left, right) for left in range(len(candidates)) for right in range(left + 1, len(candidates))}
 
+    fingerprints = [record.fingerprint for record in candidates]
+    fingerprint_lengths = {len(fingerprint) for fingerprint in fingerprints if fingerprint}
+    if len(fingerprint_lengths) != 1 or any(not fingerprint for fingerprint in fingerprints):
+        return {(left, right) for left in range(len(candidates)) for right in range(left + 1, len(candidates))}
+
+    sample_count = fingerprint_lengths.pop()
+    total_bits = sample_count * 64
+    if threshold <= 0:
+        return {(left, right) for left in range(len(candidates)) for right in range(left + 1, len(candidates))}
+    if threshold > 100:
+        return set()
+
+    # If a pair is within the allowed total Hamming distance, at least one of
+    # max_distance + 1 disjoint blocks must be identical (pigeonhole principle).
+    # Indexing those blocks reduces the candidate set without dropping any
+    # pair that can satisfy the configured threshold.
+    max_distance = math.floor(total_bits * (1.0 - threshold / 100.0) + 1e-9)
+    block_count = min(total_bits, max_distance + 1)
+    base_block_size, larger_blocks = divmod(total_bits, block_count)
+    block_sizes = [base_block_size + (1 if index < larger_blocks else 0) for index in range(block_count)]
+
     blocks: dict[tuple[int, int], list[int]] = defaultdict(list)
-    shift = max(0, 64 - block_bits)
-    for index, record in enumerate(candidates):
-        if not record.fingerprint:
-            continue
-        for sample_index, hash_value in enumerate(record.fingerprint):
-            blocks[(sample_index, hash_value >> shift)].append(index)
+    fingerprint_mask = (1 << 64) - 1
+    for index, fingerprint in enumerate(fingerprints):
+        combined = 0
+        for hash_value in fingerprint or []:
+            combined = (combined << 64) | (hash_value & fingerprint_mask)
+        remaining_bits = total_bits
+        for block_index, block_size in enumerate(block_sizes):
+            remaining_bits -= block_size
+            block_mask = (1 << block_size) - 1
+            block_value = (combined >> remaining_bits) & block_mask
+            blocks[(block_index, block_value)].append(index)
 
     pairs: set[tuple[int, int]] = set()
     for indexes in blocks.values():
@@ -217,7 +252,7 @@ def find_video_matches(
         candidates: list[FileRecord] = []
         for nearby in range(int(key - duration_tolerance), int(key + duration_tolerance) + 1):
             candidates.extend(buckets.get(nearby, []))
-        for left_index, right_index in _candidate_pairs(candidates, max_candidates_per_bucket):
+        for left_index, right_index in _candidate_pairs(candidates, max_candidates_per_bucket, threshold):
             left = candidates[left_index]
             right = candidates[right_index]
             pair = tuple(sorted((left.path_key, right.path_key)))
@@ -230,7 +265,7 @@ def find_video_matches(
             if delta > duration_tolerance:
                 continue
             similarity = hamming_similarity(left.fingerprint, right.fingerprint)
-            if threshold <= similarity < 100.0:
+            if threshold <= similarity:
                 matches.append(VideoMatch(pair[0], pair[1], round(similarity, 2), round(delta, 3)))
     matches.sort(key=lambda item: (-item.similarity, item.left, item.right))
     return matches

@@ -9,8 +9,9 @@ from dedupe.cache import Cache
 from dedupe.cli import parse_args
 from dedupe.exact_hash import find_exact_duplicates
 from dedupe.folder_compare import build_cluster_assignments, compare_folders
-from dedupe.models import FileRecord, NormalizedName
+from dedupe.models import ExactDuplicateGroup, FileRecord, NormalizedName
 from dedupe.name_normalizer import PROMPT_HASH, _coerce_normalized_results, _extract_json_object, fallback_normalize
+from dedupe.video_fingerprint import find_video_matches
 
 
 class CoreTests(unittest.TestCase):
@@ -36,13 +37,14 @@ class CoreTests(unittest.TestCase):
                     {
                         "folders": ["from-config"],
                         "reports": {"html": "from-config.html", "json": "from-config.json"},
-                        "matching": {"video": 80, "folder": 40, "name": 85},
+                        "matching": {"video": 80, "image": 88, "folder": 40, "name": 85},
                         "names": {
                             "name_provider": "lmstudio",
                             "lmstudio_url": "http://localhost:1234/v1",
                             "lmstudio_model": "local-model",
                         },
                         "video": {"skip": True},
+                        "images": {"skip": True, "max_candidates": 175},
                         "workers": 2,
                     }
                 ),
@@ -62,6 +64,7 @@ class CoreTests(unittest.TestCase):
                     "--name-provider",
                     "none",
                     "--no-skip-video",
+                    "--no-skip-images",
                     "--workers",
                     "6",
                 ]
@@ -71,9 +74,12 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(str(config.output), "from-cli.html")
         self.assertEqual(str(config.json_output), "from-config.json")
         self.assertEqual(config.video_threshold, 95)
+        self.assertEqual(config.image_threshold, 88)
         self.assertEqual(config.folder_threshold, 40)
         self.assertEqual(config.name_provider, "none")
         self.assertFalse(config.skip_video)
+        self.assertFalse(config.skip_images)
+        self.assertEqual(config.max_image_candidates, 175)
         self.assertEqual(config.workers, 6)
 
     def test_inspect_cache_does_not_require_folders(self) -> None:
@@ -127,9 +133,93 @@ class CoreTests(unittest.TestCase):
                 assignments = build_cluster_assignments(records, exact, [], normalized)
                 folder_pairs = compare_folders(records, assignments, threshold=50)
                 self.assertEqual(len(folder_pairs), 1)
-                self.assertEqual(folder_pairs[0].similarity, 100.0)
-                self.assertEqual(folder_pairs[0].content_similarity, 100.0)
+                self.assertEqual(folder_pairs[0].similarity, 50.0)
+                self.assertEqual(folder_pairs[0].content_similarity, 50.0)
                 self.assertEqual(folder_pairs[0].name_assisted_similarity, 50.0)
+
+    def test_video_match_keeps_identical_fingerprints_for_different_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            records = [
+                FileRecord(base / "left.mp4", base, 100, 1, "left", duration=60.0, fingerprint=[0] * 5),
+                FileRecord(base / "right.mkv", base, 200, 1, "right", duration=60.0, fingerprint=[0] * 5),
+            ]
+            with Cache(base / "cache.sqlite3") as cache:
+                cache.upsert_files(records)
+                matches = find_video_matches(
+                    records,
+                    cache,
+                    threshold=90,
+                    ffmpeg="unused",
+                    ffprobe="unused",
+                    workers=1,
+                )
+
+            self.assertEqual(len(matches), 1)
+            self.assertEqual(matches[0].similarity, 100.0)
+
+    def test_large_video_bucket_blocking_keeps_near_duplicate_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            records = [
+                FileRecord(base / "left.mp4", base, 100, 1, "left", duration=60.0, fingerprint=[0] * 5),
+                FileRecord(
+                    base / "right.mkv",
+                    base,
+                    200,
+                    1,
+                    "right",
+                    duration=60.0,
+                    fingerprint=[1 << 63] * 5,
+                ),
+                FileRecord(
+                    base / "other.webm",
+                    base,
+                    300,
+                    1,
+                    "other",
+                    duration=60.0,
+                    fingerprint=[(1 << 64) - 1] * 5,
+                ),
+            ]
+            with Cache(base / "cache.sqlite3") as cache:
+                cache.upsert_files(records)
+                matches = find_video_matches(
+                    records,
+                    cache,
+                    threshold=90,
+                    ffmpeg="unused",
+                    ffprobe="unused",
+                    workers=1,
+                    max_candidates_per_bucket=2,
+                )
+
+            matched_paths = [{match.left, match.right} for match in matches]
+            self.assertIn({str(base / "left.mp4"), str(base / "right.mkv")}, matched_paths)
+
+    def test_content_similarity_counts_unconfirmed_files_in_union(self) -> None:
+        left = Path("left").resolve()
+        right = Path("right").resolve()
+        records = [
+            FileRecord(left / "shared.mp4", left, 1, 0, "shared"),
+            FileRecord(right / "shared-copy.mkv", right, 1, 0, "shared-copy"),
+            FileRecord(left / "left-only.mp4", left, 2, 0, "left-only"),
+            FileRecord(right / "right-only-1.mp4", right, 3, 0, "right-only-1"),
+            FileRecord(right / "right-only-2.mp4", right, 4, 0, "right-only-2"),
+        ]
+        exact = [
+            ExactDuplicateGroup(
+                "shared-hash",
+                [str(left / "shared.mp4"), str(right / "shared-copy.mkv")],
+                1,
+            )
+        ]
+        normalized = {record.raw_name: NormalizedName(record.raw_name, record.raw_name) for record in records}
+        assignments = build_cluster_assignments(records, exact, [], normalized)
+        folder_pairs = compare_folders(records, assignments, threshold=0)
+
+        self.assertEqual(len(folder_pairs), 1)
+        self.assertEqual(folder_pairs[0].content_similarity, 25.0)
 
 
 if __name__ == "__main__":

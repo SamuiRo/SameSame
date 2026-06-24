@@ -12,11 +12,14 @@ from typing import Any
 from .cache import Cache
 from .exact_hash import find_exact_duplicates
 from .folder_compare import build_cluster_assignments, compare_folders
+from .image_fingerprint import PIL_AVAILABLE as IMAGE_PIL_AVAILABLE
+from .image_fingerprint import find_image_matches
 from .models import DedupeReport
 from .name_normalizer import LMSTUDIO_MODEL, LMSTUDIO_URL, find_name_hints, normalize_names
 from .report import write_html_report, write_json_report
-from .scanner import normalize_extensions, scan_folders
-from .video_fingerprint import PIL_AVAILABLE, check_video_tools, find_video_matches
+from .scanner import is_image_path, is_video_path, normalize_extensions, scan_folders
+from .video_fingerprint import PIL_AVAILABLE as VIDEO_PIL_AVAILABLE
+from .video_fingerprint import check_video_tools, find_video_matches
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -26,6 +29,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "cache": ".dedupe_cache.sqlite3",
     "extensions": None,
     "video_threshold": 90.0,
+    "image_threshold": 90.0,
     "folder_threshold": 50.0,
     "name_threshold": 92.0,
     "name_provider": "auto",
@@ -33,10 +37,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "lmstudio_model": None,
     "workers": 4,
     "skip_video": False,
+    "skip_images": False,
     "refresh_hashes": False,
     "refresh_video": False,
+    "refresh_images": False,
     "refresh_names": False,
     "max_video_candidates_per_bucket": 250,
+    "max_image_candidates": 250,
     "inspect_cache": False,
     "ffmpeg": "ffmpeg",
     "ffprobe": "ffprobe",
@@ -52,6 +59,7 @@ class Config:
     cache: Path
     extensions: set[str]
     video_threshold: float
+    image_threshold: float
     folder_threshold: float
     name_threshold: float
     name_provider: str
@@ -59,10 +67,13 @@ class Config:
     lmstudio_model: str
     workers: int
     skip_video: bool
+    skip_images: bool
     refresh_hashes: bool
     refresh_video: bool
+    refresh_images: bool
     refresh_names: bool
     max_video_candidates_per_bucket: int
+    max_image_candidates: int
     inspect_cache: bool
     ffmpeg: str
     ffprobe: str
@@ -104,11 +115,24 @@ def _flatten_config(config: dict[str, Any]) -> dict[str, Any]:
                         flattened["skip_video"] = nested_value
                     else:
                         flattened[nested] = nested_value
+            elif canonical == "images":
+                for nested_key, nested_value in value.items():
+                    nested = _canonical_key(nested_key)
+                    if nested == "skip":
+                        flattened["skip_images"] = nested_value
+                    elif nested == "threshold":
+                        flattened["image_threshold"] = nested_value
+                    elif nested in {"max_candidates", "max_image_candidates"}:
+                        flattened["max_image_candidates"] = nested_value
+                    else:
+                        flattened[f"images_{nested}"] = nested_value
             elif canonical == "matching":
                 for nested_key, nested_value in value.items():
                     nested = _canonical_key(nested_key)
                     if nested in {"video", "video_similarity"}:
                         flattened["video_threshold"] = nested_value
+                    elif nested in {"image", "images", "image_similarity"}:
+                        flattened["image_threshold"] = nested_value
                     elif nested in {"folder", "folder_similarity"}:
                         flattened["folder_threshold"] = nested_value
                     elif nested in {"name", "name_similarity"}:
@@ -160,6 +184,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     parser.add_argument("--cache", type=Path, default=None, help="SQLite cache path.")
     parser.add_argument("--extensions", nargs="*", help="File extensions to include.")
     parser.add_argument("--video-threshold", type=float, default=None, help="Video fingerprint match threshold, percent.")
+    parser.add_argument("--image-threshold", type=float, default=None, help="Image fingerprint match threshold, percent.")
     parser.add_argument("--folder-threshold", type=float, default=None, help="Folder Jaccard threshold, percent.")
     parser.add_argument("--name-threshold", type=float, default=None, help="Fuzzy title hint threshold, percent.")
     parser.add_argument(
@@ -182,14 +207,39 @@ def parse_args(argv: list[str] | None = None) -> Config:
     parser.add_argument("--no-ai-names", action="store_true", help="Use local heuristic title normalization only.")
     parser.add_argument("--skip-video", dest="skip_video", action="store_true", default=None, help="Skip ffmpeg/ffprobe video fingerprinting.")
     parser.add_argument("--no-skip-video", dest="skip_video", action="store_false", help="Enable ffmpeg/ffprobe video fingerprinting.")
+    parser.add_argument(
+        "--skip-images",
+        dest="skip_images",
+        action="store_true",
+        default=None,
+        help="Skip perceptual image fingerprinting.",
+    )
+    parser.add_argument(
+        "--no-skip-images",
+        dest="skip_images",
+        action="store_false",
+        help="Enable perceptual image fingerprinting.",
+    )
     parser.add_argument("--refresh-hashes", action="store_true", default=None, help="Recompute partial and full file hashes.")
     parser.add_argument("--refresh-video", action="store_true", default=None, help="Recompute cached video durations and fingerprints.")
+    parser.add_argument(
+        "--refresh-images",
+        action="store_true",
+        default=None,
+        help="Recompute cached image fingerprints.",
+    )
     parser.add_argument("--refresh-names", action="store_true", default=None, help="Recompute cached title normalization results.")
     parser.add_argument(
         "--max-video-candidates-per-bucket",
         type=int,
         default=None,
         help="Use fingerprint blocking when a duration bucket has more candidates than this.",
+    )
+    parser.add_argument(
+        "--max-image-candidates",
+        type=int,
+        default=None,
+        help="Use fingerprint blocking when there are more image candidates than this.",
     )
     parser.add_argument("--inspect-cache", action="store_true", default=None, help="Print cache statistics as JSON and exit.")
     parser.add_argument("--ffmpeg", default=None, help="ffmpeg executable path/name.")
@@ -210,6 +260,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
         cache=Path(str(merged["cache"])),
         extensions=normalize_extensions(merged.get("extensions")),
         video_threshold=float(merged["video_threshold"]),
+        image_threshold=float(merged["image_threshold"]),
         folder_threshold=float(merged["folder_threshold"]),
         name_threshold=float(merged["name_threshold"]),
         name_provider=str(merged["name_provider"]),
@@ -217,10 +268,13 @@ def parse_args(argv: list[str] | None = None) -> Config:
         lmstudio_model=str(merged["lmstudio_model"]),
         workers=max(1, int(merged["workers"])),
         skip_video=bool(merged["skip_video"]),
+        skip_images=bool(merged["skip_images"]),
         refresh_hashes=bool(merged["refresh_hashes"]),
         refresh_video=bool(merged["refresh_video"]),
+        refresh_images=bool(merged["refresh_images"]),
         refresh_names=bool(merged["refresh_names"]),
         max_video_candidates_per_bucket=max(2, int(merged["max_video_candidates_per_bucket"])),
+        max_image_candidates=max(2, int(merged["max_image_candidates"])),
         inspect_cache=bool(merged["inspect_cache"]),
         ffmpeg=str(merged["ffmpeg"]),
         ffprobe=str(merged["ffprobe"]),
@@ -240,8 +294,9 @@ def run(config: Config) -> DedupeReport:
         exact_groups = find_exact_duplicates(records, cache, workers=config.workers)
         LOGGER.info("Found %d exact duplicate groups", len(exact_groups))
 
+        video_records = [record for record in records if is_video_path(record.path)]
         video_matches = []
-        if not config.skip_video:
+        if video_records and not config.skip_video:
             ffmpeg, ffprobe = check_video_tools(config.ffmpeg, config.ffprobe)
             if not ffmpeg or not ffprobe:
                 message = (
@@ -250,16 +305,16 @@ def run(config: Config) -> DedupeReport:
                 )
                 LOGGER.warning(message)
                 warnings.append(message)
-            elif not PIL_AVAILABLE:
+            elif not VIDEO_PIL_AVAILABLE:
                 message = "Pillow is not installed; video fingerprinting is skipped. Run pip install -e ."
                 LOGGER.warning(message)
                 warnings.append(message)
             else:
                 if config.refresh_video:
-                    LOGGER.info("Refreshing cached video metadata for %d files", len(records))
-                    cache.clear_video(records)
+                    LOGGER.info("Refreshing cached video metadata for %d files", len(video_records))
+                    cache.clear_video(video_records)
                 video_matches = find_video_matches(
-                    records,
+                    video_records,
                     cache,
                     threshold=config.video_threshold,
                     ffmpeg=ffmpeg,
@@ -268,6 +323,26 @@ def run(config: Config) -> DedupeReport:
                     max_candidates_per_bucket=config.max_video_candidates_per_bucket,
                 )
         LOGGER.info("Found %d video matches", len(video_matches))
+
+        image_records = [record for record in records if is_image_path(record.path)]
+        image_matches = []
+        if image_records and not config.skip_images:
+            if not IMAGE_PIL_AVAILABLE:
+                message = "Pillow is not installed; image fingerprinting is skipped. Run pip install -e ."
+                LOGGER.warning(message)
+                warnings.append(message)
+            else:
+                if config.refresh_images:
+                    LOGGER.info("Refreshing cached image fingerprints for %d files", len(image_records))
+                    cache.clear_images(image_records)
+                image_matches = find_image_matches(
+                    image_records,
+                    cache,
+                    threshold=config.image_threshold,
+                    workers=config.workers,
+                    max_candidates=config.max_image_candidates,
+                )
+        LOGGER.info("Found %d image matches", len(image_matches))
 
         normalized = normalize_names(
             records,
@@ -280,16 +355,24 @@ def run(config: Config) -> DedupeReport:
         )
         exact_paths = {path for group in exact_groups for path in group.paths}
         video_paths = {match.left for match in video_matches} | {match.right for match in video_matches}
+        image_paths = {match.left for match in image_matches} | {match.right for match in image_matches}
         name_hints = find_name_hints(
             records,
             normalized,
             exact_cluster_paths=exact_paths,
             video_cluster_paths=video_paths,
+            image_cluster_paths=image_paths,
             fuzzy_threshold=config.name_threshold,
         )
         LOGGER.info("Found %d name-only hints", len(name_hints))
 
-        assignments = build_cluster_assignments(records, exact_groups, video_matches, normalized)
+        assignments = build_cluster_assignments(
+            records,
+            exact_groups,
+            video_matches,
+            normalized,
+            image_matches=image_matches,
+        )
         folder_pairs = compare_folders(records, assignments, threshold=config.folder_threshold)
         LOGGER.info("Found %d folder pairs", len(folder_pairs))
 
@@ -297,6 +380,7 @@ def run(config: Config) -> DedupeReport:
         scanned_files=len(records),
         exact_duplicates=exact_groups,
         video_matches=video_matches,
+        image_matches=image_matches,
         folder_pairs=folder_pairs,
         name_hints=name_hints,
         warnings=warnings,

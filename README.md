@@ -1,19 +1,25 @@
 # SameSame
 
 SameSame is a Python CLI tool for finding duplicate media files across multiple
-folders. It is built for large video collections where the same title may exist
-under different filenames, encodes, containers, or folder structures.
+folders. It is built for large media collections where the same video or image
+may exist under different filenames, encodes, sizes, formats, or folder structures.
 
 It detects:
 
 - exact byte-identical duplicates by partial and full hashing;
 - similar video content by ffmpeg frame fingerprints;
+- similar images after resize, recompression, or format conversion by perceptual fingerprints;
 - overlapping folders by canonical cluster IDs;
 - low-confidence name-only hints using Anthropic, LM Studio, or local heuristics.
+
+Audio files are not scanned by default yet. They can be included through
+`--extensions` for exact byte-identical matching, but perceptual audio
+fingerprinting is still planned.
 
 ## Requirements
 
 - Python 3.11+
+- Pillow for image fingerprinting (installed automatically)
 - `ffmpeg` and `ffprobe` for video fingerprinting
 - Optional `ANTHROPIC_API_KEY` for Claude title normalization
 - Optional LM Studio local server for private/local title normalization
@@ -51,14 +57,22 @@ ffmpeg -version
 ffprobe -version
 ```
 
-If ffmpeg is not installed yet, run with `--skip-video` to keep exact hashing,
-name hints, and folder comparison enabled.
+If ffmpeg is not installed yet, run with `--skip-video`. Exact hashing, similar
+image detection, name hints, and folder comparison remain enabled.
 
 ## Quick Start
 
 ```powershell
 samesame --folders "D:\Anime\A" "D:\Anime\B" --output report.html --json-output report.json
 ```
+
+Pass one folder or several folders. SameSame scans each folder recursively,
+including all nested subfolders, and compares files both within and across them.
+With one input folder, file-level duplicates are still found; folder-pair
+comparison naturally requires at least two input roots.
+
+SameSame is report-only: it does not move, merge, rename, or delete files.
+Content clusters exist only in the generated reports.
 
 Use a config file:
 
@@ -78,6 +92,7 @@ Refresh only one cache layer when needed:
 samesame --config samesame.json --refresh-names
 samesame --config samesame.json --refresh-hashes
 samesame --config samesame.json --refresh-video
+samesame --config samesame.json --refresh-images
 ```
 
 Inspect the cache without scanning folders:
@@ -113,10 +128,10 @@ SameSame writes:
 
 - `report.html`: human-readable report with expandable sections;
 - `report.json`: machine-readable report for automation;
-- `.dedupe_cache.sqlite3`: reusable cache for hashes, durations, fingerprints, and names.
+- `.dedupe_cache.sqlite3`: reusable cache for hashes, video/image fingerprints, and names.
 
 Name-only matches are intentionally not treated as safe deletion candidates.
-They are hints unless confirmed by exact hashes or video fingerprints.
+They are hints unless confirmed by exact hashes, video fingerprints, or image fingerprints.
 Folder reports include both content-backed similarity and broader name-assisted
 similarity.
 
@@ -125,4 +140,4 @@ similarity.
 - [Usage guide](docs/USAGE.md)
 - [Configuration reference](docs/CONFIG.md)
 - [Example config](docs/samesame.example.json)
-- [Original implementation plan](docs/PLAN.md)
+- [Project status and roadmap](docs/STATUS.md)

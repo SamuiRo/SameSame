@@ -39,6 +39,7 @@ class Cache:
                 full_hash_algo TEXT,
                 duration REAL,
                 fingerprint TEXT,
+                image_fingerprint TEXT,
                 raw_name TEXT NOT NULL
             );
 
@@ -60,6 +61,7 @@ class Cache:
         )
         self._ensure_column("files", "partial_hash_algo", "TEXT")
         self._ensure_column("files", "full_hash_algo", "TEXT")
+        self._ensure_column("files", "image_fingerprint", "TEXT")
         self._ensure_column("name_cache", "provider", "TEXT")
         self._ensure_column("name_cache", "model", "TEXT")
         self._ensure_column("name_cache", "prompt_hash", "TEXT")
@@ -86,14 +88,18 @@ class Cache:
         record.full_hash_algo = row["full_hash_algo"]
         record.duration = row["duration"]
         record.fingerprint = json.loads(row["fingerprint"]) if row["fingerprint"] else None
+        record.image_fingerprint = json.loads(row["image_fingerprint"]) if row["image_fingerprint"] else None
         record.raw_name = row["raw_name"]
         return True
 
     def upsert_file(self, record: FileRecord) -> None:
         self.conn.execute(
             """
-            INSERT INTO files(path, size, mtime, partial_hash, partial_hash_algo, full_hash, full_hash_algo, duration, fingerprint, raw_name)
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO files(
+                path, size, mtime, partial_hash, partial_hash_algo, full_hash,
+                full_hash_algo, duration, fingerprint, image_fingerprint, raw_name
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
                 size = excluded.size,
                 mtime = excluded.mtime,
@@ -103,6 +109,7 @@ class Cache:
                 full_hash_algo = excluded.full_hash_algo,
                 duration = excluded.duration,
                 fingerprint = excluded.fingerprint,
+                image_fingerprint = excluded.image_fingerprint,
                 raw_name = excluded.raw_name
             """,
             (
@@ -115,6 +122,7 @@ class Cache:
                 record.full_hash_algo,
                 record.duration,
                 json.dumps(record.fingerprint) if record.fingerprint is not None else None,
+                json.dumps(record.image_fingerprint) if record.image_fingerprint is not None else None,
                 record.raw_name,
             ),
         )
@@ -144,6 +152,16 @@ class Cache:
             record.fingerprint = None
         self.conn.executemany(
             "UPDATE files SET duration = NULL, fingerprint = NULL WHERE path = ?",
+            [(path,) for path in paths],
+        )
+        self.conn.commit()
+
+    def clear_images(self, records: Iterable[FileRecord]) -> None:
+        paths = [record.path_key for record in records]
+        for record in records:
+            record.image_fingerprint = None
+        self.conn.executemany(
+            "UPDATE files SET image_fingerprint = NULL WHERE path = ?",
             [(path,) for path in paths],
         )
         self.conn.commit()
@@ -233,7 +251,8 @@ class Cache:
                 COALESCE(SUM(CASE WHEN partial_hash IS NOT NULL THEN 1 ELSE 0 END), 0) AS partial_hashed,
                 COALESCE(SUM(CASE WHEN full_hash IS NOT NULL THEN 1 ELSE 0 END), 0) AS full_hashed,
                 COALESCE(SUM(CASE WHEN duration IS NOT NULL THEN 1 ELSE 0 END), 0) AS durations,
-                COALESCE(SUM(CASE WHEN fingerprint IS NOT NULL THEN 1 ELSE 0 END), 0) AS fingerprints
+                COALESCE(SUM(CASE WHEN fingerprint IS NOT NULL THEN 1 ELSE 0 END), 0) AS fingerprints,
+                COALESCE(SUM(CASE WHEN image_fingerprint IS NOT NULL THEN 1 ELSE 0 END), 0) AS image_fingerprints
             FROM files
             """
         ).fetchone()
