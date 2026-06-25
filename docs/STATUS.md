@@ -1,6 +1,6 @@
 # Project Status and Roadmap
 
-Last updated: 2026-06-24
+Last updated: 2026-06-25
 
 This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
@@ -43,35 +43,30 @@ The program is report-only. It does not move, merge, rename, or delete files.
 
 The available suite currently contains 19 unit/integration tests.
 
-- All 19 pass in the auxiliary local Python 3.10.6 environment that has Pillow
-  installed. This interpreter is useful for verification but is below the
-  project's supported Python 3.11+ requirement.
-- Core tests pass on Python 3.11.9.
-- Image tests are skipped in the current Python 3.11.9 installation because its
-  environment does not yet have project dependencies installed.
+- All 19 pass under both `unittest` and pytest in the project-local Python
+  3.11.9 virtual environment with all runtime/dev dependencies installed.
+- Ruff passes with no findings.
 - A real ffmpeg integration test passes with ffmpeg/ffprobe
   `2026-06-15-git-44d082edc8`. It generates a short source video, a resized
   recompressed AVI, an MKV with one second appended, and an unrelated control.
-- Python compilation, JSON config parsing, cache migration, and
+- Python compilation, JSON config parsing, cache migration, CLI startup, and
   `git diff --check` pass.
+- Isolated package builds produce both the `samesame-1.3.0` source archive and
+  universal wheel.
 - A recursive CLI test confirms that a resized/recompressed JPEG in a nested
   folder matches its PNG source and appears in HTML/JSON and folder clusters.
 - Candidate blocking was checked against generated passing pairs without
   observed false negatives.
 
-## Environment Still Needed
+## Development Environment
 
-Install the project in a Python 3.11+ virtual environment:
+The project-local `.venv` uses Python 3.11.9 and has the editable project plus
+all `dev` dependencies installed. Activate it with:
 
 ```powershell
-python --version
-python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
+python --version
 ```
-
-Confirm that `python --version` reports 3.11 or newer before creating the
-environment.
 
 `ffmpeg` and `ffprobe` are installed under `C:\ffmpeg\bin`. New terminals
 should discover them through the machine PATH. Verify:
@@ -101,22 +96,20 @@ in this session uses the absolute executable paths.
 
 Suggested order:
 
-1. Install all dependencies in the Python 3.11 environment and run the full
-   suite there.
-2. Add perceptual audio fingerprinting and default audio extensions.
-3. Build a representative media fixture corpus and tune image/video thresholds
+1. Add perceptual audio fingerprinting and default audio extensions.
+2. Build a representative media fixture corpus and tune image/video thresholds
    using measured false-positive and false-negative rates.
-4. Improve image robustness for rotation/cropping only if real collections
+3. Improve image robustness for rotation/cropping only if real collections
    demonstrate the need.
-5. Consider report UX improvements such as thumbnails, media metadata, cluster
+4. Consider report UX improvements such as thumbnails, media metadata, cluster
    summaries, and explicit review decisions.
 
 ## Working Tree Handoff
 
-At the time of this update, scanner path deduplication, duration-aligned video
-matching, and their documentation/test updates are present as uncommitted
-working-tree changes. The earlier fixes and image feature were already
-committed. A new session should begin with:
+Scanner path deduplication, duration-aligned video matching, and their tests
+were committed in `a94cf73`. At the time of this update, only the Python 3.11
+verification/status update and packaging metadata cleanup are uncommitted. A
+new session should begin with:
 
 ```powershell
 git status --short
@@ -125,7 +118,7 @@ python -m unittest discover -s tests -v
 ```
 
 Do not discard the existing changes. Review and commit them as one coherent
-scanner/video-integration change when ready.
+environment-verification and packaging cleanup when ready.
 
 ## Suggested Prompt for a New Chat
 
