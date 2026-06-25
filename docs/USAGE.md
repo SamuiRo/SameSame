@@ -1,12 +1,13 @@
 # Usage Guide
 
-SameSame finds duplicate media on five levels:
+SameSame finds duplicate media on six levels:
 
 1. Exact byte duplicates, confirmed by full file hash.
 2. Similar videos, confirmed by sampled video frame fingerprints.
 3. Similar images, confirmed by perceptual image and color fingerprints.
-4. Folder overlap, computed from canonical file clusters.
-5. Name-only hints, useful for review but not safe deletion evidence.
+4. Similar audio, confirmed by ffmpeg Chromaprint fingerprints.
+5. Folder overlap, computed from canonical file clusters.
+6. Name-only hints, useful for review but not safe deletion evidence.
 
 ## Install
 
@@ -32,7 +33,7 @@ python dedupe.py --help
 
 ## ffmpeg
 
-Video fingerprinting requires `ffmpeg` and `ffprobe`.
+Video and audio fingerprinting require `ffmpeg` and `ffprobe`.
 
 On Windows:
 
@@ -51,7 +52,7 @@ If ffmpeg is not available yet, SameSame can still do exact hashes, perceptual
 image matching, and name analysis:
 
 ```powershell
-samesame --folders "D:\Anime\A" "D:\Anime\B" --skip-video
+samesame --folders "D:\Anime\A" "D:\Anime\B" --skip-video --skip-audio
 ```
 
 Image fingerprinting does not require ffmpeg and remains enabled with
@@ -83,7 +84,7 @@ The output contains:
 
 - `report.html`: expandable human review report.
 - `report.json`: structured automation-friendly report.
-- `.dedupe_cache.sqlite3`: reusable cache for hashes, video/image fingerprints, and names.
+- `.dedupe_cache.sqlite3`: reusable cache for hashes, video/image/audio fingerprints, and names.
 
 Relative output paths are written to the current working directory. Use
 `--output`, `--json-output`, and `--cache` to choose explicit locations.
@@ -99,19 +100,13 @@ The default scan includes:
 - video: `.mkv`, `.mp4`, `.avi`, `.mov`, `.ts`, `.m2ts`, `.wmv`, `.flv`,
   `.webm`, `.mpg`, `.mpeg`, `.m4v`;
 - images: `.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`, `.gif`, `.tif`, `.tiff`.
-
-Audio is not included by default. It can currently be scanned for exact
-byte-identical copies only:
-
-```powershell
-samesame --folders "D:\Music" --extensions .mp3 .flac .wav .m4a .aac --skip-video
-```
+- audio: `.mp3`, `.flac`, `.wav`, `.m4a`, `.aac`, `.ogg`, `.opus`, `.wma`,
+  `.aiff`, `.aif`.
 
 `--extensions` replaces the default extension set; it does not append to it.
-List every format needed for that run. Perceptual audio matching across
-different encodes is not implemented yet. Extensions outside the built-in
-video/image sets are scanned for exact hashes and name hints, but they do not
-automatically gain video or image fingerprinting.
+List every format needed for that run. Extensions outside the built-in
+video/image/audio sets are scanned for exact hashes and name hints, but they do
+not automatically gain perceptual fingerprinting.
 
 Inspect cache state:
 
@@ -125,6 +120,7 @@ Refresh one cache layer without deleting the database:
 samesame --config samesame.json --refresh-hashes
 samesame --config samesame.json --refresh-video
 samesame --config samesame.json --refresh-images
+samesame --config samesame.json --refresh-audio
 samesame --config samesame.json --refresh-names
 ```
 
@@ -183,16 +179,20 @@ between supported formats. They remain review candidates: heavy crops, arbitrary
 rotation, overlays, or major edits may not match reliably. Animated GIFs and
 multi-page TIFF files are currently represented by their first decoded frame/page.
 
+Similar audio matches use Chromaprint and can survive codec, bitrate, container,
+and moderate volume changes. They remain manual review candidates; substantial
+remixes, speed/pitch changes, or long added sections may not match.
+
 Exact copies and perceptually similar variants can belong to one transitive
 content cluster. For example, an exact PNG copy and a resized JPEG derived from
 the same PNG are grouped together in folder comparison. The files themselves
 remain in their original locations.
 
-Folder pairs show two scores. `content_similarity` counts only exact/video/image-backed
+Folder pairs show two scores. `content_similarity` counts only exact/video/image/audio-backed
 clusters as shared, while all canonical items remain in the union so unmatched
 files lower the score. `name_assisted_similarity` also allows name-based clusters
 to count as shared. Both are Jaccard similarity: intersection divided by union.
 
 Name hints are intentionally low confidence. They are useful for sorting and
 review, but should not be treated as deletion proof unless confirmed by exact
-hashes, video fingerprints, or image fingerprints.
+hashes, video fingerprints, image fingerprints, or audio fingerprints.

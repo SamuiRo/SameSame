@@ -19,6 +19,7 @@ class FileRecord:
     duration: float | None = None
     fingerprint: list[int] | None = None
     image_fingerprint: list[int] | None = None
+    audio_fingerprint: list[int] | None = None
 
     @property
     def path_key(self) -> str:
@@ -69,6 +70,15 @@ class ImageMatch:
 
 
 @dataclass(slots=True)
+class AudioMatch:
+    left: str
+    right: str
+    similarity: float
+    duration_delta: float
+    level: str = "audio"
+
+
+@dataclass(slots=True)
 class NameHint:
     key: str
     similarity: float
@@ -103,6 +113,7 @@ class DedupeReport:
     exact_duplicates: list[ExactDuplicateGroup]
     video_matches: list[VideoMatch]
     image_matches: list[ImageMatch]
+    audio_matches: list[AudioMatch]
     folder_pairs: list[FolderPair]
     name_hints: list[NameHint]
     warnings: list[str] = field(default_factory=list)

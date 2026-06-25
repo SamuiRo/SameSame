@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .audio_fingerprint import check_chromaprint, find_audio_matches
 from .cache import Cache
 from .exact_hash import find_exact_duplicates
 from .folder_compare import build_cluster_assignments, compare_folders
@@ -17,7 +18,7 @@ from .image_fingerprint import find_image_matches
 from .models import DedupeReport
 from .name_normalizer import LMSTUDIO_MODEL, LMSTUDIO_URL, find_name_hints, normalize_names
 from .report import write_html_report, write_json_report
-from .scanner import is_image_path, is_video_path, normalize_extensions, scan_folders
+from .scanner import is_audio_path, is_image_path, is_video_path, normalize_extensions, scan_folders
 from .video_fingerprint import PIL_AVAILABLE as VIDEO_PIL_AVAILABLE
 from .video_fingerprint import check_video_tools, find_video_matches
 
@@ -30,6 +31,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "extensions": None,
     "video_threshold": 90.0,
     "image_threshold": 90.0,
+    "audio_threshold": 90.0,
     "folder_threshold": 50.0,
     "name_threshold": 92.0,
     "name_provider": "auto",
@@ -38,9 +40,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "workers": 4,
     "skip_video": False,
     "skip_images": False,
+    "skip_audio": False,
     "refresh_hashes": False,
     "refresh_video": False,
     "refresh_images": False,
+    "refresh_audio": False,
     "refresh_names": False,
     "max_video_candidates_per_bucket": 250,
     "max_image_candidates": 250,
@@ -60,6 +64,7 @@ class Config:
     extensions: set[str]
     video_threshold: float
     image_threshold: float
+    audio_threshold: float
     folder_threshold: float
     name_threshold: float
     name_provider: str
@@ -68,9 +73,11 @@ class Config:
     workers: int
     skip_video: bool
     skip_images: bool
+    skip_audio: bool
     refresh_hashes: bool
     refresh_video: bool
     refresh_images: bool
+    refresh_audio: bool
     refresh_names: bool
     max_video_candidates_per_bucket: int
     max_image_candidates: int
@@ -126,6 +133,15 @@ def _flatten_config(config: dict[str, Any]) -> dict[str, Any]:
                         flattened["max_image_candidates"] = nested_value
                     else:
                         flattened[f"images_{nested}"] = nested_value
+            elif canonical == "audio":
+                for nested_key, nested_value in value.items():
+                    nested = _canonical_key(nested_key)
+                    if nested == "skip":
+                        flattened["skip_audio"] = nested_value
+                    elif nested == "threshold":
+                        flattened["audio_threshold"] = nested_value
+                    else:
+                        flattened[f"audio_{nested}"] = nested_value
             elif canonical == "matching":
                 for nested_key, nested_value in value.items():
                     nested = _canonical_key(nested_key)
@@ -133,6 +149,8 @@ def _flatten_config(config: dict[str, Any]) -> dict[str, Any]:
                         flattened["video_threshold"] = nested_value
                     elif nested in {"image", "images", "image_similarity"}:
                         flattened["image_threshold"] = nested_value
+                    elif nested in {"audio", "audio_similarity"}:
+                        flattened["audio_threshold"] = nested_value
                     elif nested in {"folder", "folder_similarity"}:
                         flattened["folder_threshold"] = nested_value
                     elif nested in {"name", "name_similarity"}:
@@ -185,6 +203,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     parser.add_argument("--extensions", nargs="*", help="File extensions to include.")
     parser.add_argument("--video-threshold", type=float, default=None, help="Video fingerprint match threshold, percent.")
     parser.add_argument("--image-threshold", type=float, default=None, help="Image fingerprint match threshold, percent.")
+    parser.add_argument("--audio-threshold", type=float, default=None, help="Audio fingerprint match threshold, percent.")
     parser.add_argument("--folder-threshold", type=float, default=None, help="Folder Jaccard threshold, percent.")
     parser.add_argument("--name-threshold", type=float, default=None, help="Fuzzy title hint threshold, percent.")
     parser.add_argument(
@@ -220,6 +239,19 @@ def parse_args(argv: list[str] | None = None) -> Config:
         action="store_false",
         help="Enable perceptual image fingerprinting.",
     )
+    parser.add_argument(
+        "--skip-audio",
+        dest="skip_audio",
+        action="store_true",
+        default=None,
+        help="Skip Chromaprint audio fingerprinting.",
+    )
+    parser.add_argument(
+        "--no-skip-audio",
+        dest="skip_audio",
+        action="store_false",
+        help="Enable Chromaprint audio fingerprinting.",
+    )
     parser.add_argument("--refresh-hashes", action="store_true", default=None, help="Recompute partial and full file hashes.")
     parser.add_argument("--refresh-video", action="store_true", default=None, help="Recompute cached video durations and fingerprints.")
     parser.add_argument(
@@ -227,6 +259,12 @@ def parse_args(argv: list[str] | None = None) -> Config:
         action="store_true",
         default=None,
         help="Recompute cached image fingerprints.",
+    )
+    parser.add_argument(
+        "--refresh-audio",
+        action="store_true",
+        default=None,
+        help="Recompute cached audio durations and fingerprints.",
     )
     parser.add_argument("--refresh-names", action="store_true", default=None, help="Recompute cached title normalization results.")
     parser.add_argument(
@@ -261,6 +299,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
         extensions=normalize_extensions(merged.get("extensions")),
         video_threshold=float(merged["video_threshold"]),
         image_threshold=float(merged["image_threshold"]),
+        audio_threshold=float(merged["audio_threshold"]),
         folder_threshold=float(merged["folder_threshold"]),
         name_threshold=float(merged["name_threshold"]),
         name_provider=str(merged["name_provider"]),
@@ -269,9 +308,11 @@ def parse_args(argv: list[str] | None = None) -> Config:
         workers=max(1, int(merged["workers"])),
         skip_video=bool(merged["skip_video"]),
         skip_images=bool(merged["skip_images"]),
+        skip_audio=bool(merged["skip_audio"]),
         refresh_hashes=bool(merged["refresh_hashes"]),
         refresh_video=bool(merged["refresh_video"]),
         refresh_images=bool(merged["refresh_images"]),
+        refresh_audio=bool(merged["refresh_audio"]),
         refresh_names=bool(merged["refresh_names"]),
         max_video_candidates_per_bucket=max(2, int(merged["max_video_candidates_per_bucket"])),
         max_image_candidates=max(2, int(merged["max_image_candidates"])),
@@ -344,6 +385,38 @@ def run(config: Config) -> DedupeReport:
                 )
         LOGGER.info("Found %d image matches", len(image_matches))
 
+        audio_records = [record for record in records if is_audio_path(record.path)]
+        audio_matches = []
+        if audio_records and not config.skip_audio:
+            ffmpeg, ffprobe = check_video_tools(config.ffmpeg, config.ffprobe)
+            if not ffmpeg or not ffprobe:
+                message = (
+                    "ffmpeg/ffprobe were not found. Audio fingerprinting is skipped; "
+                    "install them, pass --ffmpeg/--ffprobe, or use --skip-audio."
+                )
+                LOGGER.warning(message)
+                warnings.append(message)
+            elif not check_chromaprint(ffmpeg):
+                message = (
+                    "This ffmpeg build does not provide the Chromaprint muxer; "
+                    "audio fingerprinting is skipped."
+                )
+                LOGGER.warning(message)
+                warnings.append(message)
+            else:
+                if config.refresh_audio:
+                    LOGGER.info("Refreshing cached audio metadata for %d files", len(audio_records))
+                    cache.clear_audio(audio_records)
+                audio_matches = find_audio_matches(
+                    audio_records,
+                    cache,
+                    threshold=config.audio_threshold,
+                    ffmpeg=ffmpeg,
+                    ffprobe=ffprobe,
+                    workers=min(config.workers, 4),
+                )
+        LOGGER.info("Found %d audio matches", len(audio_matches))
+
         normalized = normalize_names(
             records,
             cache,
@@ -356,12 +429,14 @@ def run(config: Config) -> DedupeReport:
         exact_paths = {path for group in exact_groups for path in group.paths}
         video_paths = {match.left for match in video_matches} | {match.right for match in video_matches}
         image_paths = {match.left for match in image_matches} | {match.right for match in image_matches}
+        audio_paths = {match.left for match in audio_matches} | {match.right for match in audio_matches}
         name_hints = find_name_hints(
             records,
             normalized,
             exact_cluster_paths=exact_paths,
             video_cluster_paths=video_paths,
             image_cluster_paths=image_paths,
+            audio_cluster_paths=audio_paths,
             fuzzy_threshold=config.name_threshold,
         )
         LOGGER.info("Found %d name-only hints", len(name_hints))
@@ -372,6 +447,7 @@ def run(config: Config) -> DedupeReport:
             video_matches,
             normalized,
             image_matches=image_matches,
+            audio_matches=audio_matches,
         )
         folder_pairs = compare_folders(records, assignments, threshold=config.folder_threshold)
         LOGGER.info("Found %d folder pairs", len(folder_pairs))
@@ -381,6 +457,7 @@ def run(config: Config) -> DedupeReport:
         exact_duplicates=exact_groups,
         video_matches=video_matches,
         image_matches=image_matches,
+        audio_matches=audio_matches,
         folder_pairs=folder_pairs,
         name_hints=name_hints,
         warnings=warnings,

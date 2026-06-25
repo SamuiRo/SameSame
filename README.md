@@ -1,8 +1,9 @@
 # SameSame
 
 SameSame is a Python CLI tool for finding duplicate media files across multiple
-folders. It is built for large media collections where the same video or image
-may exist under different filenames, encodes, sizes, formats, or folder structures.
+folders. It is built for large media collections where the same video, image,
+or audio recording may exist under different filenames, encodes, sizes,
+formats, or folder structures.
 
 It detects:
 
@@ -10,18 +11,15 @@ It detects:
 - similar video content by ffmpeg frame fingerprints with start/end alignment
   for small duration changes;
 - similar images after resize, recompression, or format conversion by perceptual fingerprints;
+- similar audio across common encodes using ffmpeg Chromaprint fingerprints;
 - overlapping folders by canonical cluster IDs;
 - low-confidence name-only hints using Anthropic, LM Studio, or local heuristics.
-
-Audio files are not scanned by default yet. They can be included through
-`--extensions` for exact byte-identical matching, but perceptual audio
-fingerprinting is still planned.
 
 ## Requirements
 
 - Python 3.11+
 - Pillow for image fingerprinting (installed automatically)
-- `ffmpeg` and `ffprobe` for video fingerprinting
+- `ffmpeg` and `ffprobe` for video and audio fingerprinting
 - Optional `ANTHROPIC_API_KEY` for Claude title normalization
 - Optional LM Studio local server for private/local title normalization
 
@@ -58,8 +56,8 @@ ffmpeg -version
 ffprobe -version
 ```
 
-If ffmpeg is not installed yet, run with `--skip-video`. Exact hashing, similar
-image detection, name hints, and folder comparison remain enabled.
+If ffmpeg is not installed yet, run with `--skip-video --skip-audio`. Exact
+hashing, similar image detection, name hints, and folder comparison remain enabled.
 
 ## Quick Start
 
@@ -94,6 +92,7 @@ samesame --config samesame.json --refresh-names
 samesame --config samesame.json --refresh-hashes
 samesame --config samesame.json --refresh-video
 samesame --config samesame.json --refresh-images
+samesame --config samesame.json --refresh-audio
 ```
 
 Inspect the cache without scanning folders:
@@ -129,10 +128,11 @@ SameSame writes:
 
 - `report.html`: human-readable report with expandable sections;
 - `report.json`: machine-readable report for automation;
-- `.dedupe_cache.sqlite3`: reusable cache for hashes, video/image fingerprints, and names.
+- `.dedupe_cache.sqlite3`: reusable cache for hashes, video/image/audio fingerprints, and names.
 
 Name-only matches are intentionally not treated as safe deletion candidates.
-They are hints unless confirmed by exact hashes, video fingerprints, or image fingerprints.
+They are hints unless confirmed by exact hashes, video fingerprints, image
+fingerprints, or audio fingerprints.
 Folder reports include both content-backed similarity and broader name-assisted
 similarity.
 

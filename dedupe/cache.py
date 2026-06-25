@@ -40,6 +40,7 @@ class Cache:
                 duration REAL,
                 fingerprint TEXT,
                 image_fingerprint TEXT,
+                audio_fingerprint TEXT,
                 raw_name TEXT NOT NULL
             );
 
@@ -62,6 +63,7 @@ class Cache:
         self._ensure_column("files", "partial_hash_algo", "TEXT")
         self._ensure_column("files", "full_hash_algo", "TEXT")
         self._ensure_column("files", "image_fingerprint", "TEXT")
+        self._ensure_column("files", "audio_fingerprint", "TEXT")
         self._ensure_column("name_cache", "provider", "TEXT")
         self._ensure_column("name_cache", "model", "TEXT")
         self._ensure_column("name_cache", "prompt_hash", "TEXT")
@@ -89,6 +91,7 @@ class Cache:
         record.duration = row["duration"]
         record.fingerprint = json.loads(row["fingerprint"]) if row["fingerprint"] else None
         record.image_fingerprint = json.loads(row["image_fingerprint"]) if row["image_fingerprint"] else None
+        record.audio_fingerprint = json.loads(row["audio_fingerprint"]) if row["audio_fingerprint"] else None
         record.raw_name = row["raw_name"]
         return True
 
@@ -97,9 +100,10 @@ class Cache:
             """
             INSERT INTO files(
                 path, size, mtime, partial_hash, partial_hash_algo, full_hash,
-                full_hash_algo, duration, fingerprint, image_fingerprint, raw_name
+                full_hash_algo, duration, fingerprint, image_fingerprint,
+                audio_fingerprint, raw_name
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
                 size = excluded.size,
                 mtime = excluded.mtime,
@@ -110,6 +114,7 @@ class Cache:
                 duration = excluded.duration,
                 fingerprint = excluded.fingerprint,
                 image_fingerprint = excluded.image_fingerprint,
+                audio_fingerprint = excluded.audio_fingerprint,
                 raw_name = excluded.raw_name
             """,
             (
@@ -123,6 +128,7 @@ class Cache:
                 record.duration,
                 json.dumps(record.fingerprint) if record.fingerprint is not None else None,
                 json.dumps(record.image_fingerprint) if record.image_fingerprint is not None else None,
+                json.dumps(record.audio_fingerprint) if record.audio_fingerprint is not None else None,
                 record.raw_name,
             ),
         )
@@ -162,6 +168,17 @@ class Cache:
             record.image_fingerprint = None
         self.conn.executemany(
             "UPDATE files SET image_fingerprint = NULL WHERE path = ?",
+            [(path,) for path in paths],
+        )
+        self.conn.commit()
+
+    def clear_audio(self, records: Iterable[FileRecord]) -> None:
+        paths = [record.path_key for record in records]
+        for record in records:
+            record.duration = None
+            record.audio_fingerprint = None
+        self.conn.executemany(
+            "UPDATE files SET duration = NULL, audio_fingerprint = NULL WHERE path = ?",
             [(path,) for path in paths],
         )
         self.conn.commit()
@@ -252,7 +269,8 @@ class Cache:
                 COALESCE(SUM(CASE WHEN full_hash IS NOT NULL THEN 1 ELSE 0 END), 0) AS full_hashed,
                 COALESCE(SUM(CASE WHEN duration IS NOT NULL THEN 1 ELSE 0 END), 0) AS durations,
                 COALESCE(SUM(CASE WHEN fingerprint IS NOT NULL THEN 1 ELSE 0 END), 0) AS fingerprints,
-                COALESCE(SUM(CASE WHEN image_fingerprint IS NOT NULL THEN 1 ELSE 0 END), 0) AS image_fingerprints
+                COALESCE(SUM(CASE WHEN image_fingerprint IS NOT NULL THEN 1 ELSE 0 END), 0) AS image_fingerprints,
+                COALESCE(SUM(CASE WHEN audio_fingerprint IS NOT NULL THEN 1 ELSE 0 END), 0) AS audio_fingerprints
             FROM files
             """
         ).fetchone()

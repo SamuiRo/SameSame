@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from itertools import combinations
 
-from .models import ClusterAssignment, ExactDuplicateGroup, FileRecord, FolderPair, ImageMatch, NormalizedName, VideoMatch
+from .models import (
+    AudioMatch,
+    ClusterAssignment,
+    ExactDuplicateGroup,
+    FileRecord,
+    FolderPair,
+    ImageMatch,
+    NormalizedName,
+    VideoMatch,
+)
 
 
 def build_cluster_assignments(
@@ -11,6 +20,7 @@ def build_cluster_assignments(
     video_matches: list[VideoMatch],
     normalized: dict[str, NormalizedName],
     image_matches: list[ImageMatch] | None = None,
+    audio_matches: list[AudioMatch] | None = None,
 ) -> dict[str, ClusterAssignment]:
     assignments: dict[str, ClusterAssignment] = {}
     parent: dict[str, str] = {}
@@ -38,6 +48,8 @@ def build_cluster_assignments(
         union(match.left, match.right)
     for match in image_matches or []:
         union(match.left, match.right)
+    for match in audio_matches or []:
+        union(match.left, match.right)
 
     content_groups: dict[str, list[str]] = {}
     for path in parent:
@@ -50,11 +62,19 @@ def build_cluster_assignments(
         component_image_matches = [
             match for match in image_matches or [] if match.left in path_set and match.right in path_set
         ]
-        if component_video_matches and component_image_matches:
+        component_audio_matches = [
+            match for match in audio_matches or [] if match.left in path_set and match.right in path_set
+        ]
+        component_types = sum(
+            bool(matches)
+            for matches in (component_video_matches, component_image_matches, component_audio_matches)
+        )
+        if component_types > 1:
             level = "content"
             confidence = min(
                 [match.similarity for match in component_video_matches]
                 + [match.similarity for match in component_image_matches]
+                + [match.similarity for match in component_audio_matches]
             )
         elif component_video_matches:
             level = "video"
@@ -62,6 +82,9 @@ def build_cluster_assignments(
         elif component_image_matches:
             level = "image"
             confidence = min(match.similarity for match in component_image_matches)
+        elif component_audio_matches:
+            level = "audio"
+            confidence = min(match.similarity for match in component_audio_matches)
         else:
             level = "exact"
             confidence = 100.0
@@ -100,7 +123,7 @@ def compare_folders(
         for record in folder_records:
             assignment = assignments[record.path_key]
             ids.add(assignment.cluster_id)
-            if assignment.level in {"exact", "video", "image", "content"}:
+            if assignment.level in {"exact", "video", "image", "audio", "content"}:
                 content_ids.add(assignment.cluster_id)
             else:
                 # Unconfirmed files cannot contribute to the content-backed
@@ -137,7 +160,7 @@ def compare_folders(
                     "cluster_id": cluster_id,
                     "level": assignment.level,
                     "confidence": assignment.confidence,
-                    "content_backed": assignment.level in {"exact", "video", "image", "content"},
+                    "content_backed": assignment.level in {"exact", "video", "image", "audio", "content"},
                     "left_paths": sorted(cluster_to_paths.get((left, cluster_id), [])),
                     "right_paths": sorted(cluster_to_paths.get((right, cluster_id), [])),
                 }

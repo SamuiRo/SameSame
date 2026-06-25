@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -39,7 +40,7 @@ class CoreTests(unittest.TestCase):
                     {
                         "folders": ["from-config"],
                         "reports": {"html": "from-config.html", "json": "from-config.json"},
-                        "matching": {"video": 80, "image": 88, "folder": 40, "name": 85},
+                        "matching": {"video": 80, "image": 88, "audio": 87, "folder": 40, "name": 85},
                         "names": {
                             "name_provider": "lmstudio",
                             "lmstudio_url": "http://localhost:1234/v1",
@@ -47,6 +48,7 @@ class CoreTests(unittest.TestCase):
                         },
                         "video": {"skip": True},
                         "images": {"skip": True, "max_candidates": 175},
+                        "audio": {"skip": True},
                         "workers": 2,
                     }
                 ),
@@ -63,10 +65,13 @@ class CoreTests(unittest.TestCase):
                     "from-cli.html",
                     "--video-threshold",
                     "95",
+                    "--audio-threshold",
+                    "93",
                     "--name-provider",
                     "none",
                     "--no-skip-video",
                     "--no-skip-images",
+                    "--no-skip-audio",
                     "--workers",
                     "6",
                 ]
@@ -77,10 +82,12 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(str(config.json_output), "from-config.json")
         self.assertEqual(config.video_threshold, 95)
         self.assertEqual(config.image_threshold, 88)
+        self.assertEqual(config.audio_threshold, 93)
         self.assertEqual(config.folder_threshold, 40)
         self.assertEqual(config.name_provider, "none")
         self.assertFalse(config.skip_video)
         self.assertFalse(config.skip_images)
+        self.assertFalse(config.skip_audio)
         self.assertEqual(config.max_image_candidates, 175)
         self.assertEqual(config.workers, 6)
 
@@ -88,6 +95,38 @@ class CoreTests(unittest.TestCase):
         config = parse_args(["--inspect-cache", "--cache", "example.sqlite3"])
         self.assertTrue(config.inspect_cache)
         self.assertEqual(config.folders, [])
+
+    def test_cache_migrates_older_database_with_audio_fingerprint_column(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "cache.sqlite3"
+            connection = sqlite3.connect(cache_path)
+            try:
+                connection.execute(
+                    """
+                    CREATE TABLE files (
+                        path TEXT PRIMARY KEY,
+                        size INTEGER NOT NULL,
+                        mtime REAL NOT NULL,
+                        partial_hash TEXT,
+                        full_hash TEXT,
+                        duration REAL,
+                        fingerprint TEXT,
+                        image_fingerprint TEXT,
+                        raw_name TEXT NOT NULL
+                    )
+                    """
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            with Cache(cache_path) as cache:
+                columns = {
+                    row["name"]
+                    for row in cache.conn.execute("PRAGMA table_info(files)")
+                }
+
+            self.assertIn("audio_fingerprint", columns)
 
     def test_scan_deduplicates_resolved_paths_from_overlapping_roots(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

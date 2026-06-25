@@ -369,9 +369,15 @@ def find_name_hints(
     exact_cluster_paths: set[str],
     video_cluster_paths: set[str],
     image_cluster_paths: set[str] | None = None,
+    audio_cluster_paths: set[str] | None = None,
     fuzzy_threshold: float = 92.0,
 ) -> list[NameHint]:
-    confirmed_paths = exact_cluster_paths | video_cluster_paths | (image_cluster_paths or set())
+    confirmed_paths = (
+        exact_cluster_paths
+        | video_cluster_paths
+        | (image_cluster_paths or set())
+        | (audio_cluster_paths or set())
+    )
     by_key: dict[tuple[str, int | None, int | None], list[FileRecord]] = {}
     for record in records:
         name = normalized.get(record.raw_name)

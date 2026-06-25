@@ -18,15 +18,18 @@ Implemented:
 - image similarity using perceptual structure plus average color;
 - default image support for JPG/JPEG, PNG, WebP, BMP, GIF, TIFF;
 - image matching across resize, JPEG recompression, and common format changes;
-- separate cached video and image fingerprints in SQLite;
-- transitive content clusters combining exact relationships with video or image
+- audio similarity using ffmpeg's Chromaprint muxer;
+- default audio support for MP3, FLAC, WAV, M4A, AAC, Ogg, Opus, WMA, AIFF;
+- audio matching across codec, bitrate, container, and moderate volume changes;
+- separate cached video, image, and audio fingerprints in SQLite;
+- transitive content clusters combining exact relationships with video, image, or audio
   similarity relationships;
 - corrected folder Jaccard scoring that includes unmatched files in the union;
-- HTML and JSON reports with exact, video, image, folder, and name sections;
+- HTML and JSON reports with exact, video, image, audio, folder, and name sections;
 - optional Anthropic, LM Studio, or local heuristic title normalization;
 - threshold-safe candidate blocking for large video and image candidate sets;
 - deduplication of resolved file paths discovered through overlapping roots;
-- automatic migration of older cache databases with the new image column.
+- automatic migration of older cache databases with image/audio columns.
 
 The program is report-only. It does not move, merge, rename, or delete files.
 
@@ -36,22 +39,23 @@ The program is report-only. It does not move, merge, rename, or delete files.
 - Multiple input roots: finds duplicates within and across all trees and also
   calculates folder-pair similarity.
 - Traversal is recursive through all nested subfolders.
-- Default scanning covers common video and image formats.
-- Audio can be explicitly included for exact byte-identical matching only.
+- Default scanning covers common video, image, and audio formats.
 
 ## Verification Completed
 
-The available suite currently contains 19 unit/integration tests.
+The available suite currently contains 23 unit/integration tests.
 
-- All 19 pass under both `unittest` and pytest in the project-local Python
+- All 23 pass under both `unittest` and pytest in the project-local Python
   3.11.9 virtual environment with all runtime/dev dependencies installed.
 - Ruff passes with no findings.
 - A real ffmpeg integration test passes with ffmpeg/ffprobe
   `2026-06-15-git-44d082edc8`. It generates a short source video, a resized
   recompressed AVI, an MKV with one second appended, and an unrelated control.
+- A real audio integration test generates WAV sources and confirms matching
+  across MP3, FLAC, and volume changes while rejecting an unrelated recording.
 - Python compilation, JSON config parsing, cache migration, CLI startup, and
   `git diff --check` pass.
-- Isolated package builds produce both the `samesame-1.3.0` source archive and
+- Isolated package builds produce both the `samesame-1.4.0` source archive and
   universal wheel.
 - A recursive CLI test confirms that a resized/recompressed JPEG in a nested
   folder matches its PNG source and appears in HTML/JSON and folder clusters.
@@ -81,8 +85,8 @@ in this session uses the absolute executable paths.
 
 ## Important Known Limitations
 
-- Audio has no perceptual fingerprinting. Different MP3/FLAC/WAV encodes of the
-  same recording are not recognized as similar.
+- Audio matching is not designed for substantial remixes, speed/pitch changes,
+  or long inserted/removed sections.
 - Image matching is not designed yet for heavy cropping, arbitrary rotation,
   large overlays/watermarks, or major edits.
 - Animated GIF and multi-page TIFF matching currently uses the first decoded
@@ -96,9 +100,10 @@ in this session uses the absolute executable paths.
 
 Suggested order:
 
-1. Add perceptual audio fingerprinting and default audio extensions.
-2. Build a representative media fixture corpus and tune image/video thresholds
+1. Build a representative media fixture corpus and tune image/video/audio thresholds
    using measured false-positive and false-negative rates.
+2. Add threshold-safe candidate blocking if large audio duration buckets become
+   a measured performance problem.
 3. Improve image robustness for rotation/cropping only if real collections
    demonstrate the need.
 4. Consider report UX improvements such as thumbnails, media metadata, cluster
@@ -106,10 +111,9 @@ Suggested order:
 
 ## Working Tree Handoff
 
-Scanner path deduplication, duration-aligned video matching, and their tests
-were committed in `a94cf73`. At the time of this update, only the Python 3.11
-verification/status update and packaging metadata cleanup are uncommitted. A
-new session should begin with:
+The Python 3.11 verification and packaging cleanup were committed in `2dcf2fd`.
+At the time of this update, Chromaprint audio support, version 1.4.0 metadata,
+documentation, and tests are uncommitted. A new session should begin with:
 
 ```powershell
 git status --short
@@ -118,7 +122,7 @@ python -m unittest discover -s tests -v
 ```
 
 Do not discard the existing changes. Review and commit them as one coherent
-environment-verification and packaging cleanup when ready.
+audio-fingerprinting feature when ready.
 
 ## Suggested Prompt for a New Chat
 

@@ -35,7 +35,20 @@ IMAGE_EXTENSIONS = {
     ".tiff",
 }
 
-DEFAULT_EXTENSIONS = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS
+AUDIO_EXTENSIONS = {
+    ".mp3",
+    ".flac",
+    ".wav",
+    ".m4a",
+    ".aac",
+    ".ogg",
+    ".opus",
+    ".wma",
+    ".aiff",
+    ".aif",
+}
+
+DEFAULT_EXTENSIONS = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS
 
 LOGGER = logging.getLogger(__name__)
 
@@ -52,6 +65,10 @@ def is_video_path(path: Path) -> bool:
 
 def is_image_path(path: Path) -> bool:
     return path.suffix.lower() in IMAGE_EXTENSIONS
+
+
+def is_audio_path(path: Path) -> bool:
+    return path.suffix.lower() in AUDIO_EXTENSIONS
 
 
 def scan_folders(folders: Iterable[Path], extensions: set[str], cache: Cache) -> list[FileRecord]:

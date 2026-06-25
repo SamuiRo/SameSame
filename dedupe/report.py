@@ -59,6 +59,17 @@ def write_html_report(report: DedupeReport, path: Path) -> None:
             """
         )
 
+    audio_items = []
+    for match in report.audio_matches:
+        audio_items.append(
+            f"""
+            <details>
+              <summary>{match.similarity:.2f}% Â· Î” {match.duration_delta:.3f}s</summary>
+              {_path_list([match.left, match.right])}
+            </details>
+            """
+        )
+
     folder_items = []
     for pair in report.folder_pairs:
         matched = "".join(
@@ -199,11 +210,12 @@ def write_html_report(report: DedupeReport, path: Path) -> None:
 <body>
   <header>
     <h1>Duplicate Media Report</h1>
-    <p class="muted">Scanned {report.scanned_files} files. Exact, video, and image matches are content-backed; name hints and name-assisted folder scores are lower confidence.</p>
+    <p class="muted">Scanned {report.scanned_files} files. Exact, video, image, and audio matches are content-backed; name hints and name-assisted folder scores are lower confidence.</p>
     <div class="stats">
       <div class="stat"><strong>{len(report.exact_duplicates)}</strong>Exact groups</div>
       <div class="stat"><strong>{len(report.video_matches)}</strong>Video matches</div>
       <div class="stat"><strong>{len(report.image_matches)}</strong>Image matches</div>
+      <div class="stat"><strong>{len(report.audio_matches)}</strong>Audio matches</div>
       <div class="stat"><strong>{len(report.folder_pairs)}</strong>Folder pairs</div>
       <div class="stat"><strong>{len(report.name_hints)}</strong>Name hints</div>
     </div>
@@ -215,6 +227,8 @@ def write_html_report(report: DedupeReport, path: Path) -> None:
     {''.join(video_items) or '<p class="muted">No similar videos found above threshold.</p>'}
     <h2>Схожі зображення</h2>
     {''.join(image_items) or '<p class="muted">No similar images found above threshold.</p>'}
+    <h2>Схожі аудіозаписи</h2>
+    {''.join(audio_items) or '<p class="muted">No similar audio found above threshold.</p>'}
     <h2>Пари тек</h2>
     {''.join(folder_items) or '<p class="muted">No folder pairs found above threshold.</p>'}
     <h2>Підказки за назвою</h2>
