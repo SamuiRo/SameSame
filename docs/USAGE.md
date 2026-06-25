@@ -75,9 +75,9 @@ All supported files below each input root are scanned recursively. Duplicate
 files are searched both inside each root and across different roots. Folder-pair
 scores are produced only when at least two roots are supplied.
 
-Avoid supplying overlapping roots such as both `D:\Media` and
-`D:\Media\Photos` in the same run. Deduplicating identical paths discovered
-through overlapping roots is a planned improvement.
+Overlapping roots such as both `D:\Media` and `D:\Media\Photos` are supported.
+Each resolved file path is scanned only once and is assigned to the first input
+root through which it was discovered.
 
 The output contains:
 
@@ -174,7 +174,9 @@ Exact duplicate groups are safe candidates for manual deletion review because
 they have identical full hashes.
 
 Similar video matches are strong candidates for manual review. They may differ
-by container, bitrate, resolution, or encoding settings.
+by container, bitrate, resolution, or encoding settings. When durations differ
+slightly, SameSame also aligns sampled frames from the start and end to tolerate
+short added or removed intros/outros.
 
 Similar image matches can survive resizing, JPEG recompression, and conversion
 between supported formats. They remain review candidates: heavy crops, arbitrary

@@ -7,7 +7,8 @@ may exist under different filenames, encodes, sizes, formats, or folder structur
 It detects:
 
 - exact byte-identical duplicates by partial and full hashing;
-- similar video content by ffmpeg frame fingerprints;
+- similar video content by ffmpeg frame fingerprints with start/end alignment
+  for small duration changes;
 - similar images after resize, recompression, or format conversion by perceptual fingerprints;
 - overlapping folders by canonical cluster IDs;
 - low-confidence name-only hints using Anthropic, LM Studio, or local heuristics.

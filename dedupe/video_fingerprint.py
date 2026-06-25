@@ -121,10 +121,18 @@ def phash(image: Image.Image, hash_size: int = 8, highfreq_factor: int = 4) -> i
     return value
 
 
-def fingerprint_video(path: Path, duration: float, ffmpeg: str) -> list[int] | None:
+def fingerprint_video(
+    path: Path,
+    duration: float,
+    ffmpeg: str,
+    *,
+    sample_span: float | None = None,
+    start_offset: float = 0.0,
+) -> list[int] | None:
+    span = duration if sample_span is None else min(sample_span, max(0.0, duration - start_offset))
     hashes: list[int] = []
     for fraction in SAMPLE_POINTS:
-        timestamp = max(0.0, duration * fraction)
+        timestamp = max(0.0, start_offset + span * fraction)
         frame = _extract_frame(path, timestamp, ffmpeg)
         if frame is None:
             return None
@@ -206,6 +214,36 @@ def _ensure_fingerprint(record: FileRecord, ffmpeg: str) -> tuple[str, list[int]
     return record.path_key, fingerprint_video(record.path, record.duration, ffmpeg)
 
 
+def _duration_aligned_similarity(
+    left: FileRecord,
+    right: FileRecord,
+    ffmpeg: str,
+    cache: dict[tuple[str, float, float], list[int] | None],
+) -> float:
+    if left.duration is None or right.duration is None or left.fingerprint is None or right.fingerprint is None:
+        return 0.0
+    shorter, longer = (left, right) if left.duration <= right.duration else (right, left)
+    duration_delta = longer.duration - shorter.duration
+    if duration_delta <= 0.05:
+        return hamming_similarity(left.fingerprint, right.fingerprint)
+
+    best = 0.0
+    for start_offset in (0.0, duration_delta):
+        key = (longer.path_key, round(shorter.duration, 3), round(start_offset, 3))
+        if key not in cache:
+            cache[key] = fingerprint_video(
+                longer.path,
+                longer.duration,
+                ffmpeg,
+                sample_span=shorter.duration,
+                start_offset=start_offset,
+            )
+        aligned = cache[key]
+        if aligned:
+            best = max(best, hamming_similarity(shorter.fingerprint, aligned))
+    return best
+
+
 def find_video_matches(
     records: list[FileRecord],
     cache: Cache,
@@ -247,6 +285,7 @@ def find_video_matches(
 
     matches: list[VideoMatch] = []
     seen: set[tuple[str, str]] = set()
+    aligned_fingerprints: dict[tuple[str, float, float], list[int] | None] = {}
     bucket_keys = sorted(buckets)
     for key in bucket_keys:
         candidates: list[FileRecord] = []
@@ -265,6 +304,11 @@ def find_video_matches(
             if delta > duration_tolerance:
                 continue
             similarity = hamming_similarity(left.fingerprint, right.fingerprint)
+            if similarity < threshold and delta > 0.05:
+                similarity = max(
+                    similarity,
+                    _duration_aligned_similarity(left, right, ffmpeg, aligned_fingerprints),
+                )
             if threshold <= similarity:
                 matches.append(VideoMatch(pair[0], pair[1], round(similarity, 2), round(delta, 3)))
     matches.sort(key=lambda item: (-item.similarity, item.left, item.right))

@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from dedupe.cache import Cache
 from dedupe.cli import parse_args
@@ -11,6 +12,7 @@ from dedupe.exact_hash import find_exact_duplicates
 from dedupe.folder_compare import build_cluster_assignments, compare_folders
 from dedupe.models import ExactDuplicateGroup, FileRecord, NormalizedName
 from dedupe.name_normalizer import PROMPT_HASH, _coerce_normalized_results, _extract_json_object, fallback_normalize
+from dedupe.scanner import scan_folders
 from dedupe.video_fingerprint import find_video_matches
 
 
@@ -87,6 +89,21 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(config.inspect_cache)
         self.assertEqual(config.folders, [])
 
+    def test_scan_deduplicates_resolved_paths_from_overlapping_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            nested = base / "nested"
+            nested.mkdir()
+            media = nested / "episode.mkv"
+            media.write_bytes(b"media")
+
+            with Cache(base / "cache.sqlite3") as cache:
+                records = scan_folders([base, nested], {".mkv"}, cache)
+
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0].path, media.resolve())
+            self.assertEqual(records[0].root, base.resolve())
+
     def test_name_cache_is_provider_model_prompt_aware(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with Cache(Path(tmp) / "cache.sqlite3") as cache:
@@ -157,6 +174,37 @@ class CoreTests(unittest.TestCase):
 
             self.assertEqual(len(matches), 1)
             self.assertEqual(matches[0].similarity, 100.0)
+
+    def test_video_match_realigns_samples_for_small_duration_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            records = [
+                FileRecord(base / "short.mp4", base, 100, 1, "short", duration=60.0, fingerprint=[0] * 5),
+                FileRecord(
+                    base / "extended.mkv",
+                    base,
+                    200,
+                    1,
+                    "extended",
+                    duration=61.0,
+                    fingerprint=[(1 << 64) - 1] * 5,
+                ),
+            ]
+            with Cache(base / "cache.sqlite3") as cache:
+                cache.upsert_files(records)
+                with patch("dedupe.video_fingerprint.fingerprint_video", return_value=[0] * 5):
+                    matches = find_video_matches(
+                        records,
+                        cache,
+                        threshold=90,
+                        ffmpeg="unused",
+                        ffprobe="unused",
+                        workers=1,
+                    )
+
+            self.assertEqual(len(matches), 1)
+            self.assertEqual(matches[0].similarity, 100.0)
+            self.assertEqual(matches[0].duration_delta, 1.0)
 
     def test_large_video_bucket_blocking_keeps_near_duplicate_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
