@@ -31,7 +31,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "extensions": None,
     "video_threshold": 90.0,
     "image_threshold": 90.0,
-    "audio_threshold": 90.0,
+    "audio_threshold": 94.0,
     "folder_threshold": 50.0,
     "name_threshold": 92.0,
     "name_provider": "auto",

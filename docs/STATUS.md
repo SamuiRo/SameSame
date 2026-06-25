@@ -28,6 +28,8 @@ Implemented:
 - HTML and JSON reports with exact, video, image, audio, folder, and name sections;
 - optional Anthropic, LM Studio, or local heuristic title normalization;
 - threshold-safe candidate blocking for large video and image candidate sets;
+- reproducible synthetic/manifest threshold benchmark with FP/FN metrics;
+- measured audio default threshold of 94% based on the baseline corpus;
 - deduplication of resolved file paths discovered through overlapping roots;
 - automatic migration of older cache databases with image/audio columns.
 
@@ -43,9 +45,9 @@ The program is report-only. It does not move, merge, rename, or delete files.
 
 ## Verification Completed
 
-The available suite currently contains 23 unit/integration tests.
+The available suite currently contains 25 unit/integration tests.
 
-- All 23 pass under both `unittest` and pytest in the project-local Python
+- All 25 pass under both `unittest` and pytest in the project-local Python
   3.11.9 virtual environment with all runtime/dev dependencies installed.
 - Ruff passes with no findings.
 - A real ffmpeg integration test passes with ffmpeg/ffprobe
@@ -61,6 +63,10 @@ The available suite currently contains 23 unit/integration tests.
   folder matches its PNG source and appears in HTML/JSON and folder clusters.
 - Candidate blocking was checked against generated passing pairs without
   observed false negatives.
+- The 27-pair synthetic threshold corpus is recorded in
+  `docs/threshold-baseline.json`: image 90% and audio 94% produce zero measured
+  errors; video 90% has two synthetic low-texture false negatives and no false
+  positives.
 
 ## Development Environment
 
@@ -100,8 +106,9 @@ in this session uses the absolute executable paths.
 
 Suggested order:
 
-1. Build a representative media fixture corpus and tune image/video/audio thresholds
-   using measured false-positive and false-negative rates.
+1. Add labeled pairs from representative real collections using
+   `docs/threshold-manifest.example.json`, especially hard video negatives and
+   low-texture video variants.
 2. Add threshold-safe candidate blocking if large audio duration buckets become
    a measured performance problem.
 3. Improve image robustness for rotation/cropping only if real collections
@@ -111,8 +118,8 @@ Suggested order:
 
 ## Working Tree Handoff
 
-The Python 3.11 verification and packaging cleanup were committed in `2dcf2fd`.
-At the time of this update, Chromaprint audio support, version 1.4.0 metadata,
+Chromaprint audio support was committed in `4b4a4af`. At the time of this
+update, threshold benchmarking, the 94% audio default, baseline results,
 documentation, and tests are uncommitted. A new session should begin with:
 
 ```powershell
@@ -122,7 +129,7 @@ python -m unittest discover -s tests -v
 ```
 
 Do not discard the existing changes. Review and commit them as one coherent
-audio-fingerprinting feature when ready.
+threshold-benchmarking and tuning change when ready.
 
 ## Suggested Prompt for a New Chat
 

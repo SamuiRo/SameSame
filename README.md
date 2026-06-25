@@ -101,6 +101,12 @@ Inspect the cache without scanning folders:
 samesame --inspect-cache --cache .dedupe_cache.sqlite3
 ```
 
+Benchmark matching thresholds:
+
+```powershell
+samesame-benchmark --ffmpeg ffmpeg --ffprobe ffprobe --output threshold-benchmark.json
+```
+
 ## Name Providers
 
 Anthropic:
@@ -140,5 +146,6 @@ similarity.
 
 - [Usage guide](docs/USAGE.md)
 - [Configuration reference](docs/CONFIG.md)
+- [Threshold benchmarking](docs/THRESHOLDS.md)
 - [Example config](docs/samesame.example.json)
 - [Project status and roadmap](docs/STATUS.md)

@@ -1,0 +1,25 @@
+{
+  "pairs": [
+    {
+      "media_type": "image",
+      "name": "same-photo-recompressed",
+      "left": "../fixtures/photo.png",
+      "right": "../fixtures/photo-recompressed.jpg",
+      "expected_match": true
+    },
+    {
+      "media_type": "video",
+      "name": "different-episodes",
+      "left": "../fixtures/episode-01.mkv",
+      "right": "../fixtures/episode-02.mkv",
+      "expected_match": false
+    },
+    {
+      "media_type": "audio",
+      "name": "same-track-mp3-flac",
+      "left": "../fixtures/track.mp3",
+      "right": "../fixtures/track.flac",
+      "expected_match": true
+    }
+  ]
+}

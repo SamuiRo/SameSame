@@ -10,7 +10,7 @@
   "matching": {
     "video": 90,
     "image": 90,
-    "audio": 90,
+    "audio": 94,
     "folder": 50,
     "name": 92
   },
@@ -30,7 +30,7 @@
   },
   "audio": {
     "skip": false,
-    "threshold": 90
+    "threshold": 94
   },
   "extensions": [".mkv", ".mp4", ".avi", ".mov", ".ts", ".webm", ".jpg", ".jpeg", ".png", ".webp", ".mp3", ".flac", ".wav", ".m4a"],
   "workers": 4,

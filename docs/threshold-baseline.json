@@ -1,0 +1,211 @@
+{
+  "generated_at": "2026-06-25T15:20:29.464329+00:00",
+  "corpus": "synthetic",
+  "pair_count": 27,
+  "media": {
+    "image": {
+      "pairs": [
+        {
+          "name": "image-0-resize-jpeg",
+          "expected_match": true,
+          "similarity": 99.92
+        },
+        {
+          "name": "image-0-brightness-webp",
+          "expected_match": true,
+          "similarity": 98.01
+        },
+        {
+          "name": "image-1-resize-jpeg",
+          "expected_match": true,
+          "similarity": 99.95
+        },
+        {
+          "name": "image-1-brightness-webp",
+          "expected_match": true,
+          "similarity": 97.8
+        },
+        {
+          "name": "image-2-resize-jpeg",
+          "expected_match": true,
+          "similarity": 99.95
+        },
+        {
+          "name": "image-2-brightness-webp",
+          "expected_match": true,
+          "similarity": 95.04
+        },
+        {
+          "name": "image-negative-family-0-source-family-1-source",
+          "expected_match": false,
+          "similarity": 71.72
+        },
+        {
+          "name": "image-negative-family-0-source-family-2-source",
+          "expected_match": false,
+          "similarity": 55.08
+        },
+        {
+          "name": "image-negative-family-1-source-family-2-source",
+          "expected_match": false,
+          "similarity": 75.7
+        }
+      ],
+      "positive_count": 6,
+      "negative_count": 3,
+      "min_positive": 95.04,
+      "max_negative": 75.7,
+      "current": {
+        "threshold": 90.0,
+        "true_positives": 6,
+        "false_positives": 0,
+        "true_negatives": 3,
+        "false_negatives": 0
+      },
+      "recommended": {
+        "threshold": 90.0,
+        "true_positives": 6,
+        "false_positives": 0,
+        "true_negatives": 3,
+        "false_negatives": 0
+      },
+      "weighting": "false positives count as 5 errors; false negatives count as 1"
+    },
+    "video": {
+      "pairs": [
+        {
+          "name": "video-0-resize-reencode",
+          "expected_match": true,
+          "similarity": 94.38
+        },
+        {
+          "name": "video-0-duration-plus-one",
+          "expected_match": true,
+          "similarity": 99.38
+        },
+        {
+          "name": "video-1-resize-reencode",
+          "expected_match": true,
+          "similarity": 100.0
+        },
+        {
+          "name": "video-1-duration-plus-one",
+          "expected_match": true,
+          "similarity": 100.0
+        },
+        {
+          "name": "video-2-resize-reencode",
+          "expected_match": true,
+          "similarity": 74.38
+        },
+        {
+          "name": "video-2-duration-plus-one",
+          "expected_match": true,
+          "similarity": 83.12
+        },
+        {
+          "name": "video-negative-family-0-source-family-1-source",
+          "expected_match": false,
+          "similarity": 48.12
+        },
+        {
+          "name": "video-negative-family-0-source-family-2-source",
+          "expected_match": false,
+          "similarity": 50.62
+        },
+        {
+          "name": "video-negative-family-1-source-family-2-source",
+          "expected_match": false,
+          "similarity": 45.63
+        }
+      ],
+      "positive_count": 6,
+      "negative_count": 3,
+      "min_positive": 74.38,
+      "max_negative": 50.62,
+      "current": {
+        "threshold": 90.0,
+        "true_positives": 4,
+        "false_positives": 0,
+        "true_negatives": 3,
+        "false_negatives": 2
+      },
+      "recommended": {
+        "threshold": 74.38,
+        "true_positives": 6,
+        "false_positives": 0,
+        "true_negatives": 3,
+        "false_negatives": 0
+      },
+      "weighting": "false positives count as 5 errors; false negatives count as 1"
+    },
+    "audio": {
+      "pairs": [
+        {
+          "name": "audio-0-mp3",
+          "expected_match": true,
+          "similarity": 100.0
+        },
+        {
+          "name": "audio-0-quiet-flac",
+          "expected_match": true,
+          "similarity": 100.0
+        },
+        {
+          "name": "audio-1-mp3",
+          "expected_match": true,
+          "similarity": 100.0
+        },
+        {
+          "name": "audio-1-quiet-flac",
+          "expected_match": true,
+          "similarity": 100.0
+        },
+        {
+          "name": "audio-2-mp3",
+          "expected_match": true,
+          "similarity": 100.0
+        },
+        {
+          "name": "audio-2-quiet-flac",
+          "expected_match": true,
+          "similarity": 100.0
+        },
+        {
+          "name": "audio-negative-family-0-source-family-1-source",
+          "expected_match": false,
+          "similarity": 81.25
+        },
+        {
+          "name": "audio-negative-family-0-source-family-2-source",
+          "expected_match": false,
+          "similarity": 87.5
+        },
+        {
+          "name": "audio-negative-family-1-source-family-2-source",
+          "expected_match": false,
+          "similarity": 93.75
+        }
+      ],
+      "positive_count": 6,
+      "negative_count": 3,
+      "min_positive": 100.0,
+      "max_negative": 93.75,
+      "current": {
+        "threshold": 94.0,
+        "true_positives": 6,
+        "false_positives": 0,
+        "true_negatives": 3,
+        "false_negatives": 0
+      },
+      "recommended": {
+        "threshold": 94.0,
+        "true_positives": 6,
+        "false_positives": 0,
+        "true_negatives": 3,
+        "false_negatives": 0
+      },
+      "weighting": "false positives count as 5 errors; false negatives count as 1"
+    }
+  }
+}

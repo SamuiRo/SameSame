@@ -244,6 +244,27 @@ def _duration_aligned_similarity(
     return best
 
 
+def video_similarity(
+    left: FileRecord,
+    right: FileRecord,
+    ffmpeg: str,
+    aligned_cache: dict[tuple[str, float, float], list[int] | None] | None = None,
+) -> float:
+    if left.fingerprint is None or right.fingerprint is None:
+        return 0.0
+    similarity = hamming_similarity(left.fingerprint, right.fingerprint)
+    if (
+        left.duration is not None
+        and right.duration is not None
+        and abs(left.duration - right.duration) > 0.05
+    ):
+        similarity = max(
+            similarity,
+            _duration_aligned_similarity(left, right, ffmpeg, aligned_cache if aligned_cache is not None else {}),
+        )
+    return similarity
+
+
 def find_video_matches(
     records: list[FileRecord],
     cache: Cache,
@@ -305,10 +326,7 @@ def find_video_matches(
                 continue
             similarity = hamming_similarity(left.fingerprint, right.fingerprint)
             if similarity < threshold and delta > 0.05:
-                similarity = max(
-                    similarity,
-                    _duration_aligned_similarity(left, right, ffmpeg, aligned_fingerprints),
-                )
+                similarity = video_similarity(left, right, ffmpeg, aligned_fingerprints)
             if threshold <= similarity:
                 matches.append(VideoMatch(pair[0], pair[1], round(similarity, 2), round(delta, 3)))
     matches.sort(key=lambda item: (-item.similarity, item.left, item.right))

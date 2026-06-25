@@ -43,7 +43,7 @@ python dedupe.py --config samesame.json
   "extensions": [".mkv", ".mp4", ".jpg", ".jpeg", ".png", ".webp", ".mp3", ".flac"],
   "video_threshold": 90,
   "image_threshold": 90,
-  "audio_threshold": 90,
+  "audio_threshold": 94,
   "folder_threshold": 50,
   "name_threshold": 92,
   "name_provider": "lmstudio",
@@ -83,7 +83,7 @@ For readability, these nested sections are also supported:
   "matching": {
     "video": 90,
     "image": 90,
-    "audio": 90,
+    "audio": 94,
     "folder": 50,
     "name": 92
   },
@@ -103,7 +103,7 @@ For readability, these nested sections are also supported:
   },
   "audio": {
     "skip": false,
-    "threshold": 90
+    "threshold": 94
   },
   "extensions": [".mkv", ".mp4", ".avi", ".jpg", ".jpeg", ".png", ".webp", ".mp3", ".flac"],
   "workers": 4,
@@ -221,7 +221,7 @@ $env:LMSTUDIO_MODEL = "qwen2.5-7b-instruct"
 | `extensions` | common video, image, and audio extensions | File extensions to scan; a custom list replaces the defaults. |
 | `video_threshold` | `90` | Minimum video fingerprint similarity percent. |
 | `image_threshold` | `90` | Minimum perceptual image similarity percent. |
-| `audio_threshold` | `90` | Minimum Chromaprint audio similarity percent. |
+| `audio_threshold` | `94` | Minimum Chromaprint audio similarity percent. |
 | `folder_threshold` | `50` | Minimum folder Jaccard similarity percent. |
 | `name_threshold` | `92` | Minimum fuzzy name hint similarity percent. |
 | `name_provider` | `auto` | `auto`, `anthropic`, `lmstudio`, or `none`. |
