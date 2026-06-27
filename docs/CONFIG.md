@@ -41,7 +41,7 @@ python dedupe.py --config samesame.json
   "json_output": "reports/samesame.json",
   "cache": ".cache/samesame.sqlite3",
   "extensions": [".mkv", ".mp4", ".jpg", ".jpeg", ".png", ".webp", ".mp3", ".flac"],
-  "video_threshold": 90,
+  "video_threshold": 85,
   "image_threshold": 90,
   "audio_threshold": 94,
   "folder_threshold": 50,
@@ -81,7 +81,7 @@ For readability, these nested sections are also supported:
     "path": ".cache/samesame.sqlite3"
   },
   "matching": {
-    "video": 90,
+    "video": 85,
     "image": 90,
     "audio": 94,
     "folder": 50,
@@ -219,7 +219,7 @@ $env:LMSTUDIO_MODEL = "qwen2.5-7b-instruct"
 | `json_output` | `report.json` | Machine-readable JSON report path. |
 | `cache` | `.dedupe_cache.sqlite3` | SQLite cache path. |
 | `extensions` | common video, image, and audio extensions | File extensions to scan; a custom list replaces the defaults. |
-| `video_threshold` | `90` | Minimum video fingerprint similarity percent. |
+| `video_threshold` | `85` | Minimum sequence-aligned video fingerprint similarity percent. |
 | `image_threshold` | `90` | Minimum perceptual image similarity percent. |
 | `audio_threshold` | `94` | Minimum Chromaprint audio similarity percent. |
 | `folder_threshold` | `50` | Minimum folder Jaccard similarity percent. |
@@ -236,7 +236,7 @@ $env:LMSTUDIO_MODEL = "qwen2.5-7b-instruct"
 | `refresh_images` | `false` | Recompute image fingerprints for this run. |
 | `refresh_audio` | `false` | Recompute audio durations and fingerprints for this run. |
 | `refresh_names` | `false` | Recompute normalized names for this run. |
-| `max_video_candidates_per_bucket` | `250` | Above this duration-bucket size, use pHash blocking before pairwise video comparison. |
+| `max_video_candidates_per_bucket` | `250` | Reserved compatibility setting; sequence matching currently checks all duration-compatible pairs. |
 | `max_image_candidates` | `250` | Above this image count, use safe pHash blocking before pairwise comparison. |
 | `ffmpeg` | `ffmpeg` | ffmpeg executable path or name. |
 | `ffprobe` | `ffprobe` | ffprobe executable path or name. |

@@ -8,8 +8,8 @@ formats, or folder structures.
 It detects:
 
 - exact byte-identical duplicates by partial and full hashing;
-- similar video content by ffmpeg frame fingerprints with start/end alignment
-  for small duration changes;
+- similar video content using versioned 15-frame fingerprints, sequence
+  alignment, and alternate-cut duration gating;
 - similar images after resize, recompression, or format conversion by perceptual fingerprints;
 - similar audio across common encodes using ffmpeg Chromaprint fingerprints;
 - overlapping folders by canonical cluster IDs;

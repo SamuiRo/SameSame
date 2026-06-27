@@ -9,6 +9,9 @@ class LabeledScore:
     name: str
     expected_match: bool
     similarity: float
+    note: str | None = None
+    raw_similarity: float | None = None
+    eligible: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +71,16 @@ def recommend_threshold(scores: list[LabeledScore], current_threshold: float) ->
 def summarize_scores(scores: list[LabeledScore], current_threshold: float) -> dict[str, object]:
     positives = [score.similarity for score in scores if score.expected_match]
     negatives = [score.similarity for score in scores if not score.expected_match]
+    raw_positives = [
+        score.raw_similarity
+        for score in scores
+        if score.expected_match and score.raw_similarity is not None
+    ]
+    raw_negatives = [
+        score.raw_similarity
+        for score in scores
+        if not score.expected_match and score.raw_similarity is not None
+    ]
     current = evaluate_threshold(scores, current_threshold)
     recommended = recommend_threshold(scores, current_threshold)
     return {
@@ -76,6 +89,12 @@ def summarize_scores(scores: list[LabeledScore], current_threshold: float) -> di
         "negative_count": len(negatives),
         "min_positive": round(min(positives), 2) if positives else None,
         "max_negative": round(max(negatives), 2) if negatives else None,
+        "raw_min_positive": round(min(raw_positives), 2) if raw_positives else None,
+        "raw_max_negative": round(max(raw_negatives), 2) if raw_negatives else None,
+        "ineligible_count": sum(not score.eligible for score in scores),
+        "positive_ineligible_count": sum(
+            score.expected_match and not score.eligible for score in scores
+        ),
         "current": asdict(current),
         "recommended": asdict(recommended),
         "weighting": "false positives count as 5 errors; false negatives count as 1",

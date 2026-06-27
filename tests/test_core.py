@@ -12,9 +12,21 @@ from dedupe.cli import parse_args
 from dedupe.exact_hash import find_exact_duplicates
 from dedupe.folder_compare import build_cluster_assignments, compare_folders
 from dedupe.models import ExactDuplicateGroup, FileRecord, NormalizedName
-from dedupe.name_normalizer import PROMPT_HASH, _coerce_normalized_results, _extract_json_object, fallback_normalize
+from dedupe.name_normalizer import (
+    PROMPT_HASH,
+    _coerce_normalized_results,
+    _extract_json_object,
+    contextual_name,
+    fallback_normalize,
+    find_name_hints,
+    normalize_names,
+)
 from dedupe.scanner import scan_folders
-from dedupe.video_fingerprint import find_video_matches
+from dedupe.video_fingerprint import (
+    find_video_matches,
+    ordered_sequence_similarity,
+    video_durations_compatible,
+)
 
 
 class CoreTests(unittest.TestCase):
@@ -23,6 +35,45 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(result.core_title, "Show Name")
         self.assertEqual(result.episode, 1)
         self.assertIn("sub", result.flags)
+
+    def test_fallback_normalize_uses_last_number_as_episode(self) -> None:
+        result = fallback_normalize("Kutsujoku-2-The-Animation-1_sub")
+        self.assertEqual(result.episode, 1)
+        self.assertEqual(result.core_title, "Kutsujoku 2 The Animation")
+
+    def test_fallback_normalize_ignores_resolution_without_p_suffix(self) -> None:
+        result = fallback_normalize("Anehame-Ore-no-Hatsukoi_01_raw_720")
+        self.assertEqual(result.episode, 1)
+        self.assertEqual(result.core_title, "Anehame Ore no Hatsukoi raw 720")
+
+    def test_fallback_normalize_treats_alt_as_release_marker(self) -> None:
+        regular = fallback_normalize("Ane Chijo Max Heart Ep.4")
+        alternate = fallback_normalize("Ane Chijo Max Heart Ep.4 alt")
+        self.assertEqual(regular.cluster_key, alternate.cluster_key)
+
+    def test_contextual_name_uses_parent_for_generic_episode_filename(self) -> None:
+        root = Path("library").resolve()
+        first = FileRecord(root / "Season One" / "01 - Episode 1 [1080p].mp4", root, 1, 0, "01 - Episode 1 [1080p]")
+        second = FileRecord(root / "Season Two" / "01 - Episode 1 [1080p].mp4", root, 1, 0, "01 - Episode 1 [1080p]")
+        self.assertIn("Season One", contextual_name(first))
+        self.assertIn("Season Two", contextual_name(second))
+        self.assertNotEqual(contextual_name(first), contextual_name(second))
+
+    def test_generic_episode_names_in_different_seasons_do_not_create_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            records = [
+                FileRecord(root / season / "01 - Episode 1 [1080p].mp4", root, 1, 0, "01 - Episode 1 [1080p]")
+                for season in ("Main Series", "Full Moon Night R")
+            ]
+            with Cache(root / "cache.sqlite3") as cache:
+                normalized = normalize_names(records, cache, name_provider="none")
+                hints = find_name_hints(records, normalized, set(), set())
+            self.assertNotEqual(
+                normalized[records[0].path_key].cluster_key,
+                normalized[records[1].path_key].cluster_key,
+            )
+            self.assertEqual(hints, [])
 
     def test_lmstudio_json_helpers_parse_response_content(self) -> None:
         parsed = _extract_json_object('```json\n{"results":[{"id":0,"core_title":"Cowboy Bebop","year":1998,"episode":1,"flags":["dub"]}]}\n```')
@@ -127,6 +178,18 @@ class CoreTests(unittest.TestCase):
                 }
 
             self.assertIn("audio_fingerprint", columns)
+            self.assertIn("fingerprint_version", columns)
+
+    def test_cache_ignores_legacy_video_fingerprint_without_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            record = FileRecord(base / "video.mp4", base, 100, 1, "video", fingerprint=[0] * 5)
+            with Cache(base / "cache.sqlite3") as cache:
+                cache.upsert_file(record)
+                cache.conn.commit()
+                hydrated = FileRecord(base / "video.mp4", base, 100, 1, "video")
+                self.assertTrue(cache.hydrate_if_current(hydrated))
+            self.assertIsNone(hydrated.fingerprint)
 
     def test_scan_deduplicates_resolved_paths_from_overlapping_roots(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -214,6 +277,15 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(len(matches), 1)
             self.assertEqual(matches[0].similarity, 100.0)
 
+    def test_video_sequence_similarity_tolerates_inserted_samples(self) -> None:
+        source = [index << 56 for index in range(15)]
+        edited = source[:7] + [(1 << 64) - 1, (1 << 64) - 2] + source[7:]
+        self.assertGreaterEqual(ordered_sequence_similarity(source, edited), 95.0)
+
+    def test_video_duration_compatibility_rejects_compilation(self) -> None:
+        self.assertTrue(video_durations_compatible(1200.0, 1475.0))
+        self.assertFalse(video_durations_compatible(1200.0, 7200.0))
+
     def test_video_match_realigns_samples_for_small_duration_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -226,7 +298,7 @@ class CoreTests(unittest.TestCase):
                     1,
                     "extended",
                     duration=61.0,
-                    fingerprint=[(1 << 64) - 1] * 5,
+                    fingerprint=[(1 << 16) - 1] * 5,
                 ),
             ]
             with Cache(base / "cache.sqlite3") as cache:

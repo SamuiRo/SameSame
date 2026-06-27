@@ -171,8 +171,10 @@ they have identical full hashes.
 
 Similar video matches are strong candidates for manual review. They may differ
 by container, bitrate, resolution, or encoding settings. When durations differ
-slightly, SameSame also aligns sampled frames from the start and end to tolerate
-short added or removed intros/outros.
+SameSame aligns 15 sampled frames in sequence and checks start/end timing to
+tolerate ordinary alternate cuts, added credits, or removed intros. A duration
+ratio/delta gate rejects a single episode inside a much longer compilation;
+that relationship may still appear as a lower-confidence name hint.
 
 Similar image matches can survive resizing, JPEG recompression, and conversion
 between supported formats. They remain review candidates: heavy crops, arbitrary

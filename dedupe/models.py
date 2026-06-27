@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+VIDEO_FINGERPRINT_VERSION = 2
+
 
 @dataclass(slots=True)
 class FileRecord:
@@ -18,6 +20,7 @@ class FileRecord:
     full_hash_algo: str | None = None
     duration: float | None = None
     fingerprint: list[int] | None = None
+    fingerprint_version: int | None = None
     image_fingerprint: list[int] | None = None
     audio_fingerprint: list[int] | None = None
 

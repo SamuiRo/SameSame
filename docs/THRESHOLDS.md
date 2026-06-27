@@ -28,17 +28,22 @@ The baseline generated on 2026-06-25 produced:
 | Media | Current threshold | False positives | False negatives | Decision |
 | --- | ---: | ---: | ---: | --- |
 | Images | 90 | 0 | 0 | Keep 90. |
-| Videos | 90 | 0 | 2 | Keep 90 until representative real videos justify a lower value. |
-| Audio | 90 | 1 | 0 | Raise the default to 94. |
+| Videos | 85 | 0 | 2 | Use 85 with the versioned sequence fingerprint. |
+| Audio | 94 | 0 | 0 | Keep 94. |
 
 The video misses come from a synthetic `rgbtestsrc` pattern whose low-texture
-color bars are unusually sensitive to resize/re-encode changes. The generated
-corpus suggests 74.38 for zero errors, but that is too aggressive to apply to
-real collections without a larger negative set.
+color bars are unusually sensitive to resize/re-encode changes. Lower synthetic
+recommendations remain too aggressive to apply without a larger negative set.
 
 The audio false positive was a pair of distinct but harmonically simple
 synthetic signals scoring 93.75. A 94% default separates all current audio
 positives and negatives.
+
+The first 25-pair real video manifest uses 15 known matches and 10 hard
+negatives. At 85%, SameSame reports 5 content-backed matches and no measured
+false positives. Thirteen ordinary pairs pass the duration gate, while the
+single-episode-versus-compilation pair is rejected. Lower-scoring same-title
+pairs remain review/name hints instead of being promoted to content evidence.
 
 ## Evaluating Real Media
 

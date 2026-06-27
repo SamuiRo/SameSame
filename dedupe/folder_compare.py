@@ -95,7 +95,7 @@ def build_cluster_assignments(
     for record in records:
         if record.path_key in assignments:
             continue
-        name = normalized.get(record.raw_name)
+        name = normalized.get(record.path_key) or normalized.get(record.raw_name)
         if name and name.core_title:
             title, year, episode = name.cluster_key
             cluster_id = f"name:{title}|{year}|{episode}"

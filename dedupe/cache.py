@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Iterable
 
-from .models import FileRecord, NormalizedName
+from .models import VIDEO_FINGERPRINT_VERSION, FileRecord, NormalizedName
 
 
 class Cache:
@@ -39,6 +39,7 @@ class Cache:
                 full_hash_algo TEXT,
                 duration REAL,
                 fingerprint TEXT,
+                fingerprint_version INTEGER,
                 image_fingerprint TEXT,
                 audio_fingerprint TEXT,
                 raw_name TEXT NOT NULL
@@ -64,6 +65,7 @@ class Cache:
         self._ensure_column("files", "full_hash_algo", "TEXT")
         self._ensure_column("files", "image_fingerprint", "TEXT")
         self._ensure_column("files", "audio_fingerprint", "TEXT")
+        self._ensure_column("files", "fingerprint_version", "INTEGER")
         self._ensure_column("name_cache", "provider", "TEXT")
         self._ensure_column("name_cache", "model", "TEXT")
         self._ensure_column("name_cache", "prompt_hash", "TEXT")
@@ -89,7 +91,12 @@ class Cache:
         record.full_hash = row["full_hash"]
         record.full_hash_algo = row["full_hash_algo"]
         record.duration = row["duration"]
-        record.fingerprint = json.loads(row["fingerprint"]) if row["fingerprint"] else None
+        record.fingerprint_version = row["fingerprint_version"]
+        record.fingerprint = (
+            json.loads(row["fingerprint"])
+            if row["fingerprint"] and record.fingerprint_version == VIDEO_FINGERPRINT_VERSION
+            else None
+        )
         record.image_fingerprint = json.loads(row["image_fingerprint"]) if row["image_fingerprint"] else None
         record.audio_fingerprint = json.loads(row["audio_fingerprint"]) if row["audio_fingerprint"] else None
         record.raw_name = row["raw_name"]
@@ -100,10 +107,10 @@ class Cache:
             """
             INSERT INTO files(
                 path, size, mtime, partial_hash, partial_hash_algo, full_hash,
-                full_hash_algo, duration, fingerprint, image_fingerprint,
+                full_hash_algo, duration, fingerprint, fingerprint_version, image_fingerprint,
                 audio_fingerprint, raw_name
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
                 size = excluded.size,
                 mtime = excluded.mtime,
@@ -113,6 +120,7 @@ class Cache:
                 full_hash_algo = excluded.full_hash_algo,
                 duration = excluded.duration,
                 fingerprint = excluded.fingerprint,
+                fingerprint_version = excluded.fingerprint_version,
                 image_fingerprint = excluded.image_fingerprint,
                 audio_fingerprint = excluded.audio_fingerprint,
                 raw_name = excluded.raw_name
@@ -127,6 +135,7 @@ class Cache:
                 record.full_hash_algo,
                 record.duration,
                 json.dumps(record.fingerprint) if record.fingerprint is not None else None,
+                record.fingerprint_version,
                 json.dumps(record.image_fingerprint) if record.image_fingerprint is not None else None,
                 json.dumps(record.audio_fingerprint) if record.audio_fingerprint is not None else None,
                 record.raw_name,
@@ -156,8 +165,9 @@ class Cache:
         for record in records:
             record.duration = None
             record.fingerprint = None
+            record.fingerprint_version = None
         self.conn.executemany(
-            "UPDATE files SET duration = NULL, fingerprint = NULL WHERE path = ?",
+            "UPDATE files SET duration = NULL, fingerprint = NULL, fingerprint_version = NULL WHERE path = ?",
             [(path,) for path in paths],
         )
         self.conn.commit()

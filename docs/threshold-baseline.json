@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-25T15:20:29.464329+00:00",
+  "generated_at": "2026-06-27T08:01:08.099802+00:00",
   "corpus": "synthetic",
   "pair_count": 27,
   "media": {
@@ -8,53 +8,84 @@
         {
           "name": "image-0-resize-jpeg",
           "expected_match": true,
-          "similarity": 99.92
+          "similarity": 99.92,
+          "note": null,
+          "raw_similarity": 99.92,
+          "eligible": true
         },
         {
           "name": "image-0-brightness-webp",
           "expected_match": true,
-          "similarity": 98.01
+          "similarity": 98.01,
+          "note": null,
+          "raw_similarity": 98.01,
+          "eligible": true
         },
         {
           "name": "image-1-resize-jpeg",
           "expected_match": true,
-          "similarity": 99.95
+          "similarity": 99.95,
+          "note": null,
+          "raw_similarity": 99.95,
+          "eligible": true
         },
         {
           "name": "image-1-brightness-webp",
           "expected_match": true,
-          "similarity": 97.8
+          "similarity": 97.8,
+          "note": null,
+          "raw_similarity": 97.8,
+          "eligible": true
         },
         {
           "name": "image-2-resize-jpeg",
           "expected_match": true,
-          "similarity": 99.95
+          "similarity": 99.95,
+          "note": null,
+          "raw_similarity": 99.95,
+          "eligible": true
         },
         {
           "name": "image-2-brightness-webp",
           "expected_match": true,
-          "similarity": 95.04
+          "similarity": 95.04,
+          "note": null,
+          "raw_similarity": 95.04,
+          "eligible": true
         },
         {
           "name": "image-negative-family-0-source-family-1-source",
           "expected_match": false,
-          "similarity": 71.72
+          "similarity": 71.72,
+          "note": null,
+          "raw_similarity": 71.72,
+          "eligible": true
         },
         {
           "name": "image-negative-family-0-source-family-2-source",
           "expected_match": false,
-          "similarity": 55.08
+          "similarity": 55.08,
+          "note": null,
+          "raw_similarity": 55.08,
+          "eligible": true
         },
         {
           "name": "image-negative-family-1-source-family-2-source",
           "expected_match": false,
-          "similarity": 75.7
+          "similarity": 75.7,
+          "note": null,
+          "raw_similarity": 75.7,
+          "eligible": true
         }
       ],
       "positive_count": 6,
       "negative_count": 3,
       "min_positive": 95.04,
       "max_negative": 75.7,
+      "raw_min_positive": 95.04,
+      "raw_max_negative": 75.7,
+      "ineligible_count": 0,
+      "positive_ineligible_count": 0,
       "current": {
         "threshold": 90.0,
         "true_positives": 6,
@@ -76,62 +107,93 @@
         {
           "name": "video-0-resize-reencode",
           "expected_match": true,
-          "similarity": 94.38
+          "similarity": 98.54,
+          "note": null,
+          "raw_similarity": 98.54,
+          "eligible": true
         },
         {
           "name": "video-0-duration-plus-one",
           "expected_match": true,
-          "similarity": 99.38
+          "similarity": 99.38,
+          "note": null,
+          "raw_similarity": 99.38,
+          "eligible": true
         },
         {
           "name": "video-1-resize-reencode",
           "expected_match": true,
-          "similarity": 100.0
+          "similarity": 100.0,
+          "note": null,
+          "raw_similarity": 100.0,
+          "eligible": true
         },
         {
           "name": "video-1-duration-plus-one",
           "expected_match": true,
-          "similarity": 100.0
+          "similarity": 100.0,
+          "note": null,
+          "raw_similarity": 100.0,
+          "eligible": true
         },
         {
           "name": "video-2-resize-reencode",
           "expected_match": true,
-          "similarity": 74.38
+          "similarity": 73.75,
+          "note": null,
+          "raw_similarity": 73.75,
+          "eligible": true
         },
         {
           "name": "video-2-duration-plus-one",
           "expected_match": true,
-          "similarity": 83.12
+          "similarity": 82.92,
+          "note": null,
+          "raw_similarity": 82.92,
+          "eligible": true
         },
         {
           "name": "video-negative-family-0-source-family-1-source",
           "expected_match": false,
-          "similarity": 48.12
+          "similarity": 48.33,
+          "note": null,
+          "raw_similarity": 48.33,
+          "eligible": true
         },
         {
           "name": "video-negative-family-0-source-family-2-source",
           "expected_match": false,
-          "similarity": 50.62
+          "similarity": 50.83,
+          "note": null,
+          "raw_similarity": 50.83,
+          "eligible": true
         },
         {
           "name": "video-negative-family-1-source-family-2-source",
           "expected_match": false,
-          "similarity": 45.63
+          "similarity": 45.42,
+          "note": null,
+          "raw_similarity": 45.42,
+          "eligible": true
         }
       ],
       "positive_count": 6,
       "negative_count": 3,
-      "min_positive": 74.38,
-      "max_negative": 50.62,
+      "min_positive": 73.75,
+      "max_negative": 50.83,
+      "raw_min_positive": 73.75,
+      "raw_max_negative": 50.83,
+      "ineligible_count": 0,
+      "positive_ineligible_count": 0,
       "current": {
-        "threshold": 90.0,
+        "threshold": 85.0,
         "true_positives": 4,
         "false_positives": 0,
         "true_negatives": 3,
         "false_negatives": 2
       },
       "recommended": {
-        "threshold": 74.38,
+        "threshold": 73.75,
         "true_positives": 6,
         "false_positives": 0,
         "true_negatives": 3,
@@ -144,53 +206,84 @@
         {
           "name": "audio-0-mp3",
           "expected_match": true,
-          "similarity": 100.0
+          "similarity": 100.0,
+          "note": null,
+          "raw_similarity": 100.0,
+          "eligible": true
         },
         {
           "name": "audio-0-quiet-flac",
           "expected_match": true,
-          "similarity": 100.0
+          "similarity": 100.0,
+          "note": null,
+          "raw_similarity": 100.0,
+          "eligible": true
         },
         {
           "name": "audio-1-mp3",
           "expected_match": true,
-          "similarity": 100.0
+          "similarity": 100.0,
+          "note": null,
+          "raw_similarity": 100.0,
+          "eligible": true
         },
         {
           "name": "audio-1-quiet-flac",
           "expected_match": true,
-          "similarity": 100.0
+          "similarity": 100.0,
+          "note": null,
+          "raw_similarity": 100.0,
+          "eligible": true
         },
         {
           "name": "audio-2-mp3",
           "expected_match": true,
-          "similarity": 100.0
+          "similarity": 100.0,
+          "note": null,
+          "raw_similarity": 100.0,
+          "eligible": true
         },
         {
           "name": "audio-2-quiet-flac",
           "expected_match": true,
-          "similarity": 100.0
+          "similarity": 100.0,
+          "note": null,
+          "raw_similarity": 100.0,
+          "eligible": true
         },
         {
           "name": "audio-negative-family-0-source-family-1-source",
           "expected_match": false,
-          "similarity": 81.25
+          "similarity": 81.25,
+          "note": null,
+          "raw_similarity": 81.25,
+          "eligible": true
         },
         {
           "name": "audio-negative-family-0-source-family-2-source",
           "expected_match": false,
-          "similarity": 87.5
+          "similarity": 87.5,
+          "note": null,
+          "raw_similarity": 87.5,
+          "eligible": true
         },
         {
           "name": "audio-negative-family-1-source-family-2-source",
           "expected_match": false,
-          "similarity": 93.75
+          "similarity": 93.75,
+          "note": null,
+          "raw_similarity": 93.75,
+          "eligible": true
         }
       ],
       "positive_count": 6,
       "negative_count": 3,
       "min_positive": 100.0,
       "max_negative": 93.75,
+      "raw_min_positive": 100.0,
+      "raw_max_negative": 93.75,
+      "ineligible_count": 0,
+      "positive_ineligible_count": 0,
       "current": {
         "threshold": 94.0,
         "true_positives": 6,

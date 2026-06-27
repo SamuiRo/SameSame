@@ -18,6 +18,7 @@ from dedupe.video_fingerprint import (
     check_video_tools,
     fingerprint_video,
     get_duration,
+    video_durations_compatible,
     video_similarity,
 )
 
@@ -202,9 +203,12 @@ def _evaluate_pairs(pairs: list[PairSpec], ffmpeg: str, ffprobe: str) -> dict[st
     image_cache: dict[Path, list[int]] = {}
     video_cache: dict[Path, FileRecord] = {}
     audio_cache: dict[Path, list[int]] = {}
+    audio_duration_cache: dict[Path, float] = {}
     results: dict[str, list[LabeledScore]] = {"image": [], "video": [], "audio": []}
 
     for pair in pairs:
+        note = None
+        eligible = True
         if pair.media_type == "image":
             for path in (pair.left, pair.right):
                 if path not in image_cache:
@@ -213,6 +217,7 @@ def _evaluate_pairs(pairs: list[PairSpec], ffmpeg: str, ffprobe: str) -> dict[st
                         raise RuntimeError(f"Cannot fingerprint image: {path}")
                     image_cache[path] = fingerprint
             similarity = image_similarity(image_cache[pair.left], image_cache[pair.right])
+            raw_similarity = similarity
         elif pair.media_type == "video":
             for path in (pair.left, pair.right):
                 if path not in video_cache:
@@ -224,7 +229,21 @@ def _evaluate_pairs(pairs: list[PairSpec], ffmpeg: str, ffprobe: str) -> dict[st
                     if record.fingerprint is None:
                         raise RuntimeError(f"Cannot fingerprint video: {path}")
                     video_cache[path] = record
-            similarity = video_similarity(video_cache[pair.left], video_cache[pair.right], ffmpeg)
+            duration_delta = abs(
+                (video_cache[pair.left].duration or 0.0) - (video_cache[pair.right].duration or 0.0)
+            )
+            raw_similarity = video_similarity(video_cache[pair.left], video_cache[pair.right], ffmpeg)
+            if not video_durations_compatible(
+                video_cache[pair.left].duration or 0.0,
+                video_cache[pair.right].duration or 0.0,
+            ):
+                similarity = 0.0
+                eligible = False
+                note = (
+                    f"duration delta {duration_delta:.3f}s exceeds matcher ratio/delta limits"
+                )
+            else:
+                similarity = raw_similarity
         elif pair.media_type == "audio":
             for path in (pair.left, pair.right):
                 if path not in audio_cache:
@@ -232,11 +251,29 @@ def _evaluate_pairs(pairs: list[PairSpec], ffmpeg: str, ffprobe: str) -> dict[st
                     if fingerprint is None:
                         raise RuntimeError(f"Cannot fingerprint audio: {path}")
                     audio_cache[path] = fingerprint
-            similarity = audio_similarity(audio_cache[pair.left], audio_cache[pair.right])
+                    duration = get_duration(path, ffprobe)
+                    if duration is None:
+                        raise RuntimeError(f"Cannot read audio duration: {path}")
+                    audio_duration_cache[path] = duration
+            duration_delta = abs(audio_duration_cache[pair.left] - audio_duration_cache[pair.right])
+            raw_similarity = audio_similarity(audio_cache[pair.left], audio_cache[pair.right])
+            if duration_delta > 3.0:
+                similarity = 0.0
+                eligible = False
+                note = f"duration delta {duration_delta:.3f}s exceeds matcher tolerance 3.0s"
+            else:
+                similarity = raw_similarity
         else:
             raise ValueError(f"Unsupported media type: {pair.media_type}")
         results[pair.media_type].append(
-            LabeledScore(pair.name, pair.expected_match, round(similarity, 2))
+            LabeledScore(
+                pair.name,
+                pair.expected_match,
+                round(similarity, 2),
+                note,
+                round(raw_similarity, 2),
+                eligible,
+            )
         )
     return results
 
@@ -249,8 +286,8 @@ def main() -> int:
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--ffprobe", default="ffprobe")
     parser.add_argument("--image-threshold", type=float, default=90.0)
-    parser.add_argument("--video-threshold", type=float, default=90.0)
-    parser.add_argument("--audio-threshold", type=float, default=90.0)
+    parser.add_argument("--video-threshold", type=float, default=85.0)
+    parser.add_argument("--audio-threshold", type=float, default=94.0)
     args = parser.parse_args()
 
     ffmpeg, ffprobe = check_video_tools(args.ffmpeg, args.ffprobe)

@@ -13,8 +13,11 @@ Implemented:
 - recursive scanning of one or more input folder trees;
 - exact duplicate detection for every explicitly included file extension using
   partial and full hashes;
-- video similarity using five sampled ffmpeg frames and perceptual hashes;
+- video similarity using 15 sampled ffmpeg frames and perceptual hashes;
 - start/end-aligned video resampling for small duration differences;
+- versioned video fingerprints with monotonic sequence alignment;
+- ratio/delta duration gating that permits ordinary alternate cuts while
+  excluding single episodes from multi-episode compilations;
 - image similarity using perceptual structure plus average color;
 - default image support for JPG/JPEG, PNG, WebP, BMP, GIF, TIFF;
 - image matching across resize, JPEG recompression, and common format changes;
@@ -27,7 +30,9 @@ Implemented:
 - corrected folder Jaccard scoring that includes unmatched files in the union;
 - HTML and JSON reports with exact, video, image, audio, folder, and name sections;
 - optional Anthropic, LM Studio, or local heuristic title normalization;
-- threshold-safe candidate blocking for large video and image candidate sets;
+- parent-folder context for generic names such as `01 - Episode 1`, preventing
+  same-number episodes from unrelated seasons becoming identical name keys;
+- threshold-safe candidate blocking for large image candidate sets;
 - reproducible synthetic/manifest threshold benchmark with FP/FN metrics;
 - measured audio default threshold of 94% based on the baseline corpus;
 - deduplication of resolved file paths discovered through overlapping roots;
@@ -45,9 +50,9 @@ The program is report-only. It does not move, merge, rename, or delete files.
 
 ## Verification Completed
 
-The available suite currently contains 25 unit/integration tests.
+The available suite currently contains 33 unit/integration tests.
 
-- All 25 pass under both `unittest` and pytest in the project-local Python
+- All 33 pass under both `unittest` and pytest in the project-local Python
   3.11.9 virtual environment with all runtime/dev dependencies installed.
 - Ruff passes with no findings.
 - A real ffmpeg integration test passes with ffmpeg/ffprobe
@@ -57,7 +62,7 @@ The available suite currently contains 25 unit/integration tests.
   across MP3, FLAC, and volume changes while rejecting an unrelated recording.
 - Python compilation, JSON config parsing, cache migration, CLI startup, and
   `git diff --check` pass.
-- Isolated package builds produce both the `samesame-1.4.0` source archive and
+- Isolated package builds produce both the `samesame-1.5.0` source archive and
   universal wheel.
 - A recursive CLI test confirms that a resized/recompressed JPEG in a nested
   folder matches its PNG source and appears in HTML/JSON and folder clusters.
@@ -65,8 +70,15 @@ The available suite currently contains 25 unit/integration tests.
   observed false negatives.
 - The 27-pair synthetic threshold corpus is recorded in
   `docs/threshold-baseline.json`: image 90% and audio 94% produce zero measured
-  errors; video 90% has two synthetic low-texture false negatives and no false
+  errors; video 85% has two synthetic low-texture false negatives and no false
   positives.
+- The local 25-pair real video manifest measures 5/15 content-backed positives
+  and 0/10 false positives at 85%; weaker same-title variants remain review
+  hints, and the compilation pair is duration-gated.
+- A full 59-file real collection scan completes in about 20 seconds on the
+  warmed cache, yielding 9 video matches and 7 contextual name hints without
+  merging the three similarly named `Aku no Onna Kanbu` seasons or the
+  compilation pair.
 
 ## Development Environment
 
@@ -93,6 +105,9 @@ in this session uses the absolute executable paths.
 
 - Audio matching is not designed for substantial remixes, speed/pitch changes,
   or long inserted/removed sections.
+- Video containment matching (for example, finding one episode inside a
+  multi-episode compilation) is not implemented. Such pairs may still appear
+  as name hints and are not treated as content duplicates.
 - Image matching is not designed yet for heavy cropping, arbitrary rotation,
   large overlays/watermarks, or major edits.
 - Animated GIF and multi-page TIFF matching currently uses the first decoded
@@ -111,16 +126,23 @@ Suggested order:
    low-texture video variants.
 2. Add threshold-safe candidate blocking if large audio duration buckets become
    a measured performance problem.
-3. Improve image robustness for rotation/cropping only if real collections
+3. Add threshold-safe candidate blocking for sequence-aligned video
+   fingerprints if large duration buckets become a measured performance issue.
+4. Continue improving low-confidence alternate-cut review hints without
+   weakening content-backed matching.
+5. Consider optional video segment/containment matching for single episodes
+   inside compilations as a future, separately enabled feature.
+6. Improve image robustness for rotation/cropping only if real collections
    demonstrate the need.
-4. Consider report UX improvements such as thumbnails, media metadata, cluster
+7. Consider report UX improvements such as thumbnails, media metadata, cluster
    summaries, and explicit review decisions.
 
 ## Working Tree Handoff
 
-Chromaprint audio support was committed in `4b4a4af`. At the time of this
-update, threshold benchmarking, the 94% audio default, baseline results,
-documentation, and tests are uncommitted. A new session should begin with:
+Threshold benchmarking was committed in `da9d33b`. At the time of this update,
+versioned sequence-aligned video matching, contextual name hints, version 1.5.0
+metadata, documentation, and tests are uncommitted. A new session should begin
+with:
 
 ```powershell
 git status --short
@@ -129,7 +151,7 @@ python -m unittest discover -s tests -v
 ```
 
 Do not discard the existing changes. Review and commit them as one coherent
-threshold-benchmarking and tuning change when ready.
+video-alignment and contextual-name change when ready.
 
 ## Suggested Prompt for a New Chat
 

@@ -38,7 +38,8 @@ MODEL_NAME = "claude-haiku-4-5"
 LMSTUDIO_URL = "http://localhost:1234/v1"
 LMSTUDIO_MODEL = "local-model"
 BATCH_SIZE = 150
-FALLBACK_MODEL = "heuristic-v1"
+FALLBACK_MODEL = "heuristic-v4"
+RESOLUTION_NUMBERS = {360, 480, 540, 720, 1080, 1440, 2160, 4320}
 
 SYSTEM_PROMPT = """Ти отримуєш список назв медіафайлів (аніме, серіали, фільми) у вигляді
 масиву {id, raw}. У назвах може бути:
@@ -110,11 +111,15 @@ JSON_SCHEMA = {
 }
 
 QUALITY_RE = re.compile(
-    r"\b(480p|720p|1080p|2160p|4k|8k|x264|x265|h264|h265|hevc|aac|flac|opus|web-dl|webrip|bdrip|bluray|hdrip|dvdrip|repack|proper|sub|subs|dub|dual audio)\b",
+    r"\b(480p|720p|1080p|2160p|4k|8k|x264|x265|h264|h265|hevc|aac|flac|opus|web-dl|webrip|bdrip|bluray|hdrip|dvdrip|repack|proper|alt|alternate|extended|uncut|sub|subs|dub|dual audio)\b",
     re.IGNORECASE,
 )
 YEAR_RE = re.compile(r"(?:^|[^\d])((?:19|20)\d{2})(?:[^\d]|$)")
 EPISODE_RE = re.compile(r"(?:^|[\s._-])(?:e|ep|episode)?\s*0*(\d{1,4})(?:v\d+)?(?:[\s._-]|$)", re.IGNORECASE)
+GENERIC_NAME_WORDS_RE = re.compile(
+    r"\b(?:e|ep|episode|part|disc|cd|track|poster|cover|folder|thumbnail|thumb|image|img|photo|scan|серия)\b",
+    re.IGNORECASE,
+)
 
 
 def _chunks(values: list[str], size: int) -> Iterable[list[str]]:
@@ -127,13 +132,19 @@ def fallback_normalize(raw_name: str) -> NormalizedName:
     flags = [flag for flag in ("sub", "dub", "ova") if re.search(rf"\b{flag}\b", working, re.IGNORECASE)]
     year_match = YEAR_RE.search(working)
     year = int(year_match.group(1)) if year_match else None
-    episode_match = EPISODE_RE.search(working)
+    episode_matches = [
+        match
+        for match in EPISODE_RE.finditer(working)
+        if (year is None or int(match.group(1)) != year)
+        and int(match.group(1)) not in RESOLUTION_NUMBERS
+    ]
+    episode_match = episode_matches[-1] if episode_matches else None
     episode = int(episode_match.group(1)) if episode_match else None
+    if episode_match:
+        working = working[: episode_match.start()] + " " + working[episode_match.end() :]
     working = re.sub(r"\[[^\]]+\]|\([^)]+\)", " ", working)
     working = QUALITY_RE.sub(" ", working)
     working = YEAR_RE.sub(" ", working)
-    if episode_match:
-        working = EPISODE_RE.sub(" ", working, count=1)
     working = re.sub(r"[-–—|]+", " ", working)
     working = re.sub(r"\s+", " ", working).strip()
     return NormalizedName(
@@ -144,6 +155,17 @@ def fallback_normalize(raw_name: str) -> NormalizedName:
         flags=sorted(set(flags)),
         source="fallback",
     )
+
+
+def contextual_name(record: FileRecord) -> str:
+    working = re.sub(r"\[[^\]]+\]|\([^)]+\)", " ", record.raw_name)
+    working = QUALITY_RE.sub(" ", working)
+    working = GENERIC_NAME_WORDS_RE.sub(" ", working)
+    working = re.sub(r"\d+|[^\w]+", " ", working, flags=re.UNICODE).strip(" _")
+    if working:
+        return record.raw_name
+    parent_title = record.path.parent.name.strip()
+    return f"{parent_title} - {record.raw_name}" if parent_title else record.raw_name
 
 
 def _normalize_batch_with_claude(batch: list[str]) -> list[NormalizedName]:
@@ -292,7 +314,8 @@ def normalize_names(
     workers: int = 3,
     refresh_names: bool = False,
 ) -> dict[str, NormalizedName]:
-    raw_names = sorted({record.raw_name for record in records})
+    inputs_by_path = {record.path_key: contextual_name(record) for record in records}
+    raw_names = sorted(set(inputs_by_path.values()))
     provider = name_provider.casefold()
     if provider == "none":
         selected_provider = "fallback"
@@ -360,7 +383,10 @@ def normalize_names(
         cache.upsert_names(fallback_results, provider=selected_provider, model=provider_model, prompt_hash=PROMPT_HASH)
         normalized.update({item.raw_name: item for item in fallback_results})
 
-    return normalized
+    return {
+        record.path_key: normalized[inputs_by_path[record.path_key]]
+        for record in records
+    }
 
 
 def find_name_hints(
@@ -380,7 +406,7 @@ def find_name_hints(
     )
     by_key: dict[tuple[str, int | None, int | None], list[FileRecord]] = {}
     for record in records:
-        name = normalized.get(record.raw_name)
+        name = normalized.get(record.path_key) or normalized.get(record.raw_name)
         if name is None or not name.core_title.strip():
             continue
         by_key.setdefault(name.cluster_key, []).append(record)
@@ -389,7 +415,8 @@ def find_name_hints(
     for key, group in by_key.items():
         unconfirmed = [record for record in group if record.path_key not in confirmed_paths]
         if len(unconfirmed) > 1:
-            name = normalized[unconfirmed[0].raw_name]
+            sample = unconfirmed[0]
+            name = normalized.get(sample.path_key) or normalized[sample.raw_name]
             hints.append(
                 NameHint(
                     key="name:" + "|".join(str(part) for part in key),

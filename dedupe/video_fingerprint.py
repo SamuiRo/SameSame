@@ -12,7 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from .cache import Cache
-from .models import FileRecord, VideoMatch
+from .models import VIDEO_FINGERPRINT_VERSION, FileRecord, VideoMatch
 from .progress import tqdm
 
 try:
@@ -23,7 +23,12 @@ except ImportError:
 PIL_AVAILABLE = Image is not None
 
 LOGGER = logging.getLogger(__name__)
-SAMPLE_POINTS = (0.10, 0.30, 0.50, 0.70, 0.90)
+SAMPLE_COUNT = 15
+SAMPLE_POINTS = tuple((index + 1) / (SAMPLE_COUNT + 1) for index in range(SAMPLE_COUNT))
+DEFAULT_MAX_DURATION_RATIO = 1.5
+DEFAULT_MAX_DURATION_DELTA = 15 * 60.0
+ALIGNMENT_RECHECK_FLOOR = 65.0
+ALIGNMENT_RECHECK_MAX_DELTA = 3 * 60.0
 
 
 def resolve_binary(name_or_path: str) -> str | None:
@@ -148,56 +153,72 @@ def hamming_similarity(left: list[int], right: list[int], bits_per_hash: int = 6
     return max(0.0, 100.0 * (1.0 - distance / total_bits))
 
 
+def ordered_sequence_similarity(
+    left: list[int],
+    right: list[int],
+    minimum_coverage: float = 0.6,
+) -> float:
+    if not left or not right:
+        return 0.0
+    left_length = len(left)
+    right_length = len(right)
+    shorter_length = min(left_length, right_length)
+    minimum_matches = max(1, math.ceil(shorter_length * minimum_coverage))
+    negative_infinity = float("-inf")
+    dp = [
+        [[negative_infinity] * (shorter_length + 1) for _ in range(right_length + 1)]
+        for _ in range(left_length + 1)
+    ]
+    for left_index in range(left_length + 1):
+        for right_index in range(right_length + 1):
+            dp[left_index][right_index][0] = 0.0
+    for left_index in range(1, left_length + 1):
+        for right_index in range(1, right_length + 1):
+            frame_similarity = hamming_similarity(
+                [left[left_index - 1]],
+                [right[right_index - 1]],
+            )
+            for matches in range(1, min(left_index, right_index, shorter_length) + 1):
+                dp[left_index][right_index][matches] = max(
+                    dp[left_index - 1][right_index][matches],
+                    dp[left_index][right_index - 1][matches],
+                    dp[left_index - 1][right_index - 1][matches - 1] + frame_similarity,
+                )
+    best = 0.0
+    for matches in range(minimum_matches, shorter_length + 1):
+        total = dp[left_length][right_length][matches]
+        if total == negative_infinity:
+            continue
+        coverage = matches / shorter_length
+        coverage_penalty = (1.0 - coverage) * 20.0
+        best = max(best, total / matches - coverage_penalty)
+    return max(0.0, min(100.0, best))
+
+
+def video_durations_compatible(
+    left_duration: float,
+    right_duration: float,
+    max_ratio: float = DEFAULT_MAX_DURATION_RATIO,
+    max_delta: float = DEFAULT_MAX_DURATION_DELTA,
+) -> bool:
+    shorter = min(left_duration, right_duration)
+    longer = max(left_duration, right_duration)
+    if shorter <= 0:
+        return False
+    return longer / shorter <= max_ratio and longer - shorter <= max_delta
+
+
 def _candidate_pairs(
     candidates: list[FileRecord],
     max_candidates_per_bucket: int,
     threshold: float = 90.0,
 ) -> set[tuple[int, int]]:
-    if len(candidates) <= max_candidates_per_bucket:
-        return {(left, right) for left in range(len(candidates)) for right in range(left + 1, len(candidates))}
-
-    fingerprints = [record.fingerprint for record in candidates]
-    fingerprint_lengths = {len(fingerprint) for fingerprint in fingerprints if fingerprint}
-    if len(fingerprint_lengths) != 1 or any(not fingerprint for fingerprint in fingerprints):
-        return {(left, right) for left in range(len(candidates)) for right in range(left + 1, len(candidates))}
-
-    sample_count = fingerprint_lengths.pop()
-    total_bits = sample_count * 64
-    if threshold <= 0:
-        return {(left, right) for left in range(len(candidates)) for right in range(left + 1, len(candidates))}
-    if threshold > 100:
-        return set()
-
-    # If a pair is within the allowed total Hamming distance, at least one of
-    # max_distance + 1 disjoint blocks must be identical (pigeonhole principle).
-    # Indexing those blocks reduces the candidate set without dropping any
-    # pair that can satisfy the configured threshold.
-    max_distance = math.floor(total_bits * (1.0 - threshold / 100.0) + 1e-9)
-    block_count = min(total_bits, max_distance + 1)
-    base_block_size, larger_blocks = divmod(total_bits, block_count)
-    block_sizes = [base_block_size + (1 if index < larger_blocks else 0) for index in range(block_count)]
-
-    blocks: dict[tuple[int, int], list[int]] = defaultdict(list)
-    fingerprint_mask = (1 << 64) - 1
-    for index, fingerprint in enumerate(fingerprints):
-        combined = 0
-        for hash_value in fingerprint or []:
-            combined = (combined << 64) | (hash_value & fingerprint_mask)
-        remaining_bits = total_bits
-        for block_index, block_size in enumerate(block_sizes):
-            remaining_bits -= block_size
-            block_mask = (1 << block_size) - 1
-            block_value = (combined >> remaining_bits) & block_mask
-            blocks[(block_index, block_value)].append(index)
-
-    pairs: set[tuple[int, int]] = set()
-    for indexes in blocks.values():
-        if len(indexes) < 2:
-            continue
-        for left_pos, left in enumerate(indexes):
-            for right in indexes[left_pos + 1 :]:
-                pairs.add((min(left, right), max(left, right)))
-    return pairs
+    del max_candidates_per_bucket, threshold
+    return {
+        (left, right)
+        for left in range(len(candidates))
+        for right in range(left + 1, len(candidates))
+    }
 
 
 def _ensure_duration(record: FileRecord, ffprobe: str) -> tuple[str, float | None]:
@@ -225,7 +246,7 @@ def _duration_aligned_similarity(
     shorter, longer = (left, right) if left.duration <= right.duration else (right, left)
     duration_delta = longer.duration - shorter.duration
     if duration_delta <= 0.05:
-        return hamming_similarity(left.fingerprint, right.fingerprint)
+        return ordered_sequence_similarity(left.fingerprint, right.fingerprint)
 
     best = 0.0
     for start_offset in (0.0, duration_delta):
@@ -240,7 +261,7 @@ def _duration_aligned_similarity(
             )
         aligned = cache[key]
         if aligned:
-            best = max(best, hamming_similarity(shorter.fingerprint, aligned))
+            best = max(best, ordered_sequence_similarity(shorter.fingerprint, aligned))
     return best
 
 
@@ -252,7 +273,7 @@ def video_similarity(
 ) -> float:
     if left.fingerprint is None or right.fingerprint is None:
         return 0.0
-    similarity = hamming_similarity(left.fingerprint, right.fingerprint)
+    similarity = ordered_sequence_similarity(left.fingerprint, right.fingerprint)
     if (
         left.duration is not None
         and right.duration is not None
@@ -273,6 +294,8 @@ def find_video_matches(
     ffprobe: str,
     workers: int = 2,
     duration_tolerance: float = 2.0,
+    max_duration_ratio: float = DEFAULT_MAX_DURATION_RATIO,
+    max_duration_delta: float = DEFAULT_MAX_DURATION_DELTA,
     max_candidates_per_bucket: int = 250,
 ) -> list[VideoMatch]:
     missing_duration = [record for record in records if record.duration is None]
@@ -296,6 +319,7 @@ def find_video_matches(
                 _, fingerprint = future.result()
                 if fingerprint:
                     record.fingerprint = fingerprint
+                    record.fingerprint_version = VIDEO_FINGERPRINT_VERSION
                     cache.upsert_file(record)
         cache.conn.commit()
 
@@ -310,7 +334,9 @@ def find_video_matches(
     bucket_keys = sorted(buckets)
     for key in bucket_keys:
         candidates: list[FileRecord] = []
-        for nearby in range(int(key - duration_tolerance), int(key + duration_tolerance) + 1):
+        minimum_duration = max(0, math.floor(max(key / max_duration_ratio, key - max_duration_delta)))
+        maximum_duration = math.ceil(min(key * max_duration_ratio, key + max_duration_delta))
+        for nearby in range(minimum_duration, maximum_duration + 1):
             candidates.extend(buckets.get(nearby, []))
         for left_index, right_index in _candidate_pairs(candidates, max_candidates_per_bucket, threshold):
             left = candidates[left_index]
@@ -322,10 +348,18 @@ def find_video_matches(
             if left.duration is None or right.duration is None or left.fingerprint is None or right.fingerprint is None:
                 continue
             delta = abs(left.duration - right.duration)
-            if delta > duration_tolerance:
+            if not video_durations_compatible(
+                left.duration,
+                right.duration,
+                max_ratio=max_duration_ratio,
+                max_delta=max_duration_delta,
+            ):
                 continue
-            similarity = hamming_similarity(left.fingerprint, right.fingerprint)
-            if similarity < threshold and delta > 0.05:
+            similarity = ordered_sequence_similarity(left.fingerprint, right.fingerprint)
+            if (
+                ALIGNMENT_RECHECK_FLOOR <= similarity < threshold
+                and 0.05 < delta <= ALIGNMENT_RECHECK_MAX_DELTA
+            ):
                 similarity = video_similarity(left, right, ffmpeg, aligned_fingerprints)
             if threshold <= similarity:
                 matches.append(VideoMatch(pair[0], pair[1], round(similarity, 2), round(delta, 3)))

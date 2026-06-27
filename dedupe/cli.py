@@ -29,7 +29,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "json_output": "report.json",
     "cache": ".dedupe_cache.sqlite3",
     "extensions": None,
-    "video_threshold": 90.0,
+    "video_threshold": 85.0,
     "image_threshold": 90.0,
     "audio_threshold": 94.0,
     "folder_threshold": 50.0,
@@ -271,7 +271,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
         "--max-video-candidates-per-bucket",
         type=int,
         default=None,
-        help="Use fingerprint blocking when a duration bucket has more candidates than this.",
+        help="Reserved compatibility setting for video candidate scaling.",
     )
     parser.add_argument(
         "--max-image-candidates",
