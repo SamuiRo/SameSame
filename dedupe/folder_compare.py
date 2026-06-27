@@ -12,6 +12,7 @@ from .models import (
     NormalizedName,
     VideoMatch,
 )
+from .progress import check_cancelled
 
 
 def build_cluster_assignments(
@@ -38,6 +39,7 @@ def build_cluster_assignments(
             parent[right_root] = left_root
 
     for group in exact_groups:
+        check_cancelled()
         if not group.paths:
             continue
         first = group.paths[0]
@@ -55,6 +57,7 @@ def build_cluster_assignments(
     for path in parent:
         content_groups.setdefault(find(path), []).append(path)
     for paths in content_groups.values():
+        check_cancelled()
         path_set = set(paths)
         component_video_matches = [
             match for match in video_matches if match.left in path_set and match.right in path_set
@@ -93,6 +96,7 @@ def build_cluster_assignments(
             assignments[path] = ClusterAssignment(cluster_id=cluster_id, level=level, confidence=confidence)
 
     for record in records:
+        check_cancelled()
         if record.path_key in assignments:
             continue
         name = normalized.get(record.path_key) or normalized.get(record.raw_name)
@@ -118,6 +122,7 @@ def compare_folders(
     content_folder_sets: dict[str, set[str]] = {}
     cluster_to_paths: dict[tuple[str, str], list[str]] = {}
     for folder, folder_records in by_folder.items():
+        check_cancelled()
         ids: set[str] = set()
         content_ids: set[str] = set()
         for record in folder_records:
@@ -137,6 +142,7 @@ def compare_folders(
 
     pairs: list[FolderPair] = []
     for left, right in combinations(sorted(folder_sets), 2):
+        check_cancelled()
         left_set = folder_sets[left]
         right_set = folder_sets[right]
         content_left_set = content_folder_sets[left]

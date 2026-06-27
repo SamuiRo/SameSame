@@ -64,7 +64,7 @@ def write_html_report(report: DedupeReport, path: Path) -> None:
         audio_items.append(
             f"""
             <details>
-              <summary>{match.similarity:.2f}% Â· Î” {match.duration_delta:.3f}s</summary>
+              <summary>{match.similarity:.2f}% · Δ {match.duration_delta:.3f}s</summary>
               {_path_list([match.left, match.right])}
             </details>
             """

@@ -37,9 +37,16 @@ Implemented:
 - measured audio default threshold of 94% based on the baseline corpus;
 - deduplication of resolved file paths discovered through overlapping roots;
 - automatic migration of older cache databases with image/audio columns.
+- reusable `ScanService` orchestration independent of argparse and PySide6;
+- structured stage, item-progress, warning, completion, cancellation, and
+  failure events;
+- cooperative cancellation that retains already committed cache work;
+- `ScanResult` with scanned records and basic review metadata;
+- lazy read-only probing of container, codec, resolution, frame rate, audio and
+  subtitle tracks, chapters, and attachments.
 
 The program is report-only. It does not move, merge, rename, or delete files.
-There is no desktop interface or transcoding command in version 1.5.0. Those
+There is no desktop interface or transcoding command in version 1.5.2. Those
 features are planned in `docs/ROADMAP.md`.
 
 ## Supported Behavior
@@ -49,13 +56,18 @@ features are planned in `docs/ROADMAP.md`.
   calculates folder-pair similarity.
 - Traversal is recursive through all nested subfolders.
 - Default scanning covers common video, image, and audio formats.
+- Python callers can run scans without terminal output through
+  `dedupe.service.ScanService`, receive typed events, cancel through a
+  thread-safe token, and request detailed metadata only for selected files.
 
 ## Verification Completed
 
-The available suite currently contains 33 unit/integration tests.
+The available suite currently contains 40 unit/integration tests.
 
-- All 33 pass under both `unittest` and pytest in the project-local Python
+- All 40 pass under both `unittest` and pytest in the project-local Python
   3.11.9 virtual environment with all runtime/dev dependencies installed.
+- Service coverage verifies structured events, warnings, failure reporting,
+  cooperative cancellation/cache preservation, and review metadata.
 - Ruff passes with no findings.
 - A real ffmpeg integration test passes with ffmpeg/ffprobe
   `2026-06-15-git-44d082edc8`. It generates a short source video, a resized
@@ -64,7 +76,7 @@ The available suite currently contains 33 unit/integration tests.
   across MP3, FLAC, and volume changes while rejecting an unrelated recording.
 - Python compilation, JSON config parsing, cache migration, CLI startup, and
   `git diff --check` pass.
-- Isolated package builds produce both the `samesame-1.5.0` source archive and
+- Package builds produce both the `samesame-1.5.2` source archive and
   universal wheel.
 - A recursive CLI test confirms that a resized/recompressed JPEG in a nested
   folder matches its PNG source and appears in HTML/JSON and folder clusters.
@@ -128,13 +140,12 @@ in this session uses the absolute executable paths.
 The detailed implementation plan, safety rules, complexity estimates, and
 acceptance criteria are in `docs/ROADMAP.md`. The planned order is:
 
-1. Extract reusable scan services with structured progress and cancellation.
-2. Add a read-only PySide6 desktop interface for scans and side-by-side review.
-3. Add safe quarantine/recycle actions with preflight checks and an operation
+1. Add a read-only PySide6 desktop interface for scans and side-by-side review.
+2. Add safe quarantine/recycle actions with preflight checks and an operation
    journal. Permanent deletion is not part of the initial implementation.
-4. Add a separate transcoding module and `samesame-transcode` command using the
+3. Add a separate transcoding module and `samesame-transcode` command using the
    four presets in `docs/ANIME_ENCODING_PRESETS.md`.
-5. Integrate a validated transcoding queue into the desktop interface.
+4. Integrate a validated transcoding queue into the desktop interface.
 
 Ongoing matching work remains evidence-driven:
 
@@ -148,10 +159,9 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Threshold benchmarking was committed in `da9d33b`. At the time of this update,
-versioned sequence-aligned video matching, contextual name hints, version 1.5.0
-metadata, the desktop/transcoding roadmap, documentation, and tests are
-uncommitted. A new session should begin with:
+Phase 0 is implemented for the `1.5.2` release: the CLI now delegates to the
+reusable service, while the service remains independent of both terminal UI
+and PySide6. A new session should begin with:
 
 ```powershell
 git status --short
@@ -159,8 +169,8 @@ git diff --check
 python -m unittest discover -s tests -v
 ```
 
-Do not discard the existing changes. Review and commit them as one coherent
-video-alignment and contextual-name change when ready.
+Do not discard uncommitted `1.5.2` work. Continue with Phase 1 only after the
+service tests and full FFmpeg integration suite remain green.
 
 ## Suggested Prompt for a New Chat
 
@@ -168,5 +178,6 @@ video-alignment and contextual-name change when ready.
 Read README.md, docs/USAGE.md, docs/CONFIG.md, docs/STATUS.md,
 docs/ROADMAP.md, and docs/ANIME_ENCODING_PRESETS.md.
 Preserve the current uncommitted working-tree changes. Verify the test suite,
-then continue from the planned release sequence in docs/ROADMAP.md.
+then continue with the read-only PySide6 desktop interface in Phase 1 of
+docs/ROADMAP.md.
 ```

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .cache import Cache
 from .models import VIDEO_FINGERPRINT_VERSION, FileRecord, VideoMatch
-from .progress import tqdm
+from .progress import check_cancelled, tqdm
 
 try:
     from PIL import Image
@@ -214,11 +214,11 @@ def _candidate_pairs(
     threshold: float = 90.0,
 ) -> set[tuple[int, int]]:
     del max_candidates_per_bucket, threshold
-    return {
-        (left, right)
-        for left in range(len(candidates))
-        for right in range(left + 1, len(candidates))
-    }
+    pairs: set[tuple[int, int]] = set()
+    for left in range(len(candidates)):
+        check_cancelled()
+        pairs.update((left, right) for right in range(left + 1, len(candidates)))
+    return pairs
 
 
 def _ensure_duration(record: FileRecord, ffprobe: str) -> tuple[str, float | None]:
@@ -333,12 +333,14 @@ def find_video_matches(
     aligned_fingerprints: dict[tuple[str, float, float], list[int] | None] = {}
     bucket_keys = sorted(buckets)
     for key in bucket_keys:
+        check_cancelled()
         candidates: list[FileRecord] = []
         minimum_duration = max(0, math.floor(max(key / max_duration_ratio, key - max_duration_delta)))
         maximum_duration = math.ceil(min(key * max_duration_ratio, key + max_duration_delta))
         for nearby in range(minimum_duration, maximum_duration + 1):
             candidates.extend(buckets.get(nearby, []))
         for left_index, right_index in _candidate_pairs(candidates, max_candidates_per_bucket, threshold):
+            check_cancelled()
             left = candidates[left_index]
             right = candidates[right_index]
             pair = tuple(sorted((left.path_key, right.path_key)))

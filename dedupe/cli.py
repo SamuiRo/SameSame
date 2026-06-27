@@ -9,18 +9,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .audio_fingerprint import check_chromaprint, find_audio_matches
 from .cache import Cache
-from .exact_hash import find_exact_duplicates
-from .folder_compare import build_cluster_assignments, compare_folders
-from .image_fingerprint import PIL_AVAILABLE as IMAGE_PIL_AVAILABLE
-from .image_fingerprint import find_image_matches
 from .models import DedupeReport
-from .name_normalizer import LMSTUDIO_MODEL, LMSTUDIO_URL, find_name_hints, normalize_names
+from .name_normalizer import LMSTUDIO_MODEL, LMSTUDIO_URL
 from .report import write_html_report, write_json_report
-from .scanner import is_audio_path, is_image_path, is_video_path, normalize_extensions, scan_folders
-from .video_fingerprint import PIL_AVAILABLE as VIDEO_PIL_AVAILABLE
-from .video_fingerprint import check_video_tools, find_video_matches
+from .scanner import normalize_extensions
+from .service import ScanService
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -324,144 +318,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
 
 
 def run(config: Config) -> DedupeReport:
-    warnings: list[str] = []
-    with Cache(config.cache) as cache:
-        records = scan_folders(config.folders, config.extensions, cache)
-        LOGGER.info("Scanned %d media files", len(records))
-
-        if config.refresh_hashes:
-            LOGGER.info("Refreshing cached hashes for %d files", len(records))
-            cache.clear_hashes(records)
-        exact_groups = find_exact_duplicates(records, cache, workers=config.workers)
-        LOGGER.info("Found %d exact duplicate groups", len(exact_groups))
-
-        video_records = [record for record in records if is_video_path(record.path)]
-        video_matches = []
-        if video_records and not config.skip_video:
-            ffmpeg, ffprobe = check_video_tools(config.ffmpeg, config.ffprobe)
-            if not ffmpeg or not ffprobe:
-                message = (
-                    "ffmpeg/ffprobe were not found. Install them and ensure they are in PATH, "
-                    "or pass --ffmpeg/--ffprobe, or use --skip-video."
-                )
-                LOGGER.warning(message)
-                warnings.append(message)
-            elif not VIDEO_PIL_AVAILABLE:
-                message = "Pillow is not installed; video fingerprinting is skipped. Run pip install -e ."
-                LOGGER.warning(message)
-                warnings.append(message)
-            else:
-                if config.refresh_video:
-                    LOGGER.info("Refreshing cached video metadata for %d files", len(video_records))
-                    cache.clear_video(video_records)
-                video_matches = find_video_matches(
-                    video_records,
-                    cache,
-                    threshold=config.video_threshold,
-                    ffmpeg=ffmpeg,
-                    ffprobe=ffprobe,
-                    workers=min(config.workers, 4),
-                    max_candidates_per_bucket=config.max_video_candidates_per_bucket,
-                )
-        LOGGER.info("Found %d video matches", len(video_matches))
-
-        image_records = [record for record in records if is_image_path(record.path)]
-        image_matches = []
-        if image_records and not config.skip_images:
-            if not IMAGE_PIL_AVAILABLE:
-                message = "Pillow is not installed; image fingerprinting is skipped. Run pip install -e ."
-                LOGGER.warning(message)
-                warnings.append(message)
-            else:
-                if config.refresh_images:
-                    LOGGER.info("Refreshing cached image fingerprints for %d files", len(image_records))
-                    cache.clear_images(image_records)
-                image_matches = find_image_matches(
-                    image_records,
-                    cache,
-                    threshold=config.image_threshold,
-                    workers=config.workers,
-                    max_candidates=config.max_image_candidates,
-                )
-        LOGGER.info("Found %d image matches", len(image_matches))
-
-        audio_records = [record for record in records if is_audio_path(record.path)]
-        audio_matches = []
-        if audio_records and not config.skip_audio:
-            ffmpeg, ffprobe = check_video_tools(config.ffmpeg, config.ffprobe)
-            if not ffmpeg or not ffprobe:
-                message = (
-                    "ffmpeg/ffprobe were not found. Audio fingerprinting is skipped; "
-                    "install them, pass --ffmpeg/--ffprobe, or use --skip-audio."
-                )
-                LOGGER.warning(message)
-                warnings.append(message)
-            elif not check_chromaprint(ffmpeg):
-                message = (
-                    "This ffmpeg build does not provide the Chromaprint muxer; "
-                    "audio fingerprinting is skipped."
-                )
-                LOGGER.warning(message)
-                warnings.append(message)
-            else:
-                if config.refresh_audio:
-                    LOGGER.info("Refreshing cached audio metadata for %d files", len(audio_records))
-                    cache.clear_audio(audio_records)
-                audio_matches = find_audio_matches(
-                    audio_records,
-                    cache,
-                    threshold=config.audio_threshold,
-                    ffmpeg=ffmpeg,
-                    ffprobe=ffprobe,
-                    workers=min(config.workers, 4),
-                )
-        LOGGER.info("Found %d audio matches", len(audio_matches))
-
-        normalized = normalize_names(
-            records,
-            cache,
-            name_provider=config.name_provider,
-            lmstudio_url=config.lmstudio_url,
-            lmstudio_model=config.lmstudio_model,
-            workers=min(config.workers, 5),
-            refresh_names=config.refresh_names,
-        )
-        exact_paths = {path for group in exact_groups for path in group.paths}
-        video_paths = {match.left for match in video_matches} | {match.right for match in video_matches}
-        image_paths = {match.left for match in image_matches} | {match.right for match in image_matches}
-        audio_paths = {match.left for match in audio_matches} | {match.right for match in audio_matches}
-        name_hints = find_name_hints(
-            records,
-            normalized,
-            exact_cluster_paths=exact_paths,
-            video_cluster_paths=video_paths,
-            image_cluster_paths=image_paths,
-            audio_cluster_paths=audio_paths,
-            fuzzy_threshold=config.name_threshold,
-        )
-        LOGGER.info("Found %d name-only hints", len(name_hints))
-
-        assignments = build_cluster_assignments(
-            records,
-            exact_groups,
-            video_matches,
-            normalized,
-            image_matches=image_matches,
-            audio_matches=audio_matches,
-        )
-        folder_pairs = compare_folders(records, assignments, threshold=config.folder_threshold)
-        LOGGER.info("Found %d folder pairs", len(folder_pairs))
-
-    return DedupeReport(
-        scanned_files=len(records),
-        exact_duplicates=exact_groups,
-        video_matches=video_matches,
-        image_matches=image_matches,
-        audio_matches=audio_matches,
-        folder_pairs=folder_pairs,
-        name_hints=name_hints,
-        warnings=warnings,
-    )
+    return ScanService(show_terminal_progress=True).run(config).report
 
 
 def main(argv: list[str] | None = None) -> int:

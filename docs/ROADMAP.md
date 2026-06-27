@@ -4,7 +4,7 @@ Last updated: 2026-06-27
 
 This roadmap separates the current report-only scanner from the planned
 desktop review and transcoding features. It is an implementation plan, not a
-description of commands available in SameSame `1.5.0`.
+description of commands available in SameSame `1.5.2`.
 
 ## Goals
 
@@ -36,6 +36,8 @@ calendar commitments.
 
 Target: foundation for both CLI and GUI.
 
+Status: completed in `1.5.2`.
+
 | Work | Complexity | Estimate |
 | --- | ---: | ---: |
 | Extract scan orchestration from `dedupe.cli` into a reusable service | 3/5 | 2-3 days |
@@ -51,6 +53,18 @@ Required outcomes:
   events;
 - cancellation never corrupts the cache or leaves a media file modified;
 - detection logic remains independent of PySide6.
+
+Implemented in `1.5.2`:
+
+- `dedupe.service.ScanService` owns orchestration previously embedded in the CLI;
+- `ScanEvent` reports stage start/completion, item progress, warnings, final
+  completion, cancellation, and failures;
+- `CancellationToken` cooperatively stops work between items and stages while
+  retaining committed cache results;
+- `ScanResult` exposes report data, file records, and basic media metadata;
+- detailed codec, stream, resolution, track, chapter, and attachment metadata
+  is available through a lazy, read-only probe API;
+- the CLI delegates to the service and retains its existing command behavior.
 
 ## Phase 1: Read-Only Desktop Review
 
@@ -203,16 +217,18 @@ Estimated phase total: 6-10 days.
 
 Suggested milestones:
 
-1. `1.6`: application-service refactor and read-only desktop review.
-2. `1.7`: safe quarantine/recycle workflow and operation journal.
-3. `1.8`: independent transcoding module, CLI, presets, and validation.
-4. `1.9`: desktop transcoding queue and replacement workflow.
+1. `1.5.2`: application-service refactor, structured progress, cancellation,
+   and review metadata. Completed.
+2. `1.6`: read-only desktop review.
+3. `1.7`: safe quarantine/recycle workflow and operation journal.
+4. `1.8`: independent transcoding module, CLI, presets, and validation.
+5. `1.9`: desktop transcoding queue and replacement workflow.
 
-The complete plan is roughly 43-69 development days when the phase estimates
-are added directly, or about 9-14 working weeks for one developer. Some work
-can overlap, but the estimate intentionally includes validation of destructive
-and source-replacing workflows. A smaller useful read-only product appears
-after Phase 1; risky behavior should not be rushed to meet a version number.
+The remaining plan after Phase 0 is roughly 38-60 development days when the
+phase estimates are added directly. Some work can overlap, but the estimate
+intentionally includes validation of destructive and source-replacing
+workflows. A smaller useful read-only product appears after Phase 1; risky
+behavior should not be rushed to meet a version number.
 
 ## Deferred Work
 

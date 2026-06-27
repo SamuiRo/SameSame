@@ -3,7 +3,7 @@
 ## Status
 
 This document is the source specification for SameSame's planned transcoding
-module. SameSame `1.5.0` does not compress files and does not yet contain
+module. SameSame `1.5.2` does not compress files and does not yet contain
 `build_ffmpeg_cmd()` or a `samesame-transcode` command. Implementation order,
 safety requirements, and estimates are tracked in `ROADMAP.md`.
 

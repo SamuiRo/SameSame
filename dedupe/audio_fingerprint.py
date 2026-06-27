@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .cache import Cache
 from .models import AudioMatch, FileRecord
-from .progress import tqdm
+from .progress import check_cancelled, tqdm
 from .video_fingerprint import get_duration
 
 LOGGER = logging.getLogger(__name__)
@@ -131,10 +131,12 @@ def find_audio_matches(
     matches: list[AudioMatch] = []
     seen: set[tuple[str, str]] = set()
     for key in sorted(buckets):
+        check_cancelled()
         candidates: list[FileRecord] = []
         for nearby in range(int(key - duration_tolerance), int(key + duration_tolerance) + 1):
             candidates.extend(buckets.get(nearby, []))
         for left_index, left in enumerate(candidates):
+            check_cancelled()
             for right in candidates[left_index + 1 :]:
                 pair = tuple(sorted((left.path_key, right.path_key)))
                 if pair in seen or left.full_hash and left.full_hash == right.full_hash:

@@ -12,7 +12,7 @@ from typing import Iterable
 
 from .cache import Cache
 from .models import FileRecord, NameHint, NormalizedName
-from .progress import tqdm
+from .progress import check_cancelled, tqdm
 
 try:
     from rapidfuzz import fuzz
@@ -413,6 +413,7 @@ def find_name_hints(
 
     hints: list[NameHint] = []
     for key, group in by_key.items():
+        check_cancelled()
         unconfirmed = [record for record in group if record.path_key not in confirmed_paths]
         if len(unconfirmed) > 1:
             sample = unconfirmed[0]
@@ -430,6 +431,7 @@ def find_name_hints(
 
     names = list(by_key.keys())
     for left_index, left_key in enumerate(names):
+        check_cancelled()
         for right_key in names[left_index + 1 :]:
             left_title, left_year, left_episode = left_key
             right_title, right_year, right_episode = right_key

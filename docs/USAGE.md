@@ -1,6 +1,6 @@
 # Usage Guide
 
-This guide describes SameSame `1.5.0`. The current application is a
+This guide describes SameSame `1.5.2`. The current application is a
 report-only CLI: there is no desktop interface, transcoding command, or file
 deletion workflow yet. Planned features are documented in `docs/ROADMAP.md`.
 
@@ -218,5 +218,5 @@ hashes, video fingerprints, image fingerprints, or audio fingerprints.
 The future desktop interface will provide side-by-side review and safe
 quarantine/recycle actions. A separate transcoding module will implement the
 presets in `docs/ANIME_ENCODING_PRESETS.md`. These are roadmap items, not
-commands available in version 1.5.0. See `docs/ROADMAP.md` for scope, order,
+commands available in version 1.5.2. See `docs/ROADMAP.md` for scope, order,
 safety requirements, and complexity estimates.

@@ -1,11 +1,12 @@
 # SameSame
 
-SameSame `1.5.0` is a command-line tool for finding duplicate and similar
+SameSame `1.5.2` is a command-line tool for finding duplicate and similar
 media files. It scans one or more folder trees recursively and writes reports
 for manual review.
 
 The current release is report-only: it never moves, renames, compresses, or
-deletes media. A desktop review interface, safe file actions, and an anime
+deletes media. Version `1.5.2` adds the reusable application-service foundation
+for a desktop review interface; the PySide6 UI, safe file actions, and anime
 transcoding module are planned but are not implemented yet.
 
 ## What SameSame Finds
@@ -197,13 +198,38 @@ Available now:
 
 - `samesame`: duplicate scanner and HTML/JSON report generator;
 - `samesame-benchmark`: threshold benchmark utility.
+- `dedupe.service.ScanService`: UI-agnostic Python scan API with structured
+  progress events, cooperative cancellation, and review metadata models.
 
-Planned, not available in `1.5.0`:
+Planned, not available in `1.5.2`:
 
 - a PySide6 desktop interface for scanning and side-by-side review;
 - safe quarantine/recycle-bin actions with an operation journal;
 - a separate transcoding engine and queue;
 - anime compression presets using `libx265`, `hevc_nvenc`, and `av1_nvenc`.
+
+## Application Service
+
+Desktop clients and scripts can run the scanner without terminal output:
+
+```python
+from pathlib import Path
+
+from dedupe.events import CancellationToken
+from dedupe.service import ScanOptions, ScanService
+
+token = CancellationToken()
+result = ScanService().run(
+    ScanOptions(folders=[Path("D:/Media")], name_provider="none"),
+    on_event=lambda event: print(event.event_type, event.stage, event.current, event.total),
+    cancellation=token,
+)
+```
+
+`ScanResult` contains the existing report, scanned file records, and basic
+metadata. `dedupe.metadata.probe_media_metadata()` loads detailed stream,
+codec, resolution, track, chapter, and attachment information lazily for a
+selected review file.
 
 The implementation order, safety requirements, and complexity estimates are in
 the [Development roadmap](docs/ROADMAP.md). The exact initial encoding presets

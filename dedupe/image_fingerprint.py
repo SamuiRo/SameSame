@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .cache import Cache
 from .models import FileRecord, ImageMatch
-from .progress import tqdm
+from .progress import check_cancelled, tqdm
 from .video_fingerprint import hamming_similarity, phash
 
 try:
@@ -57,7 +57,11 @@ def _candidate_pairs(
     threshold: float,
 ) -> set[tuple[int, int]]:
     if len(candidates) <= max_candidates:
-        return {(left, right) for left in range(len(candidates)) for right in range(left + 1, len(candidates))}
+        pairs: set[tuple[int, int]] = set()
+        for left in range(len(candidates)):
+            check_cancelled()
+            pairs.update((left, right) for right in range(left + 1, len(candidates)))
+        return pairs
 
     fingerprints = [record.image_fingerprint for record in candidates]
     if any(fingerprint is None or len(fingerprint) != 4 for fingerprint in fingerprints):
@@ -75,6 +79,7 @@ def _candidate_pairs(
 
     blocks: dict[tuple[int, int], list[int]] = defaultdict(list)
     for index, fingerprint in enumerate(fingerprints):
+        check_cancelled()
         structure_hash = fingerprint[0] if fingerprint else 0
         remaining_bits = 64
         for block_index, block_size in enumerate(block_sizes):
@@ -84,6 +89,7 @@ def _candidate_pairs(
 
     pairs: set[tuple[int, int]] = set()
     for indexes in blocks.values():
+        check_cancelled()
         for left_position, left in enumerate(indexes):
             for right in indexes[left_position + 1 :]:
                 pairs.add((min(left, right), max(left, right)))
@@ -112,6 +118,7 @@ def find_image_matches(
     candidates = [record for record in records if record.image_fingerprint is not None]
     matches: list[ImageMatch] = []
     for left_index, right_index in _candidate_pairs(candidates, max_candidates, threshold):
+        check_cancelled()
         left = candidates[left_index]
         right = candidates[right_index]
         if left.full_hash and left.full_hash == right.full_hash:
