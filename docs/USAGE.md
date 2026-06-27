@@ -1,8 +1,9 @@
 # Usage Guide
 
-This guide describes SameSame `1.5.2`. The current application is a
-report-only CLI: there is no desktop interface, transcoding command, or file
-deletion workflow yet. Planned features are documented in `docs/ROADMAP.md`.
+This guide describes SameSame `1.5.2`. The current application provides a CLI
+and an optional read-only desktop interface. There is no transcoding command or
+file deletion workflow yet. Planned features are documented in
+`docs/ROADMAP.md`.
 
 SameSame finds duplicate media on six levels:
 
@@ -28,6 +29,18 @@ After installation you can use the console command:
 ```powershell
 samesame --help
 ```
+
+Install and launch the optional desktop interface:
+
+```powershell
+pip install -e ".[gui]"
+samesame-gui
+```
+
+The desktop interface supports multiple collection roots, background scans,
+progress and cancellation, filters for every report category, side-by-side
+image/video/audio review, synchronized video seeking, detailed stream metadata,
+and HTML/JSON report export. It does not modify source media.
 
 You can also run without installing:
 
@@ -213,10 +226,11 @@ Name hints are intentionally low confidence. They are useful for sorting and
 review, but should not be treated as deletion proof unless confirmed by exact
 hashes, video fingerprints, image fingerprints, or audio fingerprints.
 
-## Planned Desktop and Transcoding Features
+## Desktop Review and Planned Actions
 
-The future desktop interface will provide side-by-side review and safe
-quarantine/recycle actions. A separate transcoding module will implement the
-presets in `docs/ANIME_ENCODING_PRESETS.md`. These are roadmap items, not
-commands available in version 1.5.2. See `docs/ROADMAP.md` for scope, order,
-safety requirements, and complexity estimates.
+The desktop interface currently provides read-only side-by-side review. Safe
+quarantine/recycle actions remain planned. A separate transcoding module will
+implement the presets in `docs/ANIME_ENCODING_PRESETS.md`; those actions and
+transcoding commands are not available in version 1.5.2. See
+`docs/ROADMAP.md` for scope, order, safety requirements, and complexity
+estimates.

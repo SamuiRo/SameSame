@@ -1,13 +1,14 @@
 # SameSame
 
-SameSame `1.5.2` is a command-line tool for finding duplicate and similar
-media files. It scans one or more folder trees recursively and writes reports
-for manual review.
+SameSame `1.5.2` finds duplicate and similar media files through a command-line
+scanner or an optional read-only desktop review interface. It scans one or
+more folder trees recursively and writes reports for manual review.
 
-The current release is report-only: it never moves, renames, compresses, or
-deletes media. Version `1.5.2` adds the reusable application-service foundation
-for a desktop review interface; the PySide6 UI, safe file actions, and anime
-transcoding module are planned but are not implemented yet.
+The current release is read-only: it never moves, renames, compresses, or
+deletes media. Version `1.5.2` adds a reusable application service and a
+PySide6 interface for scanning, filtering results, side-by-side media review,
+and metadata inspection. Safe file actions and anime transcoding are planned
+but are not implemented yet.
 
 ## What SameSame Finds
 
@@ -47,6 +48,16 @@ samesame --help
 ffmpeg -version
 ffprobe -version
 ```
+
+Install the optional desktop interface and launch it:
+
+```powershell
+python -m pip install -e ".[gui]"
+samesame-gui
+```
+
+The GUI uses PySide6 Widgets and Qt Multimedia. CLI-only installations do not
+install PySide6.
 
 If FFmpeg is missing on Windows, install a build that provides both commands,
 then restart the terminal. For example:
@@ -198,12 +209,12 @@ Available now:
 
 - `samesame`: duplicate scanner and HTML/JSON report generator;
 - `samesame-benchmark`: threshold benchmark utility.
+- `samesame-gui`: optional read-only desktop scanner and side-by-side review;
 - `dedupe.service.ScanService`: UI-agnostic Python scan API with structured
   progress events, cooperative cancellation, and review metadata models.
 
 Planned, not available in `1.5.2`:
 
-- a PySide6 desktop interface for scanning and side-by-side review;
 - safe quarantine/recycle-bin actions with an operation journal;
 - a separate transcoding engine and queue;
 - anime compression presets using `libx265`, `hevc_nvenc`, and `av1_nvenc`.

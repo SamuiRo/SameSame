@@ -2,9 +2,9 @@
 
 Last updated: 2026-06-27
 
-This roadmap separates the current report-only scanner from the planned
-desktop review and transcoding features. It is an implementation plan, not a
-description of commands available in SameSame `1.5.2`.
+This roadmap separates the current read-only scanner and desktop review from
+planned filesystem actions and transcoding features. It is an implementation
+plan, not a description of commands available in SameSame `1.5.2`.
 
 ## Goals
 
@@ -70,6 +70,8 @@ Implemented in `1.5.2`:
 
 Target: first desktop release, with no file mutation.
 
+Status: completed in `1.5.2`.
+
 Recommended toolkit: PySide6 Widgets with Qt Multimedia. PySide6 should be an
 optional dependency so CLI-only installations stay lightweight.
 
@@ -97,6 +99,19 @@ Acceptance criteria:
 - the user can compare paths, sizes, metadata, and media before making a
   decision;
 - closing or cancelling the UI does not modify source media.
+
+Implemented in `1.5.2`:
+
+- optional `PySide6` GUI extra and `samesame-gui` entry point;
+- multiple-root picker and scanner settings without adding Qt to CLI installs;
+- background `ScanService` worker with progress, warnings, cancellation, and logs;
+- filters and review entries for exact, video, image, audio, folder, and name results;
+- side-by-side image, video, and audio panes with independent file selection;
+- synchronized video seeking, shared playback, and independent mute controls;
+- lazy codec, container, resolution, frame-rate, audio, subtitle, chapter, and
+  attachment metadata;
+- open-file/open-folder controls and HTML/JSON report export/open actions;
+- close-time cancellation with no source-media mutation.
 
 Estimated phase total: 11-17 days.
 
@@ -217,18 +232,16 @@ Estimated phase total: 6-10 days.
 
 Suggested milestones:
 
-1. `1.5.2`: application-service refactor, structured progress, cancellation,
-   and review metadata. Completed.
-2. `1.6`: read-only desktop review.
-3. `1.7`: safe quarantine/recycle workflow and operation journal.
-4. `1.8`: independent transcoding module, CLI, presets, and validation.
-5. `1.9`: desktop transcoding queue and replacement workflow.
+1. `1.5.2`: application-service refactor and read-only desktop review.
+   Completed.
+2. `1.7`: safe quarantine/recycle workflow and operation journal.
+3. `1.8`: independent transcoding module, CLI, presets, and validation.
+4. `1.9`: desktop transcoding queue and replacement workflow.
 
-The remaining plan after Phase 0 is roughly 38-60 development days when the
+The remaining plan after Phase 1 is roughly 27-43 development days when the
 phase estimates are added directly. Some work can overlap, but the estimate
 intentionally includes validation of destructive and source-replacing
-workflows. A smaller useful read-only product appears after Phase 1; risky
-behavior should not be rushed to meet a version number.
+workflows. Risky behavior should not be rushed to meet a version number.
 
 ## Deferred Work
 

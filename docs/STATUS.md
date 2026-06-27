@@ -44,10 +44,16 @@ Implemented:
 - `ScanResult` with scanned records and basic review metadata;
 - lazy read-only probing of container, codec, resolution, frame rate, audio and
   subtitle tracks, chapters, and attachments.
+- optional PySide6 desktop shell exposed through `samesame-gui`;
+- multiple-root selection and scan settings with a background worker;
+- responsive progress, warning logs, and cooperative cancel control;
+- filters for all six report categories;
+- side-by-side image/video/audio preview with synchronized video seeking;
+- detailed per-file metadata, open-file/open-folder controls, and report export.
 
-The program is report-only. It does not move, merge, rename, or delete files.
-There is no desktop interface or transcoding command in version 1.5.2. Those
-features are planned in `docs/ROADMAP.md`.
+The program is read-only. It does not move, merge, rename, or delete files.
+There is no transcoding command in version 1.5.2. Safe file actions and
+transcoding are planned in `docs/ROADMAP.md`.
 
 ## Supported Behavior
 
@@ -59,15 +65,19 @@ features are planned in `docs/ROADMAP.md`.
 - Python callers can run scans without terminal output through
   `dedupe.service.ScanService`, receive typed events, cancel through a
   thread-safe token, and request detailed metadata only for selected files.
+- Desktop users can run the optional `samesame-gui` interface without changing
+  the CLI-only dependency footprint.
 
 ## Verification Completed
 
-The available suite currently contains 40 unit/integration tests.
+The available suite currently contains 43 unit/integration tests.
 
-- All 40 pass under both `unittest` and pytest in the project-local Python
+- All 43 pass under both `unittest` and pytest in the project-local Python
   3.11.9 virtual environment with all runtime/dev dependencies installed.
 - Service coverage verifies structured events, warnings, failure reporting,
   cooperative cancellation/cache preservation, and review metadata.
+- GUI coverage verifies all result-category adapters, offscreen window startup,
+  and an end-to-end background scan through the Qt event loop.
 - Ruff passes with no findings.
 - A real ffmpeg integration test passes with ffmpeg/ffprobe
   `2026-06-15-git-44d082edc8`. It generates a short source video, a resized
@@ -130,8 +140,8 @@ in this session uses the absolute executable paths.
   root through which it is discovered.
 - Name-only matches remain hints and are not deletion evidence.
 - There is no automatic deletion or duplicate-resolution workflow.
-- There is no desktop UI; the current interface is the `samesame` CLI and its
-  HTML/JSON reports.
+- The desktop UI is read-only; review decisions and safe filesystem actions are
+  not implemented yet.
 - Anime encoding presets are specified for future work, but no transcoding
   module or `samesame-transcode` command exists yet.
 
@@ -140,12 +150,11 @@ in this session uses the absolute executable paths.
 The detailed implementation plan, safety rules, complexity estimates, and
 acceptance criteria are in `docs/ROADMAP.md`. The planned order is:
 
-1. Add a read-only PySide6 desktop interface for scans and side-by-side review.
-2. Add safe quarantine/recycle actions with preflight checks and an operation
+1. Add safe quarantine/recycle actions with preflight checks and an operation
    journal. Permanent deletion is not part of the initial implementation.
-3. Add a separate transcoding module and `samesame-transcode` command using the
+2. Add a separate transcoding module and `samesame-transcode` command using the
    four presets in `docs/ANIME_ENCODING_PRESETS.md`.
-4. Integrate a validated transcoding queue into the desktop interface.
+3. Integrate a validated transcoding queue into the desktop interface.
 
 Ongoing matching work remains evidence-driven:
 
@@ -159,9 +168,9 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phase 0 is implemented for the `1.5.2` release: the CLI now delegates to the
-reusable service, while the service remains independent of both terminal UI
-and PySide6. A new session should begin with:
+Phases 0 and 1 are implemented for the `1.5.2` release. The CLI delegates to
+the reusable service, while the optional PySide6 interface consumes the same
+service without coupling detection logic to Qt. A new session should begin with:
 
 ```powershell
 git status --short
@@ -169,8 +178,8 @@ git diff --check
 python -m unittest discover -s tests -v
 ```
 
-Do not discard uncommitted `1.5.2` work. Continue with Phase 1 only after the
-service tests and full FFmpeg integration suite remain green.
+Do not discard uncommitted `1.5.2` work. Continue with Phase 2 only after the
+service, GUI, and full FFmpeg integration suites remain green.
 
 ## Suggested Prompt for a New Chat
 
@@ -178,6 +187,5 @@ service tests and full FFmpeg integration suite remain green.
 Read README.md, docs/USAGE.md, docs/CONFIG.md, docs/STATUS.md,
 docs/ROADMAP.md, and docs/ANIME_ENCODING_PRESETS.md.
 Preserve the current uncommitted working-tree changes. Verify the test suite,
-then continue with the read-only PySide6 desktop interface in Phase 1 of
-docs/ROADMAP.md.
+then continue with safe duplicate actions in Phase 2 of docs/ROADMAP.md.
 ```
