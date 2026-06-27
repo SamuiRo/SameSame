@@ -1,6 +1,6 @@
 # Usage Guide
 
-This guide describes SameSame `1.5.4`. The current application provides a
+This guide describes SameSame `1.5.5`. The current application provides a
 report-only CLI and an optional desktop review interface with explicit,
 journaled quarantine/recycle actions. There is no permanent-delete or
 transcoding command. Planned features are documented in `docs/ROADMAP.md`.
@@ -242,6 +242,26 @@ operating-system recycle bin; SameSame does not promise automatic restore for
 it. Folder and name-only hints never enable file mutation. Permanent deletion
 is not implemented.
 
-A separate transcoding module will implement the presets in
-`docs/ANIME_ENCODING_PRESETS.md`; transcoding commands are not available in
-version 1.5.4. See `docs/ROADMAP.md` for scope and safety requirements.
+## Independent Transcoding
+
+List presets and test both encoder availability and GPU initialization:
+
+```powershell
+samesame-transcode --list-presets
+samesame-transcode --check-capabilities
+```
+
+Run a CPU encode or queue several inputs sequentially:
+
+```powershell
+samesame-transcode "D:\Anime\Episode 01.mkv" --preset anime_x265_balanced
+samesame-transcode "D:\Anime\01.mkv" "D:\Anime\02.mkv" `
+  --preset anime_x265_max --output-dir "D:\Anime\Encoded"
+```
+
+The transcoder probes each input, writes a unique temporary MKV, encodes only
+video, and copies audio, subtitles, chapters, metadata, and attachments. It
+then probes and decodes the result before assigning the final name. The source
+is always retained. Use `--dry-run` to inspect the planned command,
+`--json-output` for automation, and `--keep-temporary-on-failure` for debugging.
+The exact settings are in `docs/ANIME_ENCODING_PRESETS.md`.

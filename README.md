@@ -1,14 +1,15 @@
 # SameSame
 
-SameSame `1.5.4` finds duplicate and similar media files through a command-line
+SameSame `1.5.5` finds duplicate and similar media files through a command-line
 scanner or an optional desktop review interface. It scans one or more folder
 trees recursively and writes reports for manual review.
 
 The CLI remains report-only. The desktop interface can record keep/ignore
 decisions, move explicitly selected content-backed files to reversible
 quarantine, or send an explicitly confirmed file to the operating-system
-recycle bin. SameSame has no permanent-delete action and does not compress or
-replace source media. Anime transcoding remains planned.
+recycle bin. A separate source-preserving CLI can transcode videos with four
+anime-oriented FFmpeg presets. SameSame has no permanent-delete action and
+never replaces a source as part of transcoding.
 
 ## What SameSame Finds
 
@@ -45,6 +46,7 @@ Verify the commands:
 
 ```powershell
 samesame --help
+samesame-transcode --help
 ffmpeg -version
 ffprobe -version
 ```
@@ -172,6 +174,27 @@ Desktop file actions are deliberately conservative:
 
 ## Common Commands
 
+Inspect the four transcode presets and verify which encoders can initialize:
+
+```powershell
+samesame-transcode --list-presets
+samesame-transcode --check-capabilities
+```
+
+Transcode one or more videos sequentially. Output is always a new MKV and the
+source is always kept:
+
+```powershell
+samesame-transcode "D:\Anime\Episode 01.mkv" --preset anime_x265_balanced
+samesame-transcode "D:\Anime\01.mkv" "D:\Anime\02.mkv" `
+  --preset anime_hevc_nvenc --output-dir "D:\Anime\Encoded"
+```
+
+Use `--dry-run` to probe files and inspect the exact FFmpeg command first.
+Audio, subtitles, chapters, metadata, and attachments are copied where present;
+the encoded temporary file is probed and decode-checked before it receives its
+final name. Diagnostic FFmpeg logs are retained beside the output.
+
 Refresh one cache layer after changing matching logic or troubleshooting stale
 results:
 
@@ -222,13 +245,12 @@ Available now:
 - `samesame`: duplicate scanner and HTML/JSON report generator;
 - `samesame-benchmark`: threshold benchmark utility.
 - `samesame-gui`: optional desktop review with journaled quarantine/recycle actions;
+- `samesame-transcode`: independent sequential transcoding queue with four
+  validated anime presets;
 - `dedupe.service.ScanService`: UI-agnostic Python scan API with structured
   progress events, cooperative cancellation, and review metadata models.
 
-Planned, not available in `1.5.4`:
-
-- a separate transcoding engine and queue;
-- anime compression presets using `libx265`, `hevc_nvenc`, and `av1_nvenc`.
+Planned after `1.5.5`: integration of the transcoding queue into the desktop UI.
 
 ## Application Service
 

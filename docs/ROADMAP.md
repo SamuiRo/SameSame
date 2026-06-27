@@ -4,7 +4,7 @@ Last updated: 2026-06-27
 
 This roadmap separates the current scanner and journaled desktop cleanup from
 planned transcoding features. It is an implementation plan, not a description
-of commands available in SameSame `1.5.4`.
+of commands available in SameSame `1.5.5`.
 
 ## Goals
 
@@ -166,6 +166,8 @@ Estimated phase total: 10-16 days.
 
 Target: a tested backend that works without the GUI.
 
+Status: completed in `1.5.5`.
+
 Proposed package structure:
 
 ```text
@@ -229,6 +231,18 @@ Test matrix:
 - path conflicts and non-ASCII filenames;
 - synthetic integration encode for every encoder available on the test host.
 
+Implemented in `1.5.5`:
+
+- independent `dedupe.transcode` package and `samesame-transcode` entry point;
+- four exact CPU/NVENC presets with encoder and hardware initialization checks;
+- ffprobe input model and MKV command planning that maps video, audio,
+  subtitles, attachments, chapters, and metadata;
+- cancellable FFmpeg runner with machine-readable progress and retained logs;
+- unique temporary output, conflict protection, and source-preserving finalization;
+- duration, stream-count, chapter, first-frame decode, and output-size validation;
+- sequential queue, dry-run and JSON CLI modes, plus synthetic x265 integration
+  coverage with multiple audio tracks, subtitle, chapter, and attachment.
+
 Estimated phase total: 11-17 days.
 
 ## Phase 4: Transcoding in the Desktop UI
@@ -255,12 +269,11 @@ Suggested milestones:
 1. `1.5.2`: application-service refactor. Completed.
 2. `1.5.3`: read-only desktop review. Completed.
 3. `1.5.4`: safe quarantine/recycle workflow and operation journal. Completed.
-4. `1.6`: independent transcoding module, CLI, presets, and validation.
-5. `1.7`: desktop transcoding queue and replacement workflow.
+4. `1.5.5`: independent transcoding module, CLI, presets, and validation. Completed.
+5. `1.6`: desktop transcoding queue and replacement workflow.
 
-The remaining plan after Phase 2 is roughly 17-27 development days when the
-phase estimates are added directly. Some work can overlap, but the estimate
-intentionally includes validation of source-replacing workflows. Risky
+The remaining plan after Phase 3 is roughly 6-10 development days. It includes
+validation of the separately confirmed source-replacement workflow; risky
 behavior should not be rushed to meet a version number.
 
 ## Deferred Work

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "samesame"
-version = "1.5.4"
+version = "1.5.5"
 description = "CLI and optional desktop tool for finding exact and similar media files."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -48,6 +48,7 @@ dev = [
 samesame = "dedupe.cli:main"
 samesame-benchmark = "dedupe.benchmark:main"
 samesame-gui = "dedupe.gui.app:main"
+samesame-transcode = "dedupe.transcode.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["dedupe*"]

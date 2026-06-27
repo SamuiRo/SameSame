@@ -2,10 +2,10 @@
 
 ## Status
 
-This document is the source specification for SameSame's planned transcoding
-module. SameSame `1.5.4` does not compress files and does not yet contain
-`build_ffmpeg_cmd()` or a `samesame-transcode` command. Implementation order,
-safety requirements, and estimates are tracked in `ROADMAP.md`.
+This document is the source specification for SameSame's transcoding module,
+implemented in `1.5.5` and exposed through `samesame-transcode`. Safety
+requirements and the remaining desktop integration work are tracked in
+`ROADMAP.md`.
 
 The arguments below are the four initial built-in presets. Reported speed and
 file-size figures are reference estimates for a roughly 25-minute 720p anime
@@ -151,8 +151,8 @@ video_args = [
 
 ## 🔧 Planned SameSame Preset IDs
 
-The future preset registry will expose stable IDs rather than requiring users
-to edit Python code:
+The preset registry exposes stable IDs rather than requiring users to edit
+Python code:
 
 | Preset ID | Encoder settings |
 | --- | --- |
@@ -161,11 +161,11 @@ to edit Python code:
 | `anime_av1_nvenc` | `av1_nvenc`, CQ 22, `p7` |
 | `anime_hevc_nvenc` | `hevc_nvenc`, CQ 22, `p7` |
 
-The planned command builder will translate these IDs into the exact arguments
-specified above. It must first verify that the selected encoder exists in the
-installed FFmpeg build and that hardware initialization succeeds.
+The command builder translates these IDs into the exact arguments specified
+above. It first verifies that the selected encoder exists in the installed
+FFmpeg build and that hardware initialization succeeds.
 
-Initial implementation defaults:
+Implementation defaults:
 
 - output container: MKV;
 - copy audio and subtitles without re-encoding;
