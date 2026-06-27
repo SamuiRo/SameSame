@@ -9,7 +9,7 @@ SameSame reads settings from three places, in this order:
 CLI flags always win over the config file. This means you can keep a stable
 project config and override only one value for a specific run.
 
-This page documents the scanner configuration available in SameSame `1.5.5`.
+This page documents the scanner configuration available in SameSame `1.6.0`.
 Desktop UI state, quarantine location, review decisions, and operation history
 are managed by the GUI and its journal rather than scanner config keys. Anime
 transcoding settings are not scanner configuration keys; use the independent

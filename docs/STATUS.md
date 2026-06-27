@@ -65,11 +65,18 @@ Implemented:
 - sequential queue with progress, cancellation, dry-run, JSON output, and logs;
 - MKV stream/metadata preservation and post-encode duration, stream, chapter,
   and first-frame decode validation.
+- desktop transcode queue launched from reviewed video results;
+- asynchronous preset capability status, progress, cancel, retry, output, and
+  diagnostic-log controls;
+- before/after media metadata, size, and savings display;
+- separately confirmed quarantine-first promotion with conflict checks,
+  content verification, journal integration, and rollback attempt.
 
 The scanner CLI remains report-only. The desktop interface modifies a source only
 after an explicit quarantine or recycle confirmation and a successful identity
-preflight. There is no permanent-delete action. The separate transcoding CLI
-always creates and validates a new MKV and keeps the original.
+preflight. There is no permanent-delete action. Encoding always creates and
+validates a new MKV and keeps the original; promotion is a later explicit,
+quarantine-first action.
 
 ## Supported Behavior
 
@@ -87,12 +94,14 @@ always creates and validates a new MKV and keeps the original.
   system and is not automatically restorable by SameSame.
 - Python callers can use `dedupe.transcode.TranscodeQueue`; CLI users can run
   `samesame-transcode` independently of scanning and the desktop interface.
+- Desktop users can queue reviewed videos, inspect capability and validation
+  results, and explicitly promote an output only after source quarantine.
 
 ## Verification Completed
 
-The available suite currently contains 66 unit/integration tests.
+The available suite currently contains 75 unit/integration tests.
 
-- All 66 pass under both `unittest` and pytest in the project-local Python
+- All 75 pass under both `unittest` and pytest in the project-local Python
   3.11.9 virtual environment with all runtime/dev dependencies installed.
 - Service coverage verifies structured events, warnings, failure reporting,
   cooperative cancellation/cache preservation, and review metadata.
@@ -109,9 +118,13 @@ The available suite currently contains 66 unit/integration tests.
   across MP3, FLAC, and volume changes while rejecting an unrelated recording.
 - A real x265 integration test preserves two audio tracks, a subtitle track,
   chapter metadata, an MKV attachment, and the non-ASCII-named source.
+- An offscreen GUI integration test runs a real x265 queue through Qt signals
+  and verifies that the source and validated output both remain available.
+- Promotion tests cover successful quarantine-first replacement, preflight
+  destination conflicts, and automatic source restore after a simulated move failure.
 - Python compilation, JSON config parsing, cache migration, CLI startup, and
   `git diff --check` pass.
-- Package builds produce both the `samesame-1.5.5` source archive and
+- Package builds produce both the `samesame-1.6.0` source archive and
   universal wheel.
 - A recursive CLI test confirms that a resized/recompressed JPEG in a nested
   folder matches its PNG source and appears in HTML/JSON and folder clusters.
@@ -171,14 +184,15 @@ in this session uses the absolute executable paths.
   journaled identity and the original path remains free.
 - Hardware presets require compatible NVIDIA hardware and drivers; capability
   checks report unavailable devices before a queue starts.
-- Transcoding currently produces MKV only, always retains the source, and is
-  not yet integrated into the desktop interface.
+- Transcoding currently produces MKV only. Promotion of a non-MKV source uses
+  the same stem with an `.mkv` extension and refuses an occupied destination.
+- A promoted source remains in quarantine, but journal restore is intentionally
+  unavailable while the promoted file occupies its original path.
 
 ## Planned Product Work
 
-The detailed implementation plan, safety rules, complexity estimates, and
-acceptance criteria are in `docs/ROADMAP.md`. The next product phase is to
-integrate the validated transcoding queue into the desktop interface.
+The original GUI/transcoding plan and its acceptance criteria are complete.
+Deferred matching and advanced encoding ideas remain in `docs/ROADMAP.md`.
 
 Ongoing matching work remains evidence-driven:
 
@@ -192,10 +206,10 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 3 are implemented through release `1.5.5`. The scanner CLI
+Phases 0 through 4 are implemented through release `1.6.0`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
-same scan service and a separate journaled action service, and transcoding is
-an independent backend/CLI. A new session should begin with:
+same scan service, journaled actions, and independent transcode backend. A new
+session should begin with:
 
 ```powershell
 git status --short
@@ -203,8 +217,8 @@ git diff --check
 python -m unittest discover -s tests -v
 ```
 
-Do not discard uncommitted `1.5.5` work. Continue with Phase 4 only after the
-service, GUI/action, and full FFmpeg/transcode integration suites remain green.
+Do not discard uncommitted `1.6.0` work. Continue deferred features only after
+the service, GUI/action, and full FFmpeg/transcode integration suites remain green.
 
 ## Suggested Prompt for a New Chat
 
@@ -212,6 +226,6 @@ service, GUI/action, and full FFmpeg/transcode integration suites remain green.
 Read README.md, docs/USAGE.md, docs/CONFIG.md, docs/STATUS.md,
 docs/ROADMAP.md, and docs/ANIME_ENCODING_PRESETS.md.
 Preserve the current uncommitted working-tree changes. Verify the test suite,
-then continue with transcoding integration in the desktop UI in Phase 4 of
-docs/ROADMAP.md.
+then choose one separately scoped deferred item from docs/ROADMAP.md and keep
+the existing source-protection rules intact.
 ```

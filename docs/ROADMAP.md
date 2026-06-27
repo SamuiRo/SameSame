@@ -4,7 +4,7 @@ Last updated: 2026-06-27
 
 This roadmap separates the current scanner and journaled desktop cleanup from
 planned transcoding features. It is an implementation plan, not a description
-of commands available in SameSame `1.5.5`.
+of commands available in SameSame `1.6.0`.
 
 ## Goals
 
@@ -249,6 +249,8 @@ Estimated phase total: 11-17 days.
 
 Target: compression queue available from reviewed files.
 
+Status: completed in `1.6.0`.
+
 | Work | Complexity | Estimate |
 | --- | ---: | ---: |
 | Preset selection and capability/status display | 2/5 | 1-2 days |
@@ -260,6 +262,19 @@ The UI must explain unavailable hardware presets rather than failing after a
 job starts. Completing a transcode must not automatically classify or delete a
 duplicate.
 
+Implemented in `1.6.0`:
+
+- reviewed video results can populate a dedicated desktop transcode queue;
+- asynchronous encoder and hardware initialization status for every preset;
+- sequential background jobs with per-file progress, cancel, retry, output,
+  and diagnostic-log controls;
+- before/after duration, stream, chapter, size, and savings comparison;
+- encode completion keeps the source and does not alter review classification;
+- separately confirmed quarantine-first promotion with source and output
+  SHA-256 identity checks, destination conflict rejection, journal integration, and
+  attempted source rollback if promotion fails;
+- scan and file-mutation controls are disabled while a queue or promotion is active.
+
 Estimated phase total: 6-10 days.
 
 ## Release Sequence
@@ -270,11 +285,10 @@ Suggested milestones:
 2. `1.5.3`: read-only desktop review. Completed.
 3. `1.5.4`: safe quarantine/recycle workflow and operation journal. Completed.
 4. `1.5.5`: independent transcoding module, CLI, presets, and validation. Completed.
-5. `1.6`: desktop transcoding queue and replacement workflow.
+5. `1.6.0`: desktop transcoding queue and replacement workflow. Completed.
 
-The remaining plan after Phase 3 is roughly 6-10 development days. It includes
-validation of the separately confirmed source-replacement workflow; risky
-behavior should not be rushed to meet a version number.
+The original GUI/transcoding roadmap is complete. Deferred work below remains
+separately scoped and should continue to be evidence-driven.
 
 ## Deferred Work
 

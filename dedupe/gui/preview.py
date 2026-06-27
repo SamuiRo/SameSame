@@ -305,6 +305,7 @@ class MediaPane(QWidget):
 class ComparisonWidget(QWidget):
     action_requested = Signal(object, str)
     batch_quarantine_requested = Signal(object, str)
+    transcode_requested = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -336,11 +337,13 @@ class ComparisonWidget(QWidget):
         self.quarantine_button = QPushButton("Quarantine…")
         self.recycle_button = QPushButton("Recycle…")
         self.batch_quarantine_button = QPushButton("Quarantine other copies…")
+        self.transcode_button = QPushButton("Transcode videos…")
         self.keep_button.clicked.connect(lambda: self._emit_action(FileAction.KEEP))
         self.ignore_button.clicked.connect(lambda: self._emit_action(FileAction.IGNORE))
         self.quarantine_button.clicked.connect(lambda: self._emit_action(FileAction.QUARANTINE))
         self.recycle_button.clicked.connect(lambda: self._emit_action(FileAction.RECYCLE))
         self.batch_quarantine_button.clicked.connect(self._emit_batch_quarantine)
+        self.transcode_button.clicked.connect(self._emit_transcode)
         self.decision_label = QLabel("No review decision")
         review_actions = QHBoxLayout()
         review_actions.addWidget(self.action_target)
@@ -351,6 +354,7 @@ class ComparisonWidget(QWidget):
         file_actions.addWidget(self.quarantine_button)
         file_actions.addWidget(self.recycle_button)
         file_actions.addWidget(self.batch_quarantine_button)
+        file_actions.addWidget(self.transcode_button)
         file_actions.addStretch(1)
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self.left)
@@ -434,6 +438,13 @@ class ComparisonWidget(QWidget):
         self.batch_quarantine_button.setEnabled(
             bool(self._item and self._item.category == "exact" and len(self._item.paths) > 1 and can_mutate)
         )
+        self.transcode_button.setEnabled(
+            bool(
+                has_item
+                and self._item
+                and any(is_video_path(Path(path)) and Path(path).is_file() for path in self._item.paths)
+            )
+        )
 
     def _emit_action(self, action: FileAction) -> None:
         path = self._selected_path()
@@ -443,3 +454,9 @@ class ComparisonWidget(QWidget):
     def _emit_batch_quarantine(self) -> None:
         if self._item is not None:
             self.batch_quarantine_requested.emit(self._item.paths, self._selected_path())
+
+    def _emit_transcode(self) -> None:
+        if self._item is not None:
+            paths = tuple(path for path in self._item.paths if is_video_path(Path(path)) and Path(path).is_file())
+            if paths:
+                self.transcode_requested.emit(paths)

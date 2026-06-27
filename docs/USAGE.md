@@ -1,9 +1,9 @@
 # Usage Guide
 
-This guide describes SameSame `1.5.5`. The current application provides a
+This guide describes SameSame `1.6.0`. The current application provides a
 report-only CLI and an optional desktop review interface with explicit,
-journaled quarantine/recycle actions. There is no permanent-delete or
-transcoding command. Planned features are documented in `docs/ROADMAP.md`.
+journaled quarantine/recycle actions and a transcoding queue. There is no
+permanent-delete command.
 
 SameSame finds duplicate media on six levels:
 
@@ -243,6 +243,17 @@ it. Folder and name-only hints never enable file mutation. Permanent deletion
 is not implemented.
 
 ## Independent Transcoding
+
+In the desktop interface, select a review result containing videos and choose
+**Transcode videos**. The queue dialog provides preset selection, encoder/GPU
+capability status, progress, cancellation, retry, output/log shortcuts, and a
+before/after stream and size summary. Multiple reviewed files run sequentially.
+
+Completing an encode keeps both files. **Quarantine original + promote** is a
+separate confirmation: SameSame rechecks the source identity, moves it to the
+journaled quarantine, then moves the validated MKV into the collection and
+verifies its content identity. Existing destination conflicts fail before the
+source is moved; a failed promotion attempts to restore the original.
 
 List presets and test both encoder availability and GPU initialization:
 

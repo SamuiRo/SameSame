@@ -261,6 +261,21 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(results, produced)
         self.assertEqual([call.args[0] for call in run_mock.call_args_list], requests)
 
+    def test_queue_reports_each_result_to_callback_in_order(self) -> None:
+        requests = [
+            TranscodeRequest(Path("first.mkv"), Path("first.out.mkv"), "anime_x265_balanced"),
+            TranscodeRequest(Path("second.mkv"), Path("second.out.mkv"), "anime_x265_balanced"),
+        ]
+        produced = [
+            TranscodeResult("one", JobStatus.FAILED, requests[0].input_path, requests[0].output_path, None, requests[0].preset_id),
+            TranscodeResult("two", JobStatus.COMPLETED, requests[1].input_path, requests[1].output_path, None, requests[1].preset_id),
+        ]
+        callbacks: list[TranscodeResult] = []
+        queue = TranscodeQueue(result_callback=callbacks.append)
+        with patch.object(queue, "_run_one", side_effect=produced):
+            queue.run(requests)
+        self.assertEqual(callbacks, produced)
+
 
 if __name__ == "__main__":
     unittest.main()

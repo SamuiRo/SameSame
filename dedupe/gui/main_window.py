@@ -38,13 +38,14 @@ from ..service import ScanOptions, ScanResult
 from .preview import ComparisonWidget
 from .journal_dialog import JournalDialog
 from .result_items import CATEGORY_LABELS, ReviewItem, build_review_items, category_counts
+from .transcode_dialog import TranscodeDialog
 from .worker import ActionJob, ActionWorker, ScanWorker
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("SameSame · Read-only media review")
+        self.setWindowTitle("SameSame · Media review and transcoding")
         self.resize(1500, 900)
         self.setMinimumSize(1080, 680)
         self._scan_thread: QThread | None = None
@@ -58,6 +59,7 @@ class MainWindow(QMainWindow):
         self._close_when_finished = False
         self._last_terminal_status = "Ready"
         self._journal_dialog: JournalDialog | None = None
+        self._transcode_dialog: TranscodeDialog | None = None
         self._review_decisions: dict[str, str] = {}
 
         self._build_ui()
@@ -70,6 +72,7 @@ class MainWindow(QMainWindow):
         self.comparison = ComparisonWidget(self)
         self.comparison.action_requested.connect(self._request_action)
         self.comparison.batch_quarantine_requested.connect(self._request_batch_quarantine)
+        self.comparison.transcode_requested.connect(self._open_transcode)
         root_splitter.addWidget(self.comparison)
         root_splitter.setStretchFactor(0, 0)
         root_splitter.setStretchFactor(1, 0)
@@ -279,7 +282,7 @@ class MainWindow(QMainWindow):
         )
 
     def _start_scan(self) -> None:
-        if self._scan_thread is not None:
+        if self._scan_thread is not None or self._transcode_is_busy():
             return
         if self.folder_list.count() == 0:
             QMessageBox.information(self, "No folders", "Add at least one collection root before scanning.")
@@ -385,16 +388,17 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.close)
 
     def _set_running(self, running: bool) -> None:
+        transcode_busy = self._transcode_is_busy()
         self.folder_list.setEnabled(not running)
         self.add_folder_button.setEnabled(not running)
         self.remove_folder_button.setEnabled(not running)
         self.settings_group.setEnabled(not running)
-        self.scan_button.setEnabled(not running)
+        self.scan_button.setEnabled(not running and not transcode_busy)
         self.cancel_button.setEnabled(running)
         self.export_button.setEnabled(not running and self._result is not None)
         self.open_report_button.setEnabled(not running and self._last_report_path is not None)
         self.journal_button.setEnabled(not running and self._action_thread is None)
-        self.comparison.set_actions_enabled(not running and self._action_thread is None)
+        self.comparison.set_actions_enabled(not running and self._action_thread is None and not transcode_busy)
 
     def _update_category_filter(self, items: list[ReviewItem]) -> None:
         counts = category_counts(items)
@@ -484,7 +488,12 @@ class MainWindow(QMainWindow):
         return None
 
     def _request_action(self, action_value: object, path_text: str) -> None:
-        if not isinstance(action_value, FileAction) or self._scan_thread is not None or self._action_thread is not None:
+        if (
+            not isinstance(action_value, FileAction)
+            or self._scan_thread is not None
+            or self._action_thread is not None
+            or self._transcode_is_busy()
+        ):
             return
         item = self._current_review_item()
         if item is None:
@@ -507,7 +516,7 @@ class MainWindow(QMainWindow):
         self._start_action_worker([ActionJob(record, action_value, self._group_id(item))])
 
     def _request_batch_quarantine(self, paths_value: object, keep_path: str) -> None:
-        if self._scan_thread is not None or self._action_thread is not None:
+        if self._scan_thread is not None or self._action_thread is not None or self._transcode_is_busy():
             return
         item = self._current_review_item()
         if item is None or item.category != "exact" or not isinstance(paths_value, tuple):
@@ -563,7 +572,7 @@ class MainWindow(QMainWindow):
         *,
         restore_operation_id: str | None = None,
     ) -> None:
-        if self._action_thread is not None:
+        if self._action_thread is not None or self._transcode_is_busy():
             return
         thread = QThread(self)
         worker = ActionWorker(
@@ -583,6 +592,8 @@ class MainWindow(QMainWindow):
         thread.finished.connect(thread.deleteLater)
         self._action_thread = thread
         self._action_worker = worker
+        if self._transcode_dialog is not None:
+            self._transcode_dialog.set_external_actions_enabled(False)
         self.comparison.set_actions_enabled(False)
         self.scan_button.setEnabled(False)
         self.journal_button.setEnabled(False)
@@ -620,9 +631,11 @@ class MainWindow(QMainWindow):
     def _action_finished(self) -> None:
         self._action_thread = None
         self._action_worker = None
-        self.scan_button.setEnabled(self._scan_thread is None)
+        if self._transcode_dialog is not None:
+            self._transcode_dialog.set_external_actions_enabled(True)
+        self.scan_button.setEnabled(self._scan_thread is None and not self._transcode_is_busy())
         self.journal_button.setEnabled(self._scan_thread is None)
-        self.comparison.set_actions_enabled(self._scan_thread is None)
+        self.comparison.set_actions_enabled(self._scan_thread is None and not self._transcode_is_busy())
         self.folder_list.setEnabled(self._scan_thread is None)
         self.settings_group.setEnabled(self._scan_thread is None)
         self.category_filter.setEnabled(True)
@@ -665,7 +678,7 @@ class MainWindow(QMainWindow):
                 self._review_decisions[operation.group_id] = f"{operation.action.value}: completed"
 
     def _request_restore(self, operation_id: str) -> None:
-        if self._scan_thread is not None or self._action_thread is not None:
+        if self._scan_thread is not None or self._action_thread is not None or self._transcode_is_busy():
             return
         answer = QMessageBox.question(
             self,
@@ -680,6 +693,54 @@ class MainWindow(QMainWindow):
     def _append_log(self, message: str) -> None:
         self.log_view.appendPlainText(message)
 
+    def _transcode_is_busy(self) -> bool:
+        return bool(self._transcode_dialog and self._transcode_dialog.is_busy)
+
+    def _open_transcode(self, paths_value: object) -> None:
+        if self._scan_thread is not None or self._action_thread is not None or not isinstance(paths_value, tuple):
+            return
+        paths = [Path(str(path)) for path in paths_value]
+        if self._transcode_dialog is not None:
+            self._transcode_dialog.add_paths(paths)
+            self._transcode_dialog.show()
+            self._transcode_dialog.raise_()
+            self._transcode_dialog.activateWindow()
+            return
+        roots = {
+            str(record.path.expanduser().resolve()): record.root
+            for record in (self._result.records if self._result is not None else [])
+        }
+        dialog = TranscodeDialog(
+            paths,
+            ffmpeg=self.ffmpeg_path.text().strip() or "ffmpeg",
+            ffprobe=self.ffprobe_path.text().strip() or "ffprobe",
+            journal_path=self._journal_path(),
+            quarantine_root=self._quarantine_root(),
+            collection_roots=roots,
+            parent=self,
+        )
+        dialog.busy_changed.connect(self._transcode_busy_changed)
+        dialog.journal_changed.connect(self._transcode_journal_changed)
+        dialog.finished.connect(self._transcode_closed)
+        self._transcode_dialog = dialog
+        dialog.show()
+
+    def _transcode_busy_changed(self, busy: bool) -> None:
+        self.scan_button.setEnabled(not busy and self._scan_thread is None and self._action_thread is None)
+        self.journal_button.setEnabled(not busy and self._scan_thread is None and self._action_thread is None)
+        self.comparison.set_actions_enabled(not busy and self._scan_thread is None and self._action_thread is None)
+
+    def _transcode_journal_changed(self) -> None:
+        self._append_log("Transcoded output promoted after journaled source quarantine")
+        if self._journal_dialog is not None:
+            self._journal_dialog.refresh()
+
+    def _transcode_closed(self, _result: int) -> None:
+        self._transcode_dialog = None
+        self._set_running(self._scan_thread is not None)
+        if self._close_when_finished:
+            QTimer.singleShot(0, self.close)
+
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt API naming.
         if self._scan_worker is not None:
             self._close_when_finished = True
@@ -689,6 +750,12 @@ class MainWindow(QMainWindow):
         if self._action_thread is not None:
             self._close_when_finished = True
             self.status_label.setText("Waiting for the journaled file action to finish…")
+            event.ignore()
+            return
+        if self._transcode_dialog is not None and self._transcode_dialog.has_background_work:
+            self._close_when_finished = True
+            self.status_label.setText("Waiting for the transcode queue to stop safely…")
+            self._transcode_dialog.request_close()
             event.ignore()
             return
         self.comparison.stop()

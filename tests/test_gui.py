@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -55,7 +57,7 @@ class GuiSmokeTests(unittest.TestCase):
         window = MainWindow()
         try:
             self.assertEqual(window.category_filter.count(), len(CATEGORY_LABELS))
-            self.assertIn("Read-only", window.windowTitle())
+            self.assertIn("transcoding", window.windowTitle())
             self.assertFalse(window.cancel_button.isEnabled())
         finally:
             window.close()
@@ -91,6 +93,175 @@ class GuiSmokeTests(unittest.TestCase):
                 self.assertFalse(window.comparison.batch_quarantine_button.isEnabled())
             finally:
                 window.close()
+                self.application.processEvents()
+
+    def test_video_review_enables_transcode_queue_action(self) -> None:
+        from dedupe.gui.main_window import MainWindow
+        from dedupe.metadata import basic_media_metadata
+        from dedupe.models import FileRecord
+        from dedupe.service import ScanResult
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            left = root / "episode-a.mkv"
+            right = root / "episode-b.mkv"
+            left.write_bytes(b"left-video")
+            right.write_bytes(b"right-video")
+            records = []
+            for path in (left, right):
+                stat = path.stat()
+                records.append(FileRecord(path, root, stat.st_size, stat.st_mtime, path.stem))
+            report = DedupeReport(2, [], [VideoMatch(str(left), str(right), 95.0, 0.0)], [], [], [], [])
+            result = ScanResult(report, records, {record.path_key: basic_media_metadata(record) for record in records})
+            window = MainWindow()
+            window._scan_completed(result)
+            self.application.processEvents()
+
+            try:
+                self.assertTrue(window.comparison.transcode_button.isEnabled())
+            finally:
+                window.close()
+                self.application.processEvents()
+
+    def test_transcode_dialog_displays_capability_and_before_after_metadata(self) -> None:
+        from unittest.mock import patch
+
+        from PySide6.QtCore import QEventLoop, QTimer
+
+        from dedupe.gui.transcode_dialog import TranscodeDialog
+        from dedupe.transcode.models import (
+            EncoderCapability,
+            JobStatus,
+            MediaInfo,
+            StreamInfo,
+            TranscodeResult,
+            ValidationResult,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "episode.mkv"
+            output = root / "episode.encoded.mkv"
+            source.write_bytes(b"source-video")
+            output.write_bytes(b"encoded")
+            with patch(
+                "dedupe.gui.worker.check_encoder_capability",
+                return_value=EncoderCapability("libx265", True, True),
+            ):
+                dialog = TranscodeDialog(
+                    [source],
+                    ffmpeg="ffmpeg",
+                    ffprobe="ffprobe",
+                    journal_path=root / "journal.sqlite3",
+                    quarantine_root=root / "quarantine",
+                )
+                event_loop = QEventLoop()
+                poll = QTimer()
+                poll.timeout.connect(lambda: event_loop.quit() if dialog._capability_thread is None else None)
+                timeout = QTimer()
+                timeout.setSingleShot(True)
+                timeout.timeout.connect(event_loop.quit)
+                poll.start(5)
+                timeout.start(5_000)
+                event_loop.exec()
+                poll.stop()
+                self.assertTrue(timeout.isActive(), "capability check timed out")
+                timeout.stop()
+
+            input_info = MediaInfo(source, 12, 60.0, "matroska", (StreamInfo(0, "video", "h264"),))
+            output_info = MediaInfo(output, 7, 60.0, "matroska", (StreamInfo(0, "video", "hevc"),))
+            result = TranscodeResult(
+                "job",
+                JobStatus.COMPLETED,
+                source,
+                output,
+                root / "encode.log",
+                "anime_x265_balanced",
+                input_size=12,
+                output_size=7,
+                validation=ValidationResult(True, output_info=output_info),
+                input_info=input_info,
+            )
+            dialog._transcode_result(result)
+            dialog.table.selectRow(0)
+            self.application.processEvents()
+
+            try:
+                self.assertIn("Available: libx265", dialog.capability_label.text())
+                self.assertIn("Input:", dialog.details.toPlainText())
+                self.assertIn("Output:", dialog.details.toPlainText())
+                self.assertTrue(dialog.promote_button.isEnabled())
+            finally:
+                dialog.close()
+                self.application.processEvents()
+
+    def test_background_gui_transcode_queue_completes_without_blocking(self) -> None:
+        ffmpeg = shutil.which(os.environ.get("SAMESAME_TEST_FFMPEG", "ffmpeg"))
+        ffprobe = shutil.which(os.environ.get("SAMESAME_TEST_FFPROBE", "ffprobe"))
+        if not ffmpeg or not ffprobe:
+            self.skipTest("ffmpeg and ffprobe are required")
+
+        from PySide6.QtCore import QEventLoop, QTimer
+
+        from dedupe.gui.transcode_dialog import TranscodeDialog
+        from dedupe.transcode.models import JobStatus
+
+        def wait_until(predicate: object, timeout_ms: int = 15_000) -> None:
+            event_loop = QEventLoop()
+            poll = QTimer()
+            poll.timeout.connect(lambda: event_loop.quit() if predicate() else None)  # type: ignore[operator]
+            timeout = QTimer()
+            timeout.setSingleShot(True)
+            timeout.timeout.connect(event_loop.quit)
+            poll.start(10)
+            timeout.start(timeout_ms)
+            event_loop.exec()
+            poll.stop()
+            self.assertTrue(timeout.isActive(), "background GUI operation timed out")
+            timeout.stop()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "gui-source.mkv"
+            subprocess.run(
+                [
+                    ffmpeg,
+                    "-hide_banner",
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=size=96x64:rate=8:duration=0.5",
+                    "-c:v",
+                    "mpeg4",
+                    str(source),
+                ],
+                check=True,
+                timeout=30,
+            )
+            dialog = TranscodeDialog(
+                [source],
+                ffmpeg=ffmpeg,
+                ffprobe=ffprobe,
+                journal_path=root / "journal.sqlite3",
+                quarantine_root=root / "quarantine",
+            )
+            wait_until(lambda: dialog._capability_thread is None)
+            self.assertTrue(dialog.start_button.isEnabled())
+            dialog._start_queue()
+            self.assertIsNotNone(dialog._queue_thread)
+            wait_until(lambda: dialog._queue_thread is None)
+
+            try:
+                result = dialog._results[str(source.resolve())]
+                self.assertEqual(result.status, JobStatus.COMPLETED, result.message)
+                self.assertTrue(source.exists())
+                self.assertTrue(result.output_path.exists())
+                self.assertEqual(dialog.table.item(0, 2).text(), "Completed")
+            finally:
+                dialog.close()
                 self.application.processEvents()
 
     def test_background_scan_populates_results_without_blocking_ui(self) -> None:

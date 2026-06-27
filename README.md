@@ -1,15 +1,15 @@
 # SameSame
 
-SameSame `1.5.5` finds duplicate and similar media files through a command-line
+SameSame `1.6.0` finds duplicate and similar media files through a command-line
 scanner or an optional desktop review interface. It scans one or more folder
 trees recursively and writes reports for manual review.
 
 The CLI remains report-only. The desktop interface can record keep/ignore
 decisions, move explicitly selected content-backed files to reversible
 quarantine, or send an explicitly confirmed file to the operating-system
-recycle bin. A separate source-preserving CLI can transcode videos with four
-anime-oriented FFmpeg presets. SameSame has no permanent-delete action and
-never replaces a source as part of transcoding.
+recycle bin. The CLI and desktop UI can transcode videos with four anime-oriented
+FFmpeg presets. Encoding always keeps the source; a separate explicit GUI action
+can identity-check and quarantine it before promoting the validated MKV.
 
 ## What SameSame Finds
 
@@ -244,13 +244,15 @@ Available now:
 
 - `samesame`: duplicate scanner and HTML/JSON report generator;
 - `samesame-benchmark`: threshold benchmark utility.
-- `samesame-gui`: optional desktop review with journaled quarantine/recycle actions;
+- `samesame-gui`: desktop review with journaled file actions and a cancellable
+  transcoding queue;
 - `samesame-transcode`: independent sequential transcoding queue with four
   validated anime presets;
 - `dedupe.service.ScanService`: UI-agnostic Python scan API with structured
   progress events, cooperative cancellation, and review metadata models.
 
-Planned after `1.5.5`: integration of the transcoding queue into the desktop UI.
+The original GUI/transcoding roadmap is complete in `1.6.0`; deferred matching
+and advanced encoding ideas remain listed in the roadmap.
 
 ## Application Service
 

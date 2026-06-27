@@ -10,6 +10,11 @@ from ..events import CancellationToken, ScanCancelled, ScanEvent
 from ..metadata import MediaMetadata, probe_media_metadata
 from ..models import FileRecord
 from ..service import ScanOptions, ScanService
+from ..transcode.capabilities import check_encoder_capability
+from ..transcode.models import TranscodeRequest
+from ..transcode.presets import get_preset
+from ..transcode.promotion import promote_transcode
+from ..transcode.queue import TranscodeQueue
 
 
 class ScanWorker(QObject):
@@ -119,6 +124,94 @@ class ActionWorker(QObject):
                     self.outcome.emit(outcome)
                     self.progress.emit(index, total, outcome.message)
         except Exception as exc:  # noqa: BLE001 - surface unexpected journal/action worker failures.
+            self.failed.emit(str(exc))
+        finally:
+            self.finished.emit()
+
+
+class TranscodeCapabilityWorker(QObject):
+    completed = Signal(str, object)
+    finished = Signal()
+
+    def __init__(self, preset_id: str, ffmpeg: str) -> None:
+        super().__init__()
+        self.preset_id = preset_id
+        self.ffmpeg = ffmpeg
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            capability = check_encoder_capability(get_preset(self.preset_id), self.ffmpeg)
+            self.completed.emit(self.preset_id, capability)
+        finally:
+            self.finished.emit()
+
+
+class TranscodeWorker(QObject):
+    progress = Signal(object)
+    result = Signal(object)
+    failed = Signal(str)
+    finished = Signal()
+
+    def __init__(self, requests: list[TranscodeRequest], ffmpeg: str, ffprobe: str) -> None:
+        super().__init__()
+        self.requests = requests
+        self.ffmpeg = ffmpeg
+        self.ffprobe = ffprobe
+        self.cancellation = CancellationToken()
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            queue = TranscodeQueue(
+                ffmpeg=self.ffmpeg,
+                ffprobe=self.ffprobe,
+                progress_callback=self.progress.emit,
+                result_callback=self.result.emit,
+            )
+            queue.run(self.requests, cancellation=self.cancellation)
+        except Exception as exc:  # noqa: BLE001 - surface unexpected queue failures in the GUI.
+            self.failed.emit(str(exc))
+        finally:
+            self.finished.emit()
+
+    def cancel(self) -> None:
+        self.cancellation.cancel()
+
+
+class TranscodePromotionWorker(QObject):
+    completed = Signal(object)
+    failed = Signal(str)
+    finished = Signal()
+
+    def __init__(
+        self,
+        result: object,
+        journal_path: Path,
+        quarantine_root: Path,
+        collection_root: Path | None,
+    ) -> None:
+        super().__init__()
+        self.result = result
+        self.journal_path = journal_path
+        self.quarantine_root = quarantine_root
+        self.collection_root = collection_root
+
+    @Slot()
+    def run(self) -> None:
+        from ..transcode.models import TranscodeResult
+
+        try:
+            if not isinstance(self.result, TranscodeResult):
+                raise TypeError("Invalid transcode result")
+            outcome = promote_transcode(
+                self.result,
+                journal_path=self.journal_path,
+                quarantine_root=self.quarantine_root,
+                collection_root=self.collection_root,
+            )
+            self.completed.emit(outcome)
+        except Exception as exc:  # noqa: BLE001 - surface unexpected promotion failures in the GUI.
             self.failed.emit(str(exc))
         finally:
             self.finished.emit()

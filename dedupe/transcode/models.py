@@ -112,6 +112,10 @@ class TranscodeResult:
     elapsed_seconds: float = 0.0
     validation: ValidationResult | None = None
     warnings: tuple[str, ...] = field(default_factory=tuple)
+    input_info: MediaInfo | None = None
+    output_sha256: str | None = None
+    input_modified_at: float | None = None
+    input_sha256: str | None = None
 
     @property
     def saved_bytes(self) -> int:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from .validation import validate_output
 
 
 ProgressCallback = Callable[[TranscodeProgress], None]
+ResultCallback = Callable[[TranscodeResult], None]
 
 
 def _cleanup(path: Path) -> None:
@@ -28,6 +30,14 @@ def _cleanup(path: Path) -> None:
         path.unlink(missing_ok=True)
     except OSError:
         pass
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(4 * 1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _commit_output(temporary: Path, output: Path) -> None:
@@ -50,11 +60,13 @@ class TranscodeQueue:
         ffmpeg: str = "ffmpeg",
         ffprobe: str = "ffprobe",
         progress_callback: ProgressCallback | None = None,
+        result_callback: ResultCallback | None = None,
         keep_temporary_on_failure: bool = False,
     ) -> None:
         self.ffmpeg = ffmpeg
         self.ffprobe = ffprobe
         self.progress_callback = progress_callback
+        self.result_callback = result_callback
         self.keep_temporary_on_failure = keep_temporary_on_failure
         self._capabilities: dict[str, EncoderCapability] = {}
 
@@ -73,19 +85,29 @@ class TranscodeQueue:
         token = cancellation or CancellationToken()
         queued = list(requests)
         results: list[TranscodeResult] = []
+
+        def record(result: TranscodeResult) -> None:
+            results.append(result)
+            if self.result_callback is not None:
+                self.result_callback(result)
+
         for index, request in enumerate(queued):
             if token.is_cancelled:
-                results.extend(self._skipped(item, "Queue cancelled") for item in queued[index:])
+                for item in queued[index:]:
+                    record(self._skipped(item, "Queue cancelled"))
                 break
             result = self._run_one(request, token)
-            results.append(result)
+            record(result)
             if result.status == JobStatus.CANCELLED:
-                results.extend(self._skipped(item, "Queue cancelled") for item in queued[index + 1 :])
+                for item in queued[index + 1 :]:
+                    record(self._skipped(item, "Queue cancelled"))
                 break
         return results
 
     def _run_one(self, request: TranscodeRequest, token: CancellationToken) -> TranscodeResult:
         plan = None
+        input_info = None
+        input_modified_at = None
         input_size = 0
         log_path = None
         started_elapsed = 0.0
@@ -96,6 +118,7 @@ class TranscodeQueue:
                 return self._failed(request, capability.message or f"Encoder unavailable: {preset.encoder}")
             input_info = probe_media(request.input_path, self.ffprobe)
             input_size = input_info.size
+            input_modified_at = input_info.path.stat().st_mtime
             plan = build_plan(input_info, request.output_path, preset, ffmpeg=self.ffmpeg)
             log_path = plan.log_path
             runner = run_transcode(
@@ -117,6 +140,7 @@ class TranscodeQueue:
                     message=runner.message,
                     input_size=input_size,
                     elapsed_seconds=runner.elapsed_seconds,
+                    input_info=input_info,
                 )
             validation = validate_output(plan, ffmpeg=self.ffmpeg, ffprobe=self.ffprobe)
             if not validation.valid:
@@ -135,9 +159,49 @@ class TranscodeQueue:
                     elapsed_seconds=runner.elapsed_seconds,
                     validation=validation,
                     warnings=validation.warnings,
+                    input_info=input_info,
+                    input_modified_at=input_modified_at,
                 )
+            source_stat = plan.input_path.stat()
+            if source_stat.st_size != input_size or abs(source_stat.st_mtime - input_modified_at) > 0.000001:
+                if not self.keep_temporary_on_failure:
+                    _cleanup(plan.temporary_path)
+                return TranscodeResult(
+                    job_id=plan.job_id,
+                    status=JobStatus.FAILED,
+                    input_path=plan.input_path,
+                    output_path=plan.output_path,
+                    log_path=plan.log_path,
+                    preset_id=request.preset_id,
+                    message="Source changed while it was being transcoded; output was not finalized",
+                    input_size=input_size,
+                    elapsed_seconds=runner.elapsed_seconds,
+                    validation=validation,
+                    input_info=input_info,
+                    input_modified_at=input_modified_at,
+                )
+            input_sha256 = _sha256(plan.input_path)
+            source_verified = plan.input_path.stat()
+            if source_verified.st_size != input_size or abs(source_verified.st_mtime - input_modified_at) > 0.000001:
+                if not self.keep_temporary_on_failure:
+                    _cleanup(plan.temporary_path)
+                return TranscodeResult(
+                    job_id=plan.job_id,
+                    status=JobStatus.FAILED,
+                    input_path=plan.input_path,
+                    output_path=plan.output_path,
+                    log_path=plan.log_path,
+                    preset_id=request.preset_id,
+                    message="Source changed during its post-encode identity check; output was not finalized",
+                    input_size=input_size,
+                    elapsed_seconds=runner.elapsed_seconds,
+                    validation=validation,
+                    input_info=input_info,
+                    input_modified_at=input_modified_at,
+                )
+            output_size = plan.temporary_path.stat().st_size
+            output_sha256 = _sha256(plan.temporary_path)
             _commit_output(plan.temporary_path, plan.output_path)
-            output_size = plan.output_path.stat().st_size
             return TranscodeResult(
                 job_id=plan.job_id,
                 status=JobStatus.COMPLETED,
@@ -151,6 +215,10 @@ class TranscodeQueue:
                 elapsed_seconds=runner.elapsed_seconds,
                 validation=validation,
                 warnings=validation.warnings,
+                input_info=input_info,
+                output_sha256=output_sha256,
+                input_modified_at=input_modified_at,
+                input_sha256=input_sha256,
             )
         except (OSError, PlanError, ProbeError, ValueError) as exc:
             if plan is not None and not self.keep_temporary_on_failure:
@@ -165,6 +233,8 @@ class TranscodeQueue:
                 message=str(exc),
                 input_size=input_size,
                 elapsed_seconds=started_elapsed,
+                input_info=input_info,
+                input_modified_at=input_modified_at,
             )
 
     @staticmethod
