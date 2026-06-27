@@ -1,9 +1,9 @@
 # Usage Guide
 
-This guide describes SameSame `1.5.2`. The current application provides a CLI
-and an optional read-only desktop interface. There is no transcoding command or
-file deletion workflow yet. Planned features are documented in
-`docs/ROADMAP.md`.
+This guide describes SameSame `1.5.4`. The current application provides a
+report-only CLI and an optional desktop review interface with explicit,
+journaled quarantine/recycle actions. There is no permanent-delete or
+transcoding command. Planned features are documented in `docs/ROADMAP.md`.
 
 SameSame finds duplicate media on six levels:
 
@@ -40,7 +40,8 @@ samesame-gui
 The desktop interface supports multiple collection roots, background scans,
 progress and cancellation, filters for every report category, side-by-side
 image/video/audio review, synchronized video seeking, detailed stream metadata,
-and HTML/JSON report export. It does not modify source media.
+and HTML/JSON report export. Source media is modified only after an explicit,
+confirmed quarantine or recycle action.
 
 You can also run without installing:
 
@@ -226,11 +227,21 @@ Name hints are intentionally low confidence. They are useful for sorting and
 review, but should not be treated as deletion proof unless confirmed by exact
 hashes, video fingerprints, image fingerprints, or audio fingerprints.
 
-## Desktop Review and Planned Actions
+## Safe Desktop Actions
 
-The desktop interface currently provides read-only side-by-side review. Safe
-quarantine/recycle actions remain planned. A separate transcoding module will
-implement the presets in `docs/ANIME_ENCODING_PRESETS.md`; those actions and
-transcoding commands are not available in version 1.5.2. See
-`docs/ROADMAP.md` for scope, order, safety requirements, and complexity
-estimates.
+The desktop interface supports keep and ignore review states. Content-backed
+exact, video, image, and audio results can also quarantine or recycle one
+explicitly selected file. Exact groups additionally support a confirmed batch
+quarantine that preserves the selected keeper.
+
+Before every mutation, SameSame verifies the scan path, size, modification
+time, and a newly calculated SHA-256 identity, then verifies quarantined output
+again. Quarantine preserves the collection-relative path, handles name
+collisions, and can be restored from the operation journal. Recycle uses the
+operating-system recycle bin; SameSame does not promise automatic restore for
+it. Folder and name-only hints never enable file mutation. Permanent deletion
+is not implemented.
+
+A separate transcoding module will implement the presets in
+`docs/ANIME_ENCODING_PRESETS.md`; transcoding commands are not available in
+version 1.5.4. See `docs/ROADMAP.md` for scope and safety requirements.

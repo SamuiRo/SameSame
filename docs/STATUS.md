@@ -50,10 +50,20 @@ Implemented:
 - filters for all six report categories;
 - side-by-side image/video/audio preview with synchronized video seeking;
 - detailed per-file metadata, open-file/open-folder controls, and report export.
+- keep and ignore review states persisted by stable result-group IDs;
+- SHA-256 preflight and immediate pre-action identity verification;
+- reversible quarantine with collection-relative paths and collision handling;
+- operating-system recycle-bin integration through optional `Send2Trash`;
+- persistent SQLite operation journal with requested/completed/failed states;
+- journal-driven restore for completed quarantine operations;
+- exact-group batch quarantine that preserves the selected keeper;
+- background file actions and explicit confirmation flows;
+- mutation controls restricted to exact/video/image/audio evidence.
 
-The program is read-only. It does not move, merge, rename, or delete files.
-There is no transcoding command in version 1.5.2. Safe file actions and
-transcoding are planned in `docs/ROADMAP.md`.
+The CLI remains report-only. The desktop interface modifies a source only
+after an explicit quarantine or recycle confirmation and a successful identity
+preflight. There is no permanent-delete or transcoding command in version
+1.5.4. Transcoding is planned in `docs/ROADMAP.md`.
 
 ## Supported Behavior
 
@@ -67,17 +77,22 @@ transcoding are planned in `docs/ROADMAP.md`.
   thread-safe token, and request detailed metadata only for selected files.
 - Desktop users can run the optional `samesame-gui` interface without changing
   the CLI-only dependency footprint.
+- Quarantine is the reversible default; recycle delegates to the operating
+  system and is not automatically restorable by SameSame.
 
 ## Verification Completed
 
-The available suite currently contains 43 unit/integration tests.
+The available suite currently contains 52 unit/integration tests.
 
-- All 43 pass under both `unittest` and pytest in the project-local Python
+- All 52 pass under both `unittest` and pytest in the project-local Python
   3.11.9 virtual environment with all runtime/dev dependencies installed.
 - Service coverage verifies structured events, warnings, failure reporting,
   cooperative cancellation/cache preservation, and review metadata.
 - GUI coverage verifies all result-category adapters, offscreen window startup,
   and an end-to-end background scan through the Qt event loop.
+- Action coverage verifies scan-to-preflight failures, pre-action changes,
+  SHA-256 quarantine validation, collision allocation, journal persistence,
+  recycle delegation, batch quarantine, and restore through a Qt worker.
 - Ruff passes with no findings.
 - A real ffmpeg integration test passes with ffmpeg/ffprobe
   `2026-06-15-git-44d082edc8`. It generates a short source video, a resized
@@ -86,7 +101,7 @@ The available suite currently contains 43 unit/integration tests.
   across MP3, FLAC, and volume changes while rejecting an unrelated recording.
 - Python compilation, JSON config parsing, cache migration, CLI startup, and
   `git diff --check` pass.
-- Package builds produce both the `samesame-1.5.2` source archive and
+- Package builds produce both the `samesame-1.5.4` source archive and
   universal wheel.
 - A recursive CLI test confirms that a resized/recompressed JPEG in a nested
   folder matches its PNG source and appears in HTML/JSON and folder clusters.
@@ -139,9 +154,11 @@ in this session uses the absolute executable paths.
 - With overlapping roots, each resolved path is assigned to the first supplied
   root through which it is discovered.
 - Name-only matches remain hints and are not deletion evidence.
-- There is no automatic deletion or duplicate-resolution workflow.
-- The desktop UI is read-only; review decisions and safe filesystem actions are
-  not implemented yet.
+- Permanent deletion is intentionally not implemented.
+- Recycle-bin operations depend on operating-system behavior and are not
+  automatically restorable by SameSame; use quarantine when rollback matters.
+- Restore is available only while the quarantined file still matches its
+  journaled identity and the original path remains free.
 - Anime encoding presets are specified for future work, but no transcoding
   module or `samesame-transcode` command exists yet.
 
@@ -150,11 +167,9 @@ in this session uses the absolute executable paths.
 The detailed implementation plan, safety rules, complexity estimates, and
 acceptance criteria are in `docs/ROADMAP.md`. The planned order is:
 
-1. Add safe quarantine/recycle actions with preflight checks and an operation
-   journal. Permanent deletion is not part of the initial implementation.
-2. Add a separate transcoding module and `samesame-transcode` command using the
+1. Add a separate transcoding module and `samesame-transcode` command using the
    four presets in `docs/ANIME_ENCODING_PRESETS.md`.
-3. Integrate a validated transcoding queue into the desktop interface.
+2. Integrate a validated transcoding queue into the desktop interface.
 
 Ongoing matching work remains evidence-driven:
 
@@ -168,9 +183,10 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 and 1 are implemented for the `1.5.2` release. The CLI delegates to
-the reusable service, while the optional PySide6 interface consumes the same
-service without coupling detection logic to Qt. A new session should begin with:
+Phases 0, 1, and 2 are implemented through release `1.5.4`. The CLI delegates
+to the reusable service, while the optional PySide6 interface consumes the same
+scan service and a separate journaled action service. A new session should
+begin with:
 
 ```powershell
 git status --short
@@ -178,8 +194,8 @@ git diff --check
 python -m unittest discover -s tests -v
 ```
 
-Do not discard uncommitted `1.5.2` work. Continue with Phase 2 only after the
-service, GUI, and full FFmpeg integration suites remain green.
+Do not discard uncommitted `1.5.4` work. Continue with Phase 3 only after the
+service, GUI/action, and full FFmpeg integration suites remain green.
 
 ## Suggested Prompt for a New Chat
 
@@ -187,5 +203,6 @@ service, GUI, and full FFmpeg integration suites remain green.
 Read README.md, docs/USAGE.md, docs/CONFIG.md, docs/STATUS.md,
 docs/ROADMAP.md, and docs/ANIME_ENCODING_PRESETS.md.
 Preserve the current uncommitted working-tree changes. Verify the test suite,
-then continue with safe duplicate actions in Phase 2 of docs/ROADMAP.md.
+then continue with the independent transcoding module in Phase 3 of
+docs/ROADMAP.md.
 ```

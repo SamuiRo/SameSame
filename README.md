@@ -1,14 +1,14 @@
 # SameSame
 
-SameSame `1.5.2` finds duplicate and similar media files through a command-line
-scanner or an optional read-only desktop review interface. It scans one or
-more folder trees recursively and writes reports for manual review.
+SameSame `1.5.4` finds duplicate and similar media files through a command-line
+scanner or an optional desktop review interface. It scans one or more folder
+trees recursively and writes reports for manual review.
 
-The current release is read-only: it never moves, renames, compresses, or
-deletes media. Version `1.5.2` adds a reusable application service and a
-PySide6 interface for scanning, filtering results, side-by-side media review,
-and metadata inspection. Safe file actions and anime transcoding are planned
-but are not implemented yet.
+The CLI remains report-only. The desktop interface can record keep/ignore
+decisions, move explicitly selected content-backed files to reversible
+quarantine, or send an explicitly confirmed file to the operating-system
+recycle bin. SameSame has no permanent-delete action and does not compress or
+replace source media. Anime transcoding remains planned.
 
 ## What SameSame Finds
 
@@ -158,6 +158,18 @@ SameSame deliberately rejects an individual episode as a content duplicate of
 a much longer compilation. Segment matching inside compilations is not part of
 the current release.
 
+Desktop file actions are deliberately conservative:
+
+- quarantine is the preferred default and can be restored from the operation journal;
+- every quarantine/recycle action rechecks path, size, modification time, and
+  a full SHA-256 identity before acting;
+- exact groups can quarantine all copies except the explicitly selected keeper;
+- video, image, and audio matches require an individual confirmation;
+- folder and name hints allow keep/ignore decisions but never enable file mutation;
+- recycle uses the operating-system recycle bin and is not automatically
+  restorable by SameSame;
+- every requested, completed, and failed operation is stored in a SQLite journal.
+
 ## Common Commands
 
 Refresh one cache layer after changing matching logic or troubleshooting stale
@@ -209,13 +221,12 @@ Available now:
 
 - `samesame`: duplicate scanner and HTML/JSON report generator;
 - `samesame-benchmark`: threshold benchmark utility.
-- `samesame-gui`: optional read-only desktop scanner and side-by-side review;
+- `samesame-gui`: optional desktop review with journaled quarantine/recycle actions;
 - `dedupe.service.ScanService`: UI-agnostic Python scan API with structured
   progress events, cooperative cancellation, and review metadata models.
 
-Planned, not available in `1.5.2`:
+Planned, not available in `1.5.4`:
 
-- safe quarantine/recycle-bin actions with an operation journal;
 - a separate transcoding engine and queue;
 - anime compression presets using `libx265`, `hevc_nvenc`, and `av1_nvenc`.
 

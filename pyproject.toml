@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "samesame"
-version = "1.5.3"
+version = "1.5.4"
 description = "CLI and optional desktop tool for finding exact and similar media files."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -35,7 +35,8 @@ dependencies = [
 
 [project.optional-dependencies]
 gui = [
-  "PySide6>=6.8,<7"
+  "PySide6>=6.8,<7",
+  "Send2Trash>=1.8.3"
 ]
 dev = [
   "build>=1.2.0",

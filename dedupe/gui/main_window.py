@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from PySide6.QtCore import QStandardPaths, QThread, QTimer, Qt, QUrl
@@ -28,13 +29,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..actions import ActionOutcome, FileAction, FileActionService, OperationStatus
 from ..events import ScanEvent, ScanEventType
+from ..models import FileRecord
 from ..name_normalizer import LMSTUDIO_MODEL, LMSTUDIO_URL
 from ..report import write_html_report, write_json_report
 from ..service import ScanOptions, ScanResult
 from .preview import ComparisonWidget
+from .journal_dialog import JournalDialog
 from .result_items import CATEGORY_LABELS, ReviewItem, build_review_items, category_counts
-from .worker import ScanWorker
+from .worker import ActionJob, ActionWorker, ScanWorker
 
 
 class MainWindow(QMainWindow):
@@ -45,12 +49,16 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1080, 680)
         self._scan_thread: QThread | None = None
         self._scan_worker: ScanWorker | None = None
+        self._action_thread: QThread | None = None
+        self._action_worker: ActionWorker | None = None
         self._result: ScanResult | None = None
         self._items: list[ReviewItem] = []
         self._last_report_path: Path | None = None
         self._active_ffprobe = "ffprobe"
         self._close_when_finished = False
         self._last_terminal_status = "Ready"
+        self._journal_dialog: JournalDialog | None = None
+        self._review_decisions: dict[str, str] = {}
 
         self._build_ui()
         self._set_running(False)
@@ -60,6 +68,8 @@ class MainWindow(QMainWindow):
         root_splitter.addWidget(self._build_scan_panel())
         root_splitter.addWidget(self._build_results_panel())
         self.comparison = ComparisonWidget(self)
+        self.comparison.action_requested.connect(self._request_action)
+        self.comparison.batch_quarantine_requested.connect(self._request_batch_quarantine)
         root_splitter.addWidget(self.comparison)
         root_splitter.setStretchFactor(0, 0)
         root_splitter.setStretchFactor(1, 0)
@@ -141,6 +151,15 @@ class MainWindow(QMainWindow):
         self.ffprobe_path = QLineEdit("ffprobe")
         settings_layout.addRow("FFmpeg", self.ffmpeg_path)
         settings_layout.addRow("FFprobe", self.ffprobe_path)
+        quarantine_row = QWidget()
+        quarantine_layout = QHBoxLayout(quarantine_row)
+        quarantine_layout.setContentsMargins(0, 0, 0, 0)
+        self.quarantine_path = QLineEdit(str(self._default_quarantine_path()))
+        quarantine_button = QPushButton("Browse")
+        quarantine_button.clicked.connect(self._choose_quarantine_folder)
+        quarantine_layout.addWidget(self.quarantine_path, 1)
+        quarantine_layout.addWidget(quarantine_button)
+        settings_layout.addRow("Quarantine", quarantine_row)
         layout.addWidget(settings_group)
         self.settings_group = settings_group
 
@@ -159,9 +178,12 @@ class MainWindow(QMainWindow):
         self.export_button.clicked.connect(self._export_reports)
         self.open_report_button = QPushButton("Open report")
         self.open_report_button.clicked.connect(self._open_report)
+        self.journal_button = QPushButton("Operation journal")
+        self.journal_button.clicked.connect(self._open_journal)
         report_buttons.addWidget(self.export_button)
         report_buttons.addWidget(self.open_report_button)
         layout.addLayout(report_buttons)
+        layout.addWidget(self.journal_button)
         return panel
 
     def _build_results_panel(self) -> QWidget:
@@ -204,10 +226,36 @@ class MainWindow(QMainWindow):
             self.folder_list.takeItem(self.folder_list.row(item))
 
     def _cache_path(self) -> Path:
-        location = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
-        base = Path(location) if location else Path.home() / ".samesame"
+        base = self._application_data_path()
         base.mkdir(parents=True, exist_ok=True)
         return base / "samesame.sqlite3"
+
+    def _journal_path(self) -> Path:
+        return self._application_data_path() / "operations.sqlite3"
+
+    @staticmethod
+    def _application_data_path() -> Path:
+        location = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
+        return Path(location) if location else Path.home() / ".samesame"
+
+    @staticmethod
+    def _default_quarantine_path() -> Path:
+        documents = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
+        base = Path(documents) if documents else Path.home()
+        return base / "SameSame Quarantine"
+
+    def _quarantine_root(self) -> Path:
+        value = self.quarantine_path.text().strip()
+        return Path(value).expanduser() if value else self._default_quarantine_path()
+
+    def _choose_quarantine_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Choose quarantine folder",
+            str(self._quarantine_root()),
+        )
+        if folder:
+            self.quarantine_path.setText(folder)
 
     def _scan_options(self) -> ScanOptions:
         folders = [Path(self.folder_list.item(index).text()) for index in range(self.folder_list.count())]
@@ -241,6 +289,7 @@ class MainWindow(QMainWindow):
         self._result = None
         self._items = []
         self._last_report_path = None
+        self._review_decisions = {}
         self.log_view.clear()
         self.result_list.clear()
         self.comparison.clear()
@@ -305,6 +354,7 @@ class MainWindow(QMainWindow):
             return
         self._result = result
         self._items = build_review_items(result.report)
+        self._load_review_decisions()
         self.comparison.configure(result, self._active_ffprobe)
         self._update_category_filter(self._items)
         self._apply_filter()
@@ -343,6 +393,8 @@ class MainWindow(QMainWindow):
         self.cancel_button.setEnabled(running)
         self.export_button.setEnabled(not running and self._result is not None)
         self.open_report_button.setEnabled(not running and self._last_report_path is not None)
+        self.journal_button.setEnabled(not running and self._action_thread is None)
+        self.comparison.set_actions_enabled(not running and self._action_thread is None)
 
     def _update_category_filter(self, items: list[ReviewItem]) -> None:
         counts = category_counts(items)
@@ -376,6 +428,9 @@ class MainWindow(QMainWindow):
         item = current.data(Qt.ItemDataRole.UserRole)
         if isinstance(item, ReviewItem):
             self.comparison.set_item(item)
+            decision = self._review_decisions.get(self._group_id(item))
+            if decision:
+                self.comparison.set_decision(decision)
 
     def _export_reports(self) -> None:
         if self._result is None:
@@ -407,6 +462,221 @@ class MainWindow(QMainWindow):
         if self._last_report_path is not None:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._last_report_path)))
 
+    def _current_review_item(self) -> ReviewItem | None:
+        current = self.result_list.currentItem()
+        item = current.data(Qt.ItemDataRole.UserRole) if current is not None else None
+        return item if isinstance(item, ReviewItem) else None
+
+    @staticmethod
+    def _group_id(item: ReviewItem) -> str:
+        payload = "\0".join((item.category, *sorted(item.paths))).encode("utf-8")
+        return f"{item.category}:{hashlib.sha256(payload).hexdigest()[:16]}"
+
+    def _record_for_path(self, path_text: str, *, allow_directory: bool = False) -> FileRecord | None:
+        if self._result is not None:
+            for record in self._result.records:
+                if record.path_key == path_text:
+                    return record
+        path = Path(path_text)
+        if allow_directory and path.exists():
+            stat = path.stat()
+            return FileRecord(path.resolve(), path.resolve(), stat.st_size if path.is_file() else 0, stat.st_mtime, path.stem)
+        return None
+
+    def _request_action(self, action_value: object, path_text: str) -> None:
+        if not isinstance(action_value, FileAction) or self._scan_thread is not None or self._action_thread is not None:
+            return
+        item = self._current_review_item()
+        if item is None:
+            return
+        allow_directory = action_value in {FileAction.KEEP, FileAction.IGNORE}
+        record = self._record_for_path(path_text, allow_directory=allow_directory)
+        if record is None:
+            QMessageBox.warning(self, "Unavailable file", "The selected file is no longer available in this scan.")
+            return
+        if action_value in {FileAction.QUARANTINE, FileAction.RECYCLE} and item.category not in {
+            "exact",
+            "video",
+            "image",
+            "audio",
+        }:
+            QMessageBox.warning(self, "Content evidence required", "File actions are disabled for name and folder hints.")
+            return
+        if not self._confirm_action(action_value, [record.path]):
+            return
+        self._start_action_worker([ActionJob(record, action_value, self._group_id(item))])
+
+    def _request_batch_quarantine(self, paths_value: object, keep_path: str) -> None:
+        if self._scan_thread is not None or self._action_thread is not None:
+            return
+        item = self._current_review_item()
+        if item is None or item.category != "exact" or not isinstance(paths_value, tuple):
+            return
+        records = [
+            record
+            for path in paths_value
+            if path != keep_path
+            for record in [self._record_for_path(str(path))]
+            if record is not None
+        ]
+        if not records:
+            return
+        if not self._confirm_action(FileAction.QUARANTINE, [record.path for record in records], keep_path=keep_path):
+            return
+        group_id = self._group_id(item)
+        keeper = self._record_for_path(keep_path)
+        jobs = [ActionJob(keeper, FileAction.KEEP, group_id)] if keeper is not None else []
+        jobs.extend(ActionJob(record, FileAction.QUARANTINE, group_id) for record in records)
+        self._start_action_worker(jobs)
+
+    def _confirm_action(self, action: FileAction, paths: list[Path], *, keep_path: str | None = None) -> bool:
+        if action in {FileAction.KEEP, FileAction.IGNORE}:
+            return True
+        path_lines = "\n".join(f"• {path}" for path in paths[:12])
+        if len(paths) > 12:
+            path_lines += f"\n… and {len(paths) - 12} more"
+        if action == FileAction.QUARANTINE:
+            keep_line = f"\nKept in place:\n{keep_path}\n" if keep_path else ""
+            text = (
+                f"Move {len(paths)} file(s) to quarantine?\n{keep_line}\n{path_lines}\n\n"
+                "Every file will be revalidated against its scan identity and the operation will be journaled."
+            )
+            title = "Confirm quarantine"
+        else:
+            text = (
+                f"Send {len(paths)} file(s) to the operating-system recycle bin?\n\n{path_lines}\n\n"
+                "Every file will be revalidated. SameSame cannot automatically restore recycle-bin items."
+            )
+            title = "Confirm recycle"
+        answer = QMessageBox.question(
+            self,
+            title,
+            text,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
+    def _start_action_worker(
+        self,
+        jobs: list[ActionJob] | None = None,
+        *,
+        restore_operation_id: str | None = None,
+    ) -> None:
+        if self._action_thread is not None:
+            return
+        thread = QThread(self)
+        worker = ActionWorker(
+            self._journal_path(),
+            self._quarantine_root(),
+            jobs=jobs,
+            restore_operation_id=restore_operation_id,
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._action_progress)
+        worker.outcome.connect(self._action_outcome)
+        worker.failed.connect(self._action_failed)
+        worker.finished.connect(worker.deleteLater)
+        worker.finished.connect(thread.quit)
+        thread.finished.connect(self._action_finished)
+        thread.finished.connect(thread.deleteLater)
+        self._action_thread = thread
+        self._action_worker = worker
+        self.comparison.set_actions_enabled(False)
+        self.scan_button.setEnabled(False)
+        self.journal_button.setEnabled(False)
+        self.folder_list.setEnabled(False)
+        self.settings_group.setEnabled(False)
+        self.category_filter.setEnabled(False)
+        self.result_list.setEnabled(False)
+        thread.start()
+
+    def _action_progress(self, current: int, total: int, message: str) -> None:
+        self.progress_bar.setRange(0, max(1, total))
+        self.progress_bar.setValue(current)
+        self.status_label.setText(message)
+
+    def _action_outcome(self, outcome_value: object) -> None:
+        if not isinstance(outcome_value, ActionOutcome):
+            return
+        prefix = outcome_value.status.value.upper()
+        self._append_log(f"{prefix} {outcome_value.action.value}: {outcome_value.source} · {outcome_value.message}")
+        if outcome_value.status == OperationStatus.COMPLETED:
+            decision = f"{outcome_value.action.value}: completed"
+            self.comparison.set_decision(decision)
+            if outcome_value.group_id:
+                self._review_decisions[outcome_value.group_id] = decision
+        elif outcome_value.status == OperationStatus.SKIPPED:
+            self.comparison.set_decision(f"{outcome_value.action.value}: skipped")
+        else:
+            self.comparison.set_decision(f"{outcome_value.action.value}: failed")
+            QMessageBox.warning(self, "File action failed", outcome_value.message)
+
+    def _action_failed(self, message: str) -> None:
+        self._append_log(f"Action worker failed: {message}")
+        QMessageBox.critical(self, "Action worker failed", message)
+
+    def _action_finished(self) -> None:
+        self._action_thread = None
+        self._action_worker = None
+        self.scan_button.setEnabled(self._scan_thread is None)
+        self.journal_button.setEnabled(self._scan_thread is None)
+        self.comparison.set_actions_enabled(self._scan_thread is None)
+        self.folder_list.setEnabled(self._scan_thread is None)
+        self.settings_group.setEnabled(self._scan_thread is None)
+        self.category_filter.setEnabled(True)
+        self.result_list.setEnabled(True)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.status_label.setText("File action finished")
+        item = self._current_review_item()
+        if item is not None:
+            self.comparison.set_item(item)
+            decision = self._review_decisions.get(self._group_id(item))
+            if decision:
+                self.comparison.set_decision(decision)
+        if self._journal_dialog is not None:
+            self._journal_dialog.refresh()
+        if self._close_when_finished:
+            QTimer.singleShot(0, self.close)
+
+    def _open_journal(self) -> None:
+        if self._journal_dialog is None:
+            dialog = JournalDialog(self._journal_path(), self._quarantine_root(), self)
+            dialog.restore_requested.connect(self._request_restore)
+            dialog.finished.connect(self._journal_closed)
+            self._journal_dialog = dialog
+        self._journal_dialog.refresh()
+        self._journal_dialog.show()
+        self._journal_dialog.raise_()
+        self._journal_dialog.activateWindow()
+
+    def _journal_closed(self, _result: int) -> None:
+        self._journal_dialog = None
+
+    def _load_review_decisions(self) -> None:
+        journal_path = self._journal_path()
+        if not journal_path.exists():
+            return
+        service = FileActionService(journal_path, self._quarantine_root())
+        for operation in reversed(service.recent_operations()):
+            if operation.group_id and operation.status == OperationStatus.COMPLETED:
+                self._review_decisions[operation.group_id] = f"{operation.action.value}: completed"
+
+    def _request_restore(self, operation_id: str) -> None:
+        if self._scan_thread is not None or self._action_thread is not None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Restore quarantined file",
+            "Restore this file to its original path? The destination and content identity will be checked first.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._start_action_worker(restore_operation_id=operation_id)
+
     def _append_log(self, message: str) -> None:
         self.log_view.appendPlainText(message)
 
@@ -414,6 +684,11 @@ class MainWindow(QMainWindow):
         if self._scan_worker is not None:
             self._close_when_finished = True
             self._cancel_scan()
+            event.ignore()
+            return
+        if self._action_thread is not None:
+            self._close_when_finished = True
+            self.status_label.setText("Waiting for the journaled file action to finish…")
             event.ignore()
             return
         self.comparison.stop()

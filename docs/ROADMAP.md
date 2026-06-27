@@ -2,9 +2,9 @@
 
 Last updated: 2026-06-27
 
-This roadmap separates the current read-only scanner and desktop review from
-planned filesystem actions and transcoding features. It is an implementation
-plan, not a description of commands available in SameSame `1.5.2`.
+This roadmap separates the current scanner and journaled desktop cleanup from
+planned transcoding features. It is an implementation plan, not a description
+of commands available in SameSame `1.5.4`.
 
 ## Goals
 
@@ -70,7 +70,7 @@ Implemented in `1.5.2`:
 
 Target: first desktop release, with no file mutation.
 
-Status: completed in `1.5.2`.
+Status: completed in `1.5.3`.
 
 Recommended toolkit: PySide6 Widgets with Qt Multimedia. PySide6 should be an
 optional dependency so CLI-only installations stay lightweight.
@@ -100,7 +100,7 @@ Acceptance criteria:
   decision;
 - closing or cancelling the UI does not modify source media.
 
-Implemented in `1.5.2`:
+Implemented in `1.5.3`:
 
 - optional `PySide6` GUI extra and `samesame-gui` entry point;
 - multiple-root picker and scanner settings without adding Qt to CLI installs;
@@ -118,6 +118,8 @@ Estimated phase total: 11-17 days.
 ## Phase 2: Safe Duplicate Actions
 
 Target: explicit review decisions and reversible cleanup.
+
+Status: completed in `1.5.4`.
 
 | Work | Complexity | Estimate |
 | --- | ---: | ---: |
@@ -139,6 +141,24 @@ Safety policy:
 - quarantine is the preferred reversible default;
 - the journal records requested, completed, skipped, and failed operations;
 - undo is promised only for operations that are actually reversible.
+
+Implemented in `1.5.4`:
+
+- keep and ignore review decisions persisted in the operation journal;
+- separate SHA-256 preflight identity captured after verifying the scan path,
+  size, and modification time;
+- a second identity check immediately before quarantine/recycle and validation
+  of quarantined/restored output;
+- collection-relative quarantine paths with root isolation and deterministic
+  collision suffixes;
+- operating-system recycle-bin integration through optional `Send2Trash`;
+- SQLite journal states for requested, completed, skipped, and failed operations;
+- journal viewer with restore enabled only for completed reversible quarantine;
+- background file-action workers that prevent UI closure during an active move;
+- explicit individual confirmation for content-backed matches;
+- exact-group batch quarantine that keeps the selected copy;
+- mutation controls disabled for folder and name-only hints;
+- no permanent-delete operation.
 
 Estimated phase total: 10-16 days.
 
@@ -232,16 +252,16 @@ Estimated phase total: 6-10 days.
 
 Suggested milestones:
 
-1. `1.5.2`: application-service refactor and read-only desktop review.
-   Completed.
-2. `1.7`: safe quarantine/recycle workflow and operation journal.
-3. `1.8`: independent transcoding module, CLI, presets, and validation.
-4. `1.9`: desktop transcoding queue and replacement workflow.
+1. `1.5.2`: application-service refactor. Completed.
+2. `1.5.3`: read-only desktop review. Completed.
+3. `1.5.4`: safe quarantine/recycle workflow and operation journal. Completed.
+4. `1.6`: independent transcoding module, CLI, presets, and validation.
+5. `1.7`: desktop transcoding queue and replacement workflow.
 
-The remaining plan after Phase 1 is roughly 27-43 development days when the
+The remaining plan after Phase 2 is roughly 17-27 development days when the
 phase estimates are added directly. Some work can overlap, but the estimate
-intentionally includes validation of destructive and source-replacing
-workflows. Risky behavior should not be rushed to meet a version number.
+intentionally includes validation of source-replacing workflows. Risky
+behavior should not be rushed to meet a version number.
 
 ## Deferred Work
 

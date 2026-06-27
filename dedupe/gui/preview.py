@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..actions import FileAction
 from ..metadata import MediaMetadata, basic_media_metadata
 from ..models import FileRecord
 from ..scanner import is_audio_path, is_image_path, is_video_path
@@ -90,6 +91,7 @@ def format_metadata(metadata: MediaMetadata) -> str:
 
 class MediaPane(QWidget):
     position_changed = Signal(int)
+    path_changed = Signal(str)
 
     def __init__(self, title: str, parent: QWidget | None = None, *, muted: bool = False) -> None:
         super().__init__(parent)
@@ -191,10 +193,15 @@ class MediaPane(QWidget):
         self.open_file_button.setEnabled(False)
         self.open_folder_button.setEnabled(False)
 
+    @property
+    def current_path(self) -> str:
+        return self._current_path
+
     def _load_path(self, path_text: str) -> None:
         self.player.stop()
         self.player.setSource(QUrl())
         self._current_path = path_text
+        self.path_changed.emit(path_text)
         path = Path(path_text) if path_text else None
         exists = bool(path and path.exists())
         self.open_file_button.setEnabled(bool(exists and path and path.is_file()))
@@ -296,6 +303,9 @@ class MediaPane(QWidget):
 
 
 class ComparisonWidget(QWidget):
+    action_requested = Signal(object, str)
+    batch_quarantine_requested = Signal(object, str)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.thread_pool = QThreadPool(self)
@@ -304,6 +314,8 @@ class ComparisonWidget(QWidget):
         self.right = MediaPane("Right", self, muted=True)
         self.left.position_changed.connect(lambda position: self._sync(self.left, self.right, position))
         self.right.position_changed.connect(lambda position: self._sync(self.right, self.left, position))
+        self.left.path_changed.connect(self._update_action_controls)
+        self.right.path_changed.connect(self._update_action_controls)
         self.sync_checkbox = QCheckBox("Synchronize seeking")
         self.sync_checkbox.setChecked(True)
         self.play_both_button = QPushButton("Play/Pause both")
@@ -314,28 +326,72 @@ class ComparisonWidget(QWidget):
         header.addWidget(self.evidence_label, 1)
         header.addWidget(self.sync_checkbox)
         header.addWidget(self.play_both_button)
+
+        self.action_target = QComboBox()
+        self.action_target.addItem("Left selected file", "left")
+        self.action_target.addItem("Right selected file", "right")
+        self.action_target.currentIndexChanged.connect(self._update_action_controls)
+        self.keep_button = QPushButton("Keep")
+        self.ignore_button = QPushButton("Ignore")
+        self.quarantine_button = QPushButton("Quarantine…")
+        self.recycle_button = QPushButton("Recycle…")
+        self.batch_quarantine_button = QPushButton("Quarantine other copies…")
+        self.keep_button.clicked.connect(lambda: self._emit_action(FileAction.KEEP))
+        self.ignore_button.clicked.connect(lambda: self._emit_action(FileAction.IGNORE))
+        self.quarantine_button.clicked.connect(lambda: self._emit_action(FileAction.QUARANTINE))
+        self.recycle_button.clicked.connect(lambda: self._emit_action(FileAction.RECYCLE))
+        self.batch_quarantine_button.clicked.connect(self._emit_batch_quarantine)
+        self.decision_label = QLabel("No review decision")
+        review_actions = QHBoxLayout()
+        review_actions.addWidget(self.action_target)
+        review_actions.addWidget(self.keep_button)
+        review_actions.addWidget(self.ignore_button)
+        review_actions.addWidget(self.decision_label, 1)
+        file_actions = QHBoxLayout()
+        file_actions.addWidget(self.quarantine_button)
+        file_actions.addWidget(self.recycle_button)
+        file_actions.addWidget(self.batch_quarantine_button)
+        file_actions.addStretch(1)
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self.left)
         splitter.addWidget(self.right)
         splitter.setSizes([500, 500])
         layout = QVBoxLayout(self)
         layout.addLayout(header)
+        layout.addLayout(review_actions)
+        layout.addLayout(file_actions)
         layout.addWidget(splitter, 1)
         self._syncing = False
+        self._item: ReviewItem | None = None
+        self._actions_enabled = True
+        self._update_action_controls()
 
     def configure(self, result: ScanResult, ffprobe: str) -> None:
         self.left.configure(result, ffprobe, self.thread_pool)
         self.right.configure(result, ffprobe, self.thread_pool)
 
     def set_item(self, item: ReviewItem) -> None:
+        self._item = item
         self.evidence_label.setText(f"<b>{item.title}</b><br>{item.evidence}")
+        self.decision_label.setText("No review decision")
         self.left.set_candidates(item.paths, 0)
         self.right.set_candidates(item.paths, 1)
+        self._update_action_controls()
 
     def clear(self) -> None:
+        self._item = None
         self.evidence_label.setText("Select a result")
+        self.decision_label.setText("No review decision")
         self.left.clear()
         self.right.clear()
+        self._update_action_controls()
+
+    def set_decision(self, message: str) -> None:
+        self.decision_label.setText(message)
+
+    def set_actions_enabled(self, enabled: bool) -> None:
+        self._actions_enabled = enabled
+        self._update_action_controls()
 
     def stop(self) -> None:
         self.left.player.stop()
@@ -362,3 +418,28 @@ class ComparisonWidget(QWidget):
                 if player.source().isValid():
                     player.setPosition(target_position)
                     player.play()
+
+    def _selected_path(self) -> str:
+        return self.left.current_path if self.action_target.currentData() == "left" else self.right.current_path
+
+    def _update_action_controls(self, *_args: object) -> None:
+        has_item = self._item is not None and self._actions_enabled
+        selected_path = Path(self._selected_path()) if self._selected_path() else None
+        content_backed = bool(self._item and self._item.category in {"exact", "video", "image", "audio"})
+        can_mutate = bool(content_backed and selected_path and selected_path.is_file())
+        self.keep_button.setEnabled(has_item)
+        self.ignore_button.setEnabled(has_item)
+        self.quarantine_button.setEnabled(can_mutate)
+        self.recycle_button.setEnabled(can_mutate)
+        self.batch_quarantine_button.setEnabled(
+            bool(self._item and self._item.category == "exact" and len(self._item.paths) > 1 and can_mutate)
+        )
+
+    def _emit_action(self, action: FileAction) -> None:
+        path = self._selected_path()
+        if self._item is not None and path:
+            self.action_requested.emit(action, path)
+
+    def _emit_batch_quarantine(self) -> None:
+        if self._item is not None:
+            self.batch_quarantine_requested.emit(self._item.paths, self._selected_path())
