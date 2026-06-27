@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QSplitter,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -35,8 +36,10 @@ from ..models import FileRecord
 from ..name_normalizer import LMSTUDIO_MODEL, LMSTUDIO_URL
 from ..report import write_html_report, write_json_report
 from ..service import ScanOptions, ScanResult
-from .preview import ComparisonWidget
+from ..transcode.presets import TranscodePreset
+from .compression_tab import CompressionTab
 from .journal_dialog import JournalDialog
+from .preview import ComparisonWidget
 from .result_items import CATEGORY_LABELS, ReviewItem, build_review_items, category_counts
 from .transcode_dialog import TranscodeDialog
 from .worker import ActionJob, ActionWorker, ScanWorker
@@ -78,7 +81,13 @@ class MainWindow(QMainWindow):
         root_splitter.setStretchFactor(1, 0)
         root_splitter.setStretchFactor(2, 1)
         root_splitter.setSizes([280, 360, 860])
-        self.setCentralWidget(root_splitter)
+        self.compression_tab = CompressionTab(self)
+        self.compression_tab.queue_requested.connect(self._open_compression_queue)
+        self.compression_tab.busy_changed.connect(self._compression_busy_changed)
+        tabs = QTabWidget()
+        tabs.addTab(root_splitter, "Duplicate review")
+        tabs.addTab(self.compression_tab, "Video compression")
+        self.setCentralWidget(tabs)
 
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
@@ -389,11 +398,12 @@ class MainWindow(QMainWindow):
 
     def _set_running(self, running: bool) -> None:
         transcode_busy = self._transcode_is_busy()
+        compression_busy = self.compression_tab.is_loading
         self.folder_list.setEnabled(not running)
         self.add_folder_button.setEnabled(not running)
         self.remove_folder_button.setEnabled(not running)
         self.settings_group.setEnabled(not running)
-        self.scan_button.setEnabled(not running and not transcode_busy)
+        self.scan_button.setEnabled(not running and not transcode_busy and not compression_busy)
         self.cancel_button.setEnabled(running)
         self.export_button.setEnabled(not running and self._result is not None)
         self.open_report_button.setEnabled(not running and self._last_report_path is not None)
@@ -700,8 +710,45 @@ class MainWindow(QMainWindow):
         if self._scan_thread is not None or self._action_thread is not None or not isinstance(paths_value, tuple):
             return
         paths = [Path(str(path)) for path in paths_value]
+        self._show_transcode(paths)
+
+    def _open_compression_queue(
+        self,
+        paths_value: object,
+        preset_value: object,
+        output_value: object,
+        root_value: object,
+    ) -> None:
+        if self._scan_thread is not None or self._action_thread is not None or not isinstance(paths_value, list):
+            return
+        if not isinstance(preset_value, TranscodePreset):
+            return
+        if self._transcode_is_busy():
+            QMessageBox.information(
+                self,
+                "Compression queue is busy",
+                "Wait for the current compression queue to finish before preparing another batch.",
+            )
+            return
+        paths = [Path(str(path)) for path in paths_value]
+        output_dir = Path(str(output_value)) if isinstance(output_value, Path) else None
+        collection_root = Path(str(root_value)) if isinstance(root_value, Path) else None
+        self._show_transcode(paths, preset_value, output_dir, collection_root)
+
+    def _show_transcode(
+        self,
+        paths: list[Path],
+        preset: object | None = None,
+        output_dir: Path | None = None,
+        collection_root: Path | None = None,
+    ) -> None:
+        selected_preset = preset if isinstance(preset, TranscodePreset) else None
         if self._transcode_dialog is not None:
-            self._transcode_dialog.add_paths(paths)
+            self._transcode_dialog.add_paths(paths, selected_preset)
+            self._transcode_dialog.set_output_dir(output_dir)
+            if collection_root is not None:
+                for path in paths:
+                    self._transcode_dialog.collection_roots[str(path.expanduser().resolve())] = collection_root
             self._transcode_dialog.show()
             self._transcode_dialog.raise_()
             self._transcode_dialog.activateWindow()
@@ -710,6 +757,8 @@ class MainWindow(QMainWindow):
             str(record.path.expanduser().resolve()): record.root
             for record in (self._result.records if self._result is not None else [])
         }
+        if collection_root is not None:
+            roots.update({str(path.expanduser().resolve()): collection_root for path in paths})
         dialog = TranscodeDialog(
             paths,
             ffmpeg=self.ffmpeg_path.text().strip() or "ffmpeg",
@@ -717,6 +766,8 @@ class MainWindow(QMainWindow):
             journal_path=self._journal_path(),
             quarantine_root=self._quarantine_root(),
             collection_roots=roots,
+            initial_preset=selected_preset,
+            initial_output_dir=output_dir,
             parent=self,
         )
         dialog.busy_changed.connect(self._transcode_busy_changed)
@@ -726,9 +777,24 @@ class MainWindow(QMainWindow):
         dialog.show()
 
     def _transcode_busy_changed(self, busy: bool) -> None:
-        self.scan_button.setEnabled(not busy and self._scan_thread is None and self._action_thread is None)
+        self.scan_button.setEnabled(
+            not busy
+            and not self.compression_tab.is_loading
+            and self._scan_thread is None
+            and self._action_thread is None
+        )
         self.journal_button.setEnabled(not busy and self._scan_thread is None and self._action_thread is None)
         self.comparison.set_actions_enabled(not busy and self._scan_thread is None and self._action_thread is None)
+
+    def _compression_busy_changed(self, busy: bool) -> None:
+        self.scan_button.setEnabled(
+            not busy
+            and not self._transcode_is_busy()
+            and self._scan_thread is None
+            and self._action_thread is None
+        )
+        if not busy and self._close_when_finished:
+            QTimer.singleShot(0, self.close)
 
     def _transcode_journal_changed(self) -> None:
         self._append_log("Transcoded output promoted after journaled source quarantine")
@@ -756,6 +822,12 @@ class MainWindow(QMainWindow):
             self._close_when_finished = True
             self.status_label.setText("Waiting for the transcode queue to stop safely…")
             self._transcode_dialog.request_close()
+            event.ignore()
+            return
+        if self.compression_tab.is_loading:
+            self._close_when_finished = True
+            self.status_label.setText("Waiting for video folder loading to stop…")
+            self.compression_tab.cancel_loading()
             event.ignore()
             return
         self.comparison.stop()

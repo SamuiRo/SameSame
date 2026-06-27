@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+from .presets import TranscodePreset
+
 
 class JobStatus(str, Enum):
     QUEUED = "queued"
@@ -19,6 +21,7 @@ class TranscodeRequest:
     input_path: Path
     output_path: Path
     preset_id: str
+    preset: TranscodePreset | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -32,7 +32,7 @@ from ..transcode.models import (
     TranscodeRequest,
     TranscodeResult,
 )
-from ..transcode.presets import PRESETS
+from ..transcode.presets import PRESETS, TranscodePreset
 from ..transcode.promotion import PromotionResult
 from .worker import TranscodeCapabilityWorker, TranscodePromotionWorker, TranscodeWorker
 
@@ -50,6 +50,8 @@ class TranscodeDialog(QDialog):
         journal_path: Path,
         quarantine_root: Path,
         collection_roots: dict[str, Path] | None = None,
+        initial_preset: TranscodePreset | None = None,
+        initial_output_dir: Path | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -69,10 +71,15 @@ class TranscodeDialog(QDialog):
         self._results: dict[str, TranscodeResult] = {}
         self._close_when_finished = False
         self._externally_enabled = True
+        self._custom_presets: dict[str, TranscodePreset] = {}
 
         self.setWindowTitle("SameSame · Transcode queue")
         self.resize(1120, 650)
         self._build_ui()
+        if initial_preset is not None:
+            self._install_preset(initial_preset)
+        if initial_output_dir is not None:
+            self.output_dir.setText(str(initial_output_dir))
         self._add_paths(paths)
         self._check_capability()
 
@@ -84,8 +91,30 @@ class TranscodeDialog(QDialog):
     def has_background_work(self) -> bool:
         return self.is_busy or self._capability_thread is not None
 
-    def add_paths(self, paths: list[Path]) -> None:
+    def add_paths(self, paths: list[Path], preset: TranscodePreset | None = None) -> None:
+        if preset is not None and not self.is_busy:
+            self._install_preset(preset)
         self._add_paths(paths)
+
+    def set_output_dir(self, output_dir: Path | None) -> None:
+        if not self.is_busy:
+            self.output_dir.setText(str(output_dir) if output_dir is not None else "")
+
+    def _install_preset(self, preset: TranscodePreset) -> None:
+        if preset.preset_id in PRESETS and preset == PRESETS[preset.preset_id]:
+            index = self.preset_combo.findData(preset.preset_id)
+            self.preset_combo.setCurrentIndex(index)
+            return
+        self._custom_presets[preset.preset_id] = preset
+        index = self.preset_combo.findData(preset.preset_id)
+        if index < 0:
+            self.preset_combo.addItem(f"{preset.name} — {preset.description}", preset.preset_id)
+            index = self.preset_combo.count() - 1
+        self.preset_combo.setCurrentIndex(index)
+
+    def _selected_preset(self) -> TranscodePreset:
+        preset_id = str(self.preset_combo.currentData())
+        return self._custom_presets.get(preset_id) or PRESETS[preset_id]
 
     def set_external_actions_enabled(self, enabled: bool) -> None:
         self._externally_enabled = enabled
@@ -238,7 +267,7 @@ class TranscodeDialog(QDialog):
         self.capability_label.setText("Checking encoder and hardware initialization…")
         self.start_button.setEnabled(False)
         thread = QThread(self)
-        worker = TranscodeCapabilityWorker(preset_id, self.ffmpeg)
+        worker = TranscodeCapabilityWorker(preset_id, self.ffmpeg, self._custom_presets.get(preset_id))
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.completed.connect(self._capability_ready)
@@ -274,6 +303,7 @@ class TranscodeDialog(QDialog):
 
     def _requests(self, *, retry_only: bool = False) -> list[TranscodeRequest]:
         preset_id = str(self.preset_combo.currentData())
+        selected_preset = self._selected_preset()
         output_value = self.output_dir.text().strip()
         output_dir = Path(output_value).expanduser() if output_value else None
         requests: list[TranscodeRequest] = []
@@ -294,7 +324,14 @@ class TranscodeDialog(QDialog):
                         output = candidate
                         break
             allocated_outputs.add(self._key(output))
-            requests.append(TranscodeRequest(source, output, preset_id))
+            requests.append(
+                TranscodeRequest(
+                    source,
+                    output,
+                    preset_id,
+                    selected_preset if preset_id in self._custom_presets else None,
+                )
+            )
             self.table.item(row, 1).setText(preset_id)
             self.table.item(row, 2).setText("Queued")
             self.table.item(row, 3).setText("0.00%")

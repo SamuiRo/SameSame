@@ -301,4 +301,4 @@ These remain separate from the GUI/transcoding roadmap:
   necessary;
 - broader threshold manifests and low-texture video tuning;
 - advanced transcode quality metrics such as optional VMAF sampling;
-- custom user-created presets, parallel GPU queues, and remote workers.
+- parallel GPU queues and remote workers.

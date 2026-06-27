@@ -59,9 +59,87 @@ class GuiSmokeTests(unittest.TestCase):
             self.assertEqual(window.category_filter.count(), len(CATEGORY_LABELS))
             self.assertIn("transcoding", window.windowTitle())
             self.assertFalse(window.cancel_button.isEnabled())
+            self.assertEqual(window.centralWidget().count(), 2)
+            self.assertEqual(window.centralWidget().tabText(1), "Video compression")
         finally:
             window.close()
             self.application.processEvents()
+
+    def test_compression_filters_and_custom_preset(self) -> None:
+        from dedupe.gui.compression_tab import CompressionVideo, build_custom_preset, matches_filters
+
+        video = CompressionVideo(Path("episode.mkv"), 800 * 1024 * 1024, 25 * 60, "h264", "1280×720")
+        self.assertTrue(
+            matches_filters(
+                video,
+                extensions={".mkv"},
+                minimum_size_mb=700,
+                minimum_duration_minutes=20,
+            )
+        )
+        self.assertFalse(
+            matches_filters(
+                video,
+                extensions={".mp4"},
+                minimum_size_mb=700,
+                minimum_duration_minutes=20,
+            )
+        )
+        preset = build_custom_preset(
+            "libx265",
+            19,
+            "slower",
+            "yuv420p10le",
+            x265_params="no-sao=1:aq-mode=3",
+        )
+        self.assertEqual(preset.encoder, "libx265")
+        self.assertIn("-crf", preset.video_args)
+        self.assertIn("19", preset.video_args)
+        self.assertTrue(preset.preset_id.startswith("custom_libx265_crf19_slower_"))
+
+    def test_compression_tab_loads_folder_metadata_in_background(self) -> None:
+        from unittest.mock import patch
+
+        from PySide6.QtCore import QEventLoop, QTimer, Qt
+
+        from dedupe.gui.main_window import MainWindow
+        from dedupe.transcode.models import MediaInfo, StreamInfo
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "episode.mkv"
+            source.write_bytes(b"video")
+            info = MediaInfo(source, source.stat().st_size, 25 * 60, "matroska", (StreamInfo(0, "video", "h264", 1280, 720),))
+            window = MainWindow()
+            window.compression_tab.folder_path.setText(str(root))
+            with patch("dedupe.gui.compression_tab.probe_media", return_value=info):
+                window.compression_tab._load_folder()
+                event_loop = QEventLoop()
+                poll = QTimer()
+                poll.timeout.connect(
+                    lambda: event_loop.quit() if not window.compression_tab.is_loading else None
+                )
+                timeout = QTimer()
+                timeout.setSingleShot(True)
+                timeout.timeout.connect(event_loop.quit)
+                poll.start(5)
+                timeout.start(5_000)
+                event_loop.exec()
+                poll.stop()
+                self.assertTrue(timeout.isActive(), "compression folder loading timed out")
+                timeout.stop()
+
+            try:
+                self.assertEqual(window.compression_tab.table.rowCount(), 1)
+                window.compression_tab._select_matching()
+                self.assertEqual(
+                    window.compression_tab.table.item(0, 0).checkState(),
+                    Qt.CheckState.Checked,
+                )
+                self.assertTrue(window.compression_tab.queue_button.isEnabled())
+            finally:
+                window.close()
+                self.application.processEvents()
 
     def test_name_hints_allow_review_decisions_but_disable_file_mutation(self) -> None:
         from dedupe.gui.main_window import MainWindow

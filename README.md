@@ -1,6 +1,6 @@
 # SameSame
 
-SameSame `1.6.0` finds duplicate and similar media files through a command-line
+SameSame `1.6.1` finds duplicate and similar media files through a command-line
 scanner or an optional desktop review interface. It scans one or more folder
 trees recursively and writes reports for manual review.
 
@@ -174,12 +174,18 @@ Desktop file actions are deliberately conservative:
 
 ## Video Compression in the GUI
 
-Compression is available from reviewed video results in SameSame `1.6.0`:
+SameSame `1.6.1` has a dedicated **Video compression** tab for folder-based
+batch work:
 
-1. Launch `samesame-gui` and scan one or more collection folders.
-2. Select a result containing a supported video file.
-3. Click **Transcode videos…** in the comparison panel.
-4. Choose a preset and output folder, then start the sequential queue.
+1. Choose a folder and load its videos recursively.
+2. Check individual files, or select matching files by extension, minimum or
+   maximum size, and minimum or maximum duration.
+3. Choose one of the four anime presets, or define custom libx265, AV1 NVENC,
+   or HEVC NVENC quality, speed, pixel-format, and encoder options.
+4. Choose an optional output folder and open the sequential compression queue.
+
+Reviewed duplicate results can still be sent directly to the same queue with
+**Transcode videos…** in the comparison panel.
 
 The queue checks encoder and GPU availability before starting and provides
 per-file progress, cancellation, retry, output/log shortcuts, and a before/after

@@ -12,7 +12,7 @@ from ..models import FileRecord
 from ..service import ScanOptions, ScanService
 from ..transcode.capabilities import check_encoder_capability
 from ..transcode.models import TranscodeRequest
-from ..transcode.presets import get_preset
+from ..transcode.presets import TranscodePreset, get_preset
 from ..transcode.promotion import promote_transcode
 from ..transcode.queue import TranscodeQueue
 
@@ -133,15 +133,16 @@ class TranscodeCapabilityWorker(QObject):
     completed = Signal(str, object)
     finished = Signal()
 
-    def __init__(self, preset_id: str, ffmpeg: str) -> None:
+    def __init__(self, preset_id: str, ffmpeg: str, preset: TranscodePreset | None = None) -> None:
         super().__init__()
         self.preset_id = preset_id
         self.ffmpeg = ffmpeg
+        self.preset = preset
 
     @Slot()
     def run(self) -> None:
         try:
-            capability = check_encoder_capability(get_preset(self.preset_id), self.ffmpeg)
+            capability = check_encoder_capability(self.preset or get_preset(self.preset_id), self.ffmpeg)
             self.completed.emit(self.preset_id, capability)
         finally:
             self.finished.emit()

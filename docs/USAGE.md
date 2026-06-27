@@ -1,6 +1,6 @@
 # Usage Guide
 
-This guide describes SameSame `1.6.0`. The current application provides a
+This guide describes SameSame `1.6.1`. The current application provides a
 report-only CLI and an optional desktop review interface with explicit,
 journaled quarantine/recycle actions and a transcoding queue. There is no
 permanent-delete command.
@@ -244,8 +244,15 @@ is not implemented.
 
 ## Independent Transcoding
 
-In the desktop interface, select a review result containing videos and choose
-**Transcode videos**. The queue dialog provides preset selection, encoder/GPU
+The desktop interface includes a dedicated **Video compression** tab. Choose a
+folder to probe its supported videos recursively, then check individual files
+or use the extension, size, and duration filters to select a batch. The tab
+offers the four anime presets from `ANIME_ENCODING_PRESETS.md` plus custom
+libx265, AV1 NVENC, and HEVC NVENC settings. An optional output directory can
+be selected before opening the queue.
+
+Alternatively, select a review result containing videos and choose
+**Transcode videos**. The shared queue dialog provides preset selection, encoder/GPU
 capability status, progress, cancellation, retry, output/log shortcuts, and a
 before/after stream and size summary. Multiple reviewed files run sequentially.
 

@@ -232,6 +232,26 @@ class RunnerAndValidationTests(unittest.TestCase):
 
 
 class QueueTests(unittest.TestCase):
+    def test_queue_accepts_request_scoped_custom_preset(self) -> None:
+        from dedupe.events import CancellationToken
+        from dedupe.transcode.models import EncoderCapability
+        from dedupe.transcode.presets import TranscodePreset
+
+        custom = TranscodePreset(
+            "custom_test",
+            "Custom test",
+            "libx265",
+            ("-c:v", "libx265", "-crf", "24", "-preset", "medium", "-pix_fmt", "yuv420p10le"),
+        )
+        request = TranscodeRequest(Path("source.mkv"), Path("output.mkv"), custom.preset_id, custom)
+        queue = TranscodeQueue()
+        capability = EncoderCapability(custom.encoder, False, False, "custom encoder unavailable")
+        with patch.object(queue, "_capability_for_preset", return_value=capability) as check_mock:
+            result = queue._run_one(request, CancellationToken())
+        self.assertEqual(result.status, JobStatus.FAILED)
+        self.assertIn("custom encoder unavailable", result.message)
+        check_mock.assert_called_once_with(custom)
+
     def test_queue_runs_jobs_in_order_and_continues_after_a_failure(self) -> None:
         requests = [
             TranscodeRequest(Path("first.mkv"), Path("first.out.mkv"), "anime_x265_balanced"),

@@ -71,6 +71,10 @@ Implemented:
 - before/after media metadata, size, and savings display;
 - separately confirmed quarantine-first promotion with conflict checks,
   content verification, journal integration, and rollback attempt.
+- dedicated folder-based video-compression tab with recursive metadata loading,
+  per-file checkboxes, and extension/size/duration batch selection;
+- request-scoped custom libx265, AV1 NVENC, and HEVC NVENC presets that reuse
+  the existing capability checks, source-preserving queue, and output validation.
 
 The scanner CLI remains report-only. The desktop interface modifies a source only
 after an explicit quarantine or recycle confirmation and a successful identity
@@ -99,9 +103,9 @@ quarantine-first action.
 
 ## Verification Completed
 
-The available suite currently contains 75 unit/integration tests.
+The available suite currently contains 78 unit/integration tests.
 
-- All 75 pass under both `unittest` and pytest in the project-local Python
+- All 78 pass under both `unittest` and pytest in the project-local Python
   3.11.9 virtual environment with all runtime/dev dependencies installed.
 - Service coverage verifies structured events, warnings, failure reporting,
   cooperative cancellation/cache preservation, and review metadata.

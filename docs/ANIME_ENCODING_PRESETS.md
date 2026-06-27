@@ -176,6 +176,9 @@ Implementation defaults:
 - in the `1.6.0` desktop queue, replacement is a separate confirmed
   quarantine-first promotion with source/output SHA-256 checks, destination
   conflict protection, journal integration, and attempted rollback on failure.
+- in `1.6.1`, the dedicated video-compression tab can apply these presets to a
+  checked folder batch or create a request-scoped custom preset without
+  changing the four stable built-in preset IDs.
 
 ---
 

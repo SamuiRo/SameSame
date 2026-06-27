@@ -15,7 +15,7 @@ from .models import (
     TranscodeRequest,
     TranscodeResult,
 )
-from .presets import get_preset
+from .presets import TranscodePreset, get_preset
 from .probe import ProbeError, probe_media
 from .runner import run_transcode
 from .validation import validate_output
@@ -76,6 +76,12 @@ class TranscodeQueue:
             self._capabilities[preset_id] = check_encoder_capability(preset, self.ffmpeg)
         return self._capabilities[preset_id]
 
+    def _capability_for_preset(self, preset: TranscodePreset) -> EncoderCapability:
+        key = f"{preset.preset_id}\0{preset.encoder}\0{' '.join(preset.video_args)}"
+        if key not in self._capabilities:
+            self._capabilities[key] = check_encoder_capability(preset, self.ffmpeg)
+        return self._capabilities[key]
+
     def run(
         self,
         requests: Iterable[TranscodeRequest],
@@ -112,8 +118,12 @@ class TranscodeQueue:
         log_path = None
         started_elapsed = 0.0
         try:
-            preset = get_preset(request.preset_id)
-            capability = self.capability(request.preset_id)
+            preset = request.preset or get_preset(request.preset_id)
+            capability = (
+                self._capability_for_preset(preset)
+                if request.preset is not None
+                else self.capability(request.preset_id)
+            )
             if not capability.available:
                 return self._failed(request, capability.message or f"Encoder unavailable: {preset.encoder}")
             input_info = probe_media(request.input_path, self.ffprobe)
