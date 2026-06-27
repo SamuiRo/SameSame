@@ -2,9 +2,10 @@
 
 Last updated: 2026-06-27
 
-This roadmap separates the current scanner and journaled desktop cleanup from
-planned transcoding features. It is an implementation plan, not a description
-of commands available in SameSame `1.6.0`.
+This roadmap records the staged implementation of the scanner, journaled
+desktop cleanup, and transcoding features. Phases 0 through 4 are complete in
+SameSame `1.6.0`; current commands and workflows are documented in `README.md`
+and `USAGE.md`.
 
 ## Goals
 

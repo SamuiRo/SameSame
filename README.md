@@ -172,6 +172,25 @@ Desktop file actions are deliberately conservative:
   restorable by SameSame;
 - every requested, completed, and failed operation is stored in a SQLite journal.
 
+## Video Compression in the GUI
+
+Compression is available from reviewed video results in SameSame `1.6.0`:
+
+1. Launch `samesame-gui` and scan one or more collection folders.
+2. Select a result containing a supported video file.
+3. Click **Transcode videos…** in the comparison panel.
+4. Choose a preset and output folder, then start the sequential queue.
+
+The queue checks encoder and GPU availability before starting and provides
+per-file progress, cancellation, retry, output/log shortcuts, and a before/after
+metadata and size comparison. A completed encode keeps the source unchanged.
+
+**Quarantine original + promote…** is a separate confirmed action. SameSame
+verifies both files with SHA-256, moves the source to journaled quarantine, and
+only then promotes the validated MKV into the collection. Destination conflicts
+are rejected before the source is moved, and a failed promotion attempts to
+restore the original.
+
 ## Common Commands
 
 Inspect the four transcode presets and verify which encoders can initialize:

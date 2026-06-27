@@ -217,15 +217,16 @@ git diff --check
 python -m unittest discover -s tests -v
 ```
 
-Do not discard uncommitted `1.6.0` work. Continue deferred features only after
-the service, GUI/action, and full FFmpeg/transcode integration suites remain green.
+Check the working tree before continuing and preserve any user changes that are
+present. Start deferred features only after the service, GUI/action, and full
+FFmpeg/transcode integration suites remain green.
 
 ## Suggested Prompt for a New Chat
 
 ```text
 Read README.md, docs/USAGE.md, docs/CONFIG.md, docs/STATUS.md,
 docs/ROADMAP.md, and docs/ANIME_ENCODING_PRESETS.md.
-Preserve the current uncommitted working-tree changes. Verify the test suite,
-then choose one separately scoped deferred item from docs/ROADMAP.md and keep
-the existing source-protection rules intact.
+Inspect and preserve any existing working-tree changes. Verify the test suite,
+then choose one separately scoped deferred item from docs/ROADMAP.md while
+keeping the existing source-protection rules intact.
 ```

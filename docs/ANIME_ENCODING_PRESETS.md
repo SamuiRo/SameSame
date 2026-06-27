@@ -172,7 +172,10 @@ Implementation defaults:
 - preserve chapters, metadata, and MKV attachments where possible;
 - write to a temporary output and validate it before offering any source-file
   action;
-- keep the original unless the user separately confirms quarantine or recycle.
+- keep the original after encoding;
+- in the `1.6.0` desktop queue, replacement is a separate confirmed
+  quarantine-first promotion with source/output SHA-256 checks, destination
+  conflict protection, journal integration, and attempted rollback on failure.
 
 ---
 
