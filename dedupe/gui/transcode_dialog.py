@@ -5,6 +5,7 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Qt, QUrl, Signal
 from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..actions import ActionOutcome, OperationStatus
 from ..scanner import is_video_path
 from ..transcode.command_builder import default_output_path
 from ..transcode.models import (
@@ -52,6 +54,7 @@ class TranscodeDialog(QDialog):
         collection_roots: dict[str, Path] | None = None,
         initial_preset: TranscodePreset | None = None,
         initial_output_dir: Path | None = None,
+        auto_recycle_originals: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -69,6 +72,7 @@ class TranscodeDialog(QDialog):
         self._promotion_thread: QThread | None = None
         self._promotion_worker: TranscodePromotionWorker | None = None
         self._results: dict[str, TranscodeResult] = {}
+        self._source_actions: dict[str, ActionOutcome | str] = {}
         self._close_when_finished = False
         self._externally_enabled = True
         self._custom_presets: dict[str, TranscodePreset] = {}
@@ -80,6 +84,7 @@ class TranscodeDialog(QDialog):
             self._install_preset(initial_preset)
         if initial_output_dir is not None:
             self.output_dir.setText(str(initial_output_dir))
+        self.recycle_originals.setChecked(auto_recycle_originals)
         self._add_paths(paths)
         self._check_capability()
 
@@ -99,6 +104,10 @@ class TranscodeDialog(QDialog):
     def set_output_dir(self, output_dir: Path | None) -> None:
         if not self.is_busy:
             self.output_dir.setText(str(output_dir) if output_dir is not None else "")
+
+    def set_auto_recycle_originals(self, enabled: bool) -> None:
+        if not self.is_busy:
+            self.recycle_originals.setChecked(enabled)
 
     def _install_preset(self, preset: TranscodePreset) -> None:
         if preset.preset_id in PRESETS and preset == PRESETS[preset.preset_id]:
@@ -154,6 +163,12 @@ class TranscodeDialog(QDialog):
         output_row.addWidget(self.add_files_button)
         output_row.addWidget(self.remove_button)
 
+        self.recycle_originals = QCheckBox("Move each original to Recycle Bin after successful validation")
+        self.recycle_originals.setStyleSheet("color: #c62828; font-weight: 600")
+        self.recycle_originals.setToolTip(
+            "The encoded MKV is validated first. The original is then identity-checked and journaled before recycling."
+        )
+
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(["Input", "Preset", "Status", "Progress", "Output", "Size / savings"])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -205,6 +220,7 @@ class TranscodeDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addLayout(settings)
         layout.addLayout(output_row)
+        layout.addWidget(self.recycle_originals)
         layout.addWidget(self.table, 1)
         layout.addWidget(self.details)
         layout.addLayout(controls)
@@ -341,6 +357,8 @@ class TranscodeDialog(QDialog):
     def _start_queue(self) -> None:
         if self.is_busy or not self._externally_enabled or not self._capability_available():
             return
+        if not self._confirm_recycle_originals():
+            return
         requests = self._requests()
         if not requests:
             return
@@ -349,18 +367,30 @@ class TranscodeDialog(QDialog):
     def _retry_failed(self) -> None:
         if self.is_busy or not self._externally_enabled or not self._capability_available():
             return
+        if not self._confirm_recycle_originals():
+            return
         requests = self._requests(retry_only=True)
         if requests:
             self._launch_queue(requests)
 
     def _launch_queue(self, requests: list[TranscodeRequest]) -> None:
         thread = QThread(self)
-        worker = TranscodeWorker(requests, self.ffmpeg, self.ffprobe)
+        worker = TranscodeWorker(
+            requests,
+            self.ffmpeg,
+            self.ffprobe,
+            recycle_originals=self.recycle_originals.isChecked(),
+            journal_path=self.journal_path,
+            quarantine_root=self.quarantine_root,
+            collection_roots=self.collection_roots,
+        )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.progress.connect(self._transcode_progress)
         worker.result.connect(self._transcode_result)
         worker.failed.connect(self._transcode_failed)
+        worker.source_action.connect(self._source_action_result)
+        worker.source_action_failed.connect(self._source_action_failed)
         worker.finished.connect(worker.deleteLater)
         worker.finished.connect(thread.quit)
         thread.finished.connect(self._queue_finished)
@@ -370,6 +400,20 @@ class TranscodeDialog(QDialog):
         self._set_queue_running(True)
         self.status_label.setText(f"Running {len(requests)} queued job(s)")
         thread.start()
+
+    def _confirm_recycle_originals(self) -> bool:
+        if not self.recycle_originals.isChecked():
+            return True
+        answer = QMessageBox.warning(
+            self,
+            "Recycle originals after compression?",
+            "WARNING: Every original will be moved to the operating-system Recycle Bin immediately after its "
+            "encoded output passes validation and the original passes an identity check.\n\n"
+            "SameSame cannot automatically restore Recycle Bin items. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     def _row_for_path(self, path: Path) -> int:
         key = self._key(path)
@@ -409,6 +453,28 @@ class TranscodeDialog(QDialog):
         self.status_label.setText(f"Queue failed: {message}")
         QMessageBox.critical(self, "Transcode queue failed", message)
 
+    def _source_action_result(self, value: object) -> None:
+        if not isinstance(value, ActionOutcome):
+            return
+        key = self._key(value.source)
+        self._source_actions[key] = value
+        row = self._row_for_path(value.source)
+        if row >= 0:
+            status = "Completed; original recycled" if value.status == OperationStatus.COMPLETED else "Recycle failed"
+            self.table.item(row, 2).setText(status)
+        self.status_label.setText(value.message)
+        self.journal_changed.emit()
+        self._selection_changed()
+
+    def _source_action_failed(self, path: str, message: str) -> None:
+        source = Path(path)
+        self._source_actions[self._key(source)] = message
+        row = self._row_for_path(source)
+        if row >= 0:
+            self.table.item(row, 2).setText("Completed; original recycle failed")
+        self.status_label.setText(f"Original was kept: {message}")
+        self._selection_changed()
+
     def _queue_finished(self) -> None:
         self._queue_thread = None
         self._queue_worker = None
@@ -427,6 +493,7 @@ class TranscodeDialog(QDialog):
     def _set_queue_running(self, running: bool) -> None:
         self.preset_combo.setEnabled(not running)
         self.output_dir.setEnabled(not running)
+        self.recycle_originals.setEnabled(not running)
         self.start_button.setEnabled(
             self._externally_enabled and not running and self.table.rowCount() > 0 and self._capability_available()
         )
@@ -460,7 +527,11 @@ class TranscodeDialog(QDialog):
         self.open_output_button.setEnabled(completed)
         self.open_log_button.setEnabled(bool(result and result.log_path and result.log_path.exists()))
         self.promote_button.setEnabled(
-            self._externally_enabled and completed and self._promotion_thread is None and self._queue_thread is None
+            self._externally_enabled
+            and completed
+            and bool(result and result.input_path.exists())
+            and self._promotion_thread is None
+            and self._queue_thread is None
         )
         if result is None:
             self.details.clear()
@@ -474,6 +545,11 @@ class TranscodeDialog(QDialog):
         lines.extend(f"Warning: {warning}" for warning in result.warnings)
         if result.message:
             lines.append(result.message)
+        source_action = self._source_actions.get(self._key(result.input_path))
+        if isinstance(source_action, ActionOutcome):
+            lines.append(f"Original: {source_action.status.value} — {source_action.message}")
+        elif source_action:
+            lines.append(f"Original kept: {source_action}")
         self.details.setPlainText("\n".join(lines))
 
     def _open_output(self) -> None:

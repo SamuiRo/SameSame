@@ -75,6 +75,10 @@ Implemented:
   per-file checkboxes, and extension/size/duration batch selection;
 - request-scoped custom libx265, AV1 NVENC, and HEVC NVENC presets that reuse
   the existing capability checks, source-preserving queue, and output validation.
+- cycle-safe, unlimited-depth folder traversal with linked-directory support,
+  broader video extensions, and visible rows even when metadata probing fails;
+- optional red auto-recycle control that acts only after output validation and
+  source SHA-256 identity verification, with explicit confirmation and journaling.
 
 The scanner CLI remains report-only. The desktop interface modifies a source only
 after an explicit quarantine or recycle confirmation and a successful identity
@@ -103,9 +107,9 @@ quarantine-first action.
 
 ## Verification Completed
 
-The available suite currently contains 78 unit/integration tests.
+The available suite currently contains 79 unit/integration tests.
 
-- All 78 pass under both `unittest` and pytest in the project-local Python
+- All 79 pass under both `unittest` and pytest in the project-local Python
   3.11.9 virtual environment with all runtime/dev dependencies installed.
 - Service coverage verifies structured events, warnings, failure reporting,
   cooperative cancellation/cache preservation, and review metadata.

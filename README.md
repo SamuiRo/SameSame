@@ -177,12 +177,19 @@ Desktop file actions are deliberately conservative:
 SameSame `1.6.1` has a dedicated **Video compression** tab for folder-based
 batch work:
 
-1. Choose a folder and load its videos recursively.
+1. Choose a folder and load its videos recursively at any directory depth,
+   including linked directory trees without following cycles.
 2. Check individual files, or select matching files by extension, minimum or
    maximum size, and minimum or maximum duration.
 3. Choose one of the four anime presets, or define custom libx265, AV1 NVENC,
    or HEVC NVENC quality, speed, pixel-format, and encoder options.
 4. Choose an optional output folder and open the sequential compression queue.
+
+The red **Move originals to Recycle Bin** option is deliberately opt-in and
+requires confirmation. An original is recycled only after its encoded MKV has
+passed validation and the source still matches its recorded size, modification
+time, and SHA-256 identity. The operation is journaled, but SameSame cannot
+automatically restore items from the operating-system Recycle Bin.
 
 Reviewed duplicate results can still be sent directly to the same queue with
 **Transcode videos…** in the comparison panel.

@@ -245,11 +245,18 @@ is not implemented.
 ## Independent Transcoding
 
 The desktop interface includes a dedicated **Video compression** tab. Choose a
-folder to probe its supported videos recursively, then check individual files
+folder to probe its supported videos recursively at any directory depth, then check individual files
 or use the extension, size, and duration filters to select a batch. The tab
 offers the four anime presets from `ANIME_ENCODING_PRESETS.md` plus custom
 libx265, AV1 NVENC, and HEVC NVENC settings. An optional output directory can
 be selected before opening the queue.
+
+The red **Move originals to Recycle Bin** checkbox is optional and requires a
+separate confirmation when the queue starts. SameSame first validates the
+encoded output, then verifies the original against its recorded size,
+modification time, and SHA-256 identity before sending it to the operating-system
+Recycle Bin and recording the action in the operation journal. Recycle is not
+automatically restorable by SameSame.
 
 Alternatively, select a review result containing videos and choose
 **Transcode videos**. The shared queue dialog provides preset selection, encoder/GPU

@@ -718,6 +718,7 @@ class MainWindow(QMainWindow):
         preset_value: object,
         output_value: object,
         root_value: object,
+        recycle_originals: bool,
     ) -> None:
         if self._scan_thread is not None or self._action_thread is not None or not isinstance(paths_value, list):
             return
@@ -733,7 +734,7 @@ class MainWindow(QMainWindow):
         paths = [Path(str(path)) for path in paths_value]
         output_dir = Path(str(output_value)) if isinstance(output_value, Path) else None
         collection_root = Path(str(root_value)) if isinstance(root_value, Path) else None
-        self._show_transcode(paths, preset_value, output_dir, collection_root)
+        self._show_transcode(paths, preset_value, output_dir, collection_root, recycle_originals)
 
     def _show_transcode(
         self,
@@ -741,11 +742,13 @@ class MainWindow(QMainWindow):
         preset: object | None = None,
         output_dir: Path | None = None,
         collection_root: Path | None = None,
+        recycle_originals: bool = False,
     ) -> None:
         selected_preset = preset if isinstance(preset, TranscodePreset) else None
         if self._transcode_dialog is not None:
             self._transcode_dialog.add_paths(paths, selected_preset)
             self._transcode_dialog.set_output_dir(output_dir)
+            self._transcode_dialog.set_auto_recycle_originals(recycle_originals)
             if collection_root is not None:
                 for path in paths:
                     self._transcode_dialog.collection_roots[str(path.expanduser().resolve())] = collection_root
@@ -768,6 +771,7 @@ class MainWindow(QMainWindow):
             collection_roots=roots,
             initial_preset=selected_preset,
             initial_output_dir=output_dir,
+            auto_recycle_originals=recycle_originals,
             parent=self,
         )
         dialog.busy_changed.connect(self._transcode_busy_changed)
@@ -797,7 +801,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.close)
 
     def _transcode_journal_changed(self) -> None:
-        self._append_log("Transcoded output promoted after journaled source quarantine")
+        self._append_log("A journaled transcode source action was recorded")
         if self._journal_dialog is not None:
             self._journal_dialog.refresh()
 

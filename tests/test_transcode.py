@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 import tempfile
@@ -18,11 +19,13 @@ from dedupe.transcode.models import (
     TranscodePlan,
     TranscodeRequest,
     TranscodeResult,
+    ValidationResult,
 )
 from dedupe.transcode.presets import PRESETS
 from dedupe.transcode.probe import list_encoders, probe_media
 from dedupe.transcode.runner import run_transcode
 from dedupe.transcode.queue import TranscodeQueue
+from dedupe.transcode.source_cleanup import recycle_transcode_source
 from dedupe.transcode.validation import validate_output
 
 
@@ -232,6 +235,43 @@ class RunnerAndValidationTests(unittest.TestCase):
 
 
 class QueueTests(unittest.TestCase):
+    def test_validated_transcode_can_identity_check_and_recycle_its_source(self) -> None:
+        from dedupe.actions import FileAction, FileActionService, OperationStatus
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.mkv"
+            output = root / "source.encoded.mkv"
+            source.write_bytes(b"original video")
+            output.write_bytes(b"encoded video")
+            stat = source.stat()
+            output_info = media(output, size=output.stat().st_size)
+            result = TranscodeResult(
+                "job",
+                JobStatus.COMPLETED,
+                source,
+                output,
+                None,
+                "anime_x265_balanced",
+                input_size=stat.st_size,
+                output_size=output.stat().st_size,
+                validation=ValidationResult(True, output_info=output_info),
+                input_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+                input_modified_at=stat.st_mtime,
+            )
+            journal = root / "journal.sqlite3"
+            outcome = recycle_transcode_source(
+                result,
+                journal_path=journal,
+                quarantine_root=root / "quarantine",
+                collection_root=root,
+                recycle=lambda path: Path(path).unlink(),
+            )
+            self.assertEqual(outcome.status, OperationStatus.COMPLETED)
+            self.assertFalse(source.exists())
+            operation = FileActionService(journal, root / "quarantine").recent_operations()[0]
+            self.assertEqual(operation.action, FileAction.RECYCLE)
+
     def test_queue_accepts_request_scoped_custom_preset(self) -> None:
         from dedupe.events import CancellationToken
         from dedupe.transcode.models import EncoderCapability

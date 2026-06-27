@@ -15,6 +15,7 @@ from ..transcode.models import TranscodeRequest
 from ..transcode.presets import TranscodePreset, get_preset
 from ..transcode.promotion import promote_transcode
 from ..transcode.queue import TranscodeQueue
+from ..transcode.source_cleanup import recycle_transcode_source
 
 
 class ScanWorker(QObject):
@@ -152,23 +153,62 @@ class TranscodeWorker(QObject):
     progress = Signal(object)
     result = Signal(object)
     failed = Signal(str)
+    source_action = Signal(object)
+    source_action_failed = Signal(str, str)
     finished = Signal()
 
-    def __init__(self, requests: list[TranscodeRequest], ffmpeg: str, ffprobe: str) -> None:
+    def __init__(
+        self,
+        requests: list[TranscodeRequest],
+        ffmpeg: str,
+        ffprobe: str,
+        *,
+        recycle_originals: bool = False,
+        journal_path: Path | None = None,
+        quarantine_root: Path | None = None,
+        collection_roots: dict[str, Path] | None = None,
+    ) -> None:
         super().__init__()
         self.requests = requests
         self.ffmpeg = ffmpeg
         self.ffprobe = ffprobe
+        self.recycle_originals = recycle_originals
+        self.journal_path = journal_path
+        self.quarantine_root = quarantine_root
+        self.collection_roots = collection_roots or {}
         self.cancellation = CancellationToken()
 
     @Slot()
     def run(self) -> None:
+        def handle_result(result: object) -> None:
+            from ..transcode.models import JobStatus, TranscodeResult
+
+            self.result.emit(result)
+            if not self.recycle_originals or not isinstance(result, TranscodeResult):
+                return
+            if result.status != JobStatus.COMPLETED:
+                return
+            if self.journal_path is None or self.quarantine_root is None:
+                self.source_action_failed.emit(str(result.input_path), "Operation journal is unavailable")
+                return
+            key = str(result.input_path.expanduser().resolve())
+            try:
+                outcome = recycle_transcode_source(
+                    result,
+                    journal_path=self.journal_path,
+                    quarantine_root=self.quarantine_root,
+                    collection_root=self.collection_roots.get(key),
+                )
+                self.source_action.emit(outcome)
+            except Exception as exc:  # noqa: BLE001 - preserve the successful output and report cleanup failure.
+                self.source_action_failed.emit(str(result.input_path), str(exc))
+
         try:
             queue = TranscodeQueue(
                 ffmpeg=self.ffmpeg,
                 ffprobe=self.ffprobe,
                 progress_callback=self.progress.emit,
-                result_callback=self.result.emit,
+                result_callback=handle_result,
             )
             queue.run(self.requests, cancellation=self.cancellation)
         except Exception as exc:  # noqa: BLE001 - surface unexpected queue failures in the GUI.

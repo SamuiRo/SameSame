@@ -22,6 +22,17 @@ VIDEO_EXTENSIONS = {
     ".mpg",
     ".mpeg",
     ".m4v",
+    ".mts",
+    ".vob",
+    ".ogv",
+    ".3gp",
+    ".3g2",
+    ".asf",
+    ".divx",
+    ".f4v",
+    ".mxf",
+    ".rm",
+    ".rmvb",
 }
 
 IMAGE_EXTENSIONS = {

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -42,6 +44,7 @@ class CompressionVideo:
     duration: float
     codec: str
     resolution: str
+    probe_error: str = ""
 
     @classmethod
     def from_media_info(cls, info: MediaInfo) -> CompressionVideo:
@@ -50,11 +53,34 @@ class CompressionVideo:
         return cls(info.path, info.size, info.duration, video.codec or "unknown", resolution)
 
 
-def discover_video_paths(folder: Path) -> list[Path]:
-    return sorted(
-        (path for path in folder.rglob("*") if path.is_file() and path.suffix.casefold() in VIDEO_EXTENSIONS),
-        key=lambda path: str(path).casefold(),
-    )
+def discover_video_paths(folder: Path, on_error: Callable[[str], None] | None = None) -> list[Path]:
+    """Walk every directory depth, including linked directories, without following cycles."""
+    pending = [folder.expanduser().resolve()]
+    visited_directories: set[str] = set()
+    discovered_files: dict[str, Path] = {}
+    while pending:
+        current = pending.pop()
+        directory_key = os.path.normcase(os.path.realpath(current))
+        if directory_key in visited_directories:
+            continue
+        visited_directories.add(directory_key)
+        try:
+            entries = sorted(os.scandir(current), key=lambda entry: entry.name.casefold(), reverse=True)
+        except OSError as exc:
+            if on_error is not None:
+                on_error(f"Cannot read folder {current}: {exc}")
+            continue
+        for entry in entries:
+            try:
+                if entry.is_dir(follow_symlinks=True):
+                    pending.append(Path(entry.path))
+                elif entry.is_file(follow_symlinks=True) and Path(entry.name).suffix.casefold() in VIDEO_EXTENSIONS:
+                    path = Path(entry.path).resolve()
+                    discovered_files.setdefault(os.path.normcase(os.path.realpath(path)), path)
+            except OSError as exc:
+                if on_error is not None:
+                    on_error(f"Cannot inspect {entry.path}: {exc}")
+    return sorted(discovered_files.values(), key=lambda path: str(path).casefold())
 
 
 def matches_filters(
@@ -131,7 +157,7 @@ class CompressionFolderWorker(QObject):
         loaded = 0
         failed = 0
         try:
-            paths = discover_video_paths(self.folder)
+            paths = discover_video_paths(self.folder, self.warning.emit)
             total = len(paths)
             for index, path in enumerate(paths, start=1):
                 if self._cancelled.is_set():
@@ -143,6 +169,13 @@ class CompressionFolderWorker(QObject):
                 except (OSError, ProbeError, StopIteration) as exc:
                     failed += 1
                     self.warning.emit(f"{path}: {exc}")
+                    try:
+                        self.item_ready.emit(
+                            CompressionVideo(path, path.stat().st_size, 0.0, "metadata unavailable", "—", str(exc))
+                        )
+                        loaded += 1
+                    except OSError:
+                        pass
                 self.progress.emit(index, total, path.name)
             self.completed.emit(loaded, failed)
         except OSError as exc:
@@ -156,7 +189,7 @@ class CompressionFolderWorker(QObject):
 
 
 class CompressionTab(QWidget):
-    queue_requested = Signal(object, object, object, object)
+    queue_requested = Signal(object, object, object, object, bool)
     busy_changed = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -194,7 +227,7 @@ class CompressionTab(QWidget):
         title = QLabel("<h2>Batch video compression</h2>")
         subtitle = QLabel(
             "Load one folder recursively, check individual videos or select them by extension, size, and duration. "
-            "Encoding creates validated MKV files and keeps every original."
+            "Encoding creates validated MKV files and keeps every original unless Recycle Bin cleanup is enabled."
         )
         subtitle.setWordWrap(True)
         layout.addWidget(title)
@@ -281,6 +314,13 @@ class CompressionTab(QWidget):
         output_layout.addWidget(self.output_dir, 1)
         output_layout.addWidget(self.output_button)
         layout.addWidget(output_group)
+
+        self.recycle_originals = QCheckBox("Move originals to Recycle Bin after successful compression")
+        self.recycle_originals.setStyleSheet("color: #c62828; font-weight: 600")
+        self.recycle_originals.setToolTip(
+            "Only validated outputs trigger this action. Each original is identity-checked and journaled first."
+        )
+        layout.addWidget(self.recycle_originals)
         layout.addStretch(1)
         return panel
 
@@ -385,7 +425,11 @@ class CompressionTab(QWidget):
         self.table.setItem(row, 3, QTableWidgetItem(value.path.suffix.casefold()))
         self.table.setItem(row, 4, QTableWidgetItem(self._format_size(value.size)))
         self.table.setItem(row, 5, QTableWidgetItem(self._format_duration(value.duration)))
-        self.table.setItem(row, 6, QTableWidgetItem(f"{value.codec} · {value.resolution}"))
+        metadata_item = QTableWidgetItem(f"{value.codec} · {value.resolution}")
+        if value.probe_error:
+            metadata_item.setToolTip(value.probe_error)
+            metadata_item.setForeground(Qt.GlobalColor.red)
+        self.table.setItem(row, 6, metadata_item)
 
     def _loading_progress(self, current: int, total: int, name: str) -> None:
         self.progress.setRange(0, max(1, total))
@@ -510,7 +554,13 @@ class CompressionTab(QWidget):
         output_value = self.output_dir.text().strip()
         output_dir = Path(output_value).expanduser() if output_value else None
         root = Path(self.folder_path.text()).expanduser().resolve()
-        self.queue_requested.emit([video.path for video in videos], self._selected_preset(), output_dir, root)
+        self.queue_requested.emit(
+            [video.path for video in videos],
+            self._selected_preset(),
+            output_dir,
+            root,
+            self.recycle_originals.isChecked(),
+        )
 
     @staticmethod
     def _format_size(size: int) -> str:

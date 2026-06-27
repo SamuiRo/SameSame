@@ -66,7 +66,12 @@ class GuiSmokeTests(unittest.TestCase):
             self.application.processEvents()
 
     def test_compression_filters_and_custom_preset(self) -> None:
-        from dedupe.gui.compression_tab import CompressionVideo, build_custom_preset, matches_filters
+        from dedupe.gui.compression_tab import (
+            CompressionVideo,
+            build_custom_preset,
+            discover_video_paths,
+            matches_filters,
+        )
 
         video = CompressionVideo(Path("episode.mkv"), 800 * 1024 * 1024, 25 * 60, "h264", "1280×720")
         self.assertTrue(
@@ -97,6 +102,18 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertIn("19", preset.video_args)
         self.assertTrue(preset.preset_id.startswith("custom_libx265_crf19_slower_"))
 
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            deepest = root.joinpath(*(f"level-{index}" for index in range(10)))
+            deepest.mkdir(parents=True)
+            first = deepest / "deep-episode.mkv"
+            second = deepest / "legacy-episode.vob"
+            ignored = deepest / "notes.txt"
+            first.write_bytes(b"video")
+            second.write_bytes(b"video")
+            ignored.write_text("not video", encoding="utf-8")
+            self.assertEqual(discover_video_paths(root), [first.resolve(), second.resolve()])
+
     def test_compression_tab_loads_folder_metadata_in_background(self) -> None:
         from unittest.mock import patch
 
@@ -104,15 +121,26 @@ class GuiSmokeTests(unittest.TestCase):
 
         from dedupe.gui.main_window import MainWindow
         from dedupe.transcode.models import MediaInfo, StreamInfo
+        from dedupe.transcode.probe import ProbeError
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "episode.mkv"
+            nested = root / "season" / "extras" / "deep"
+            nested.mkdir(parents=True)
+            unreadable_metadata = nested / "legacy.vob"
             source.write_bytes(b"video")
+            unreadable_metadata.write_bytes(b"legacy video")
             info = MediaInfo(source, source.stat().st_size, 25 * 60, "matroska", (StreamInfo(0, "video", "h264", 1280, 720),))
             window = MainWindow()
             window.compression_tab.folder_path.setText(str(root))
-            with patch("dedupe.gui.compression_tab.probe_media", return_value=info):
+
+            def fake_probe(path: Path, _ffprobe: str) -> MediaInfo:
+                if path == unreadable_metadata.resolve():
+                    raise ProbeError("metadata test failure")
+                return info
+
+            with patch("dedupe.gui.compression_tab.probe_media", side_effect=fake_probe):
                 window.compression_tab._load_folder()
                 event_loop = QEventLoop()
                 poll = QTimer()
@@ -130,11 +158,19 @@ class GuiSmokeTests(unittest.TestCase):
                 timeout.stop()
 
             try:
-                self.assertEqual(window.compression_tab.table.rowCount(), 1)
+                self.assertEqual(window.compression_tab.table.rowCount(), 2)
+                self.assertTrue(
+                    any(
+                        window.compression_tab.table.item(row, 6).toolTip()
+                        for row in range(window.compression_tab.table.rowCount())
+                    )
+                )
                 window.compression_tab._select_matching()
-                self.assertEqual(
-                    window.compression_tab.table.item(0, 0).checkState(),
-                    Qt.CheckState.Checked,
+                self.assertTrue(
+                    all(
+                        window.compression_tab.table.item(row, 0).checkState() == Qt.CheckState.Checked
+                        for row in range(window.compression_tab.table.rowCount())
+                    )
                 )
                 self.assertTrue(window.compression_tab.queue_button.isEnabled())
             finally:
