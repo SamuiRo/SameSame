@@ -1,6 +1,6 @@
 # Project Status and Roadmap
 
-Last updated: 2026-06-25
+Last updated: 2026-06-27
 
 This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
@@ -39,6 +39,8 @@ Implemented:
 - automatic migration of older cache databases with image/audio columns.
 
 The program is report-only. It does not move, merge, rename, or delete files.
+There is no desktop interface or transcoding command in version 1.5.0. Those
+features are planned in `docs/ROADMAP.md`.
 
 ## Supported Behavior
 
@@ -116,33 +118,40 @@ in this session uses the absolute executable paths.
   root through which it is discovered.
 - Name-only matches remain hints and are not deletion evidence.
 - There is no automatic deletion or duplicate-resolution workflow.
+- There is no desktop UI; the current interface is the `samesame` CLI and its
+  HTML/JSON reports.
+- Anime encoding presets are specified for future work, but no transcoding
+  module or `samesame-transcode` command exists yet.
 
-## Recommended Next Work
+## Planned Product Work
 
-Suggested order:
+The detailed implementation plan, safety rules, complexity estimates, and
+acceptance criteria are in `docs/ROADMAP.md`. The planned order is:
 
-1. Add labeled pairs from representative real collections using
-   `docs/threshold-manifest.example.json`, especially hard video negatives and
-   low-texture video variants.
-2. Add threshold-safe candidate blocking if large audio duration buckets become
-   a measured performance problem.
-3. Add threshold-safe candidate blocking for sequence-aligned video
-   fingerprints if large duration buckets become a measured performance issue.
-4. Continue improving low-confidence alternate-cut review hints without
-   weakening content-backed matching.
-5. Consider optional video segment/containment matching for single episodes
-   inside compilations as a future, separately enabled feature.
-6. Improve image robustness for rotation/cropping only if real collections
-   demonstrate the need.
-7. Consider report UX improvements such as thumbnails, media metadata, cluster
-   summaries, and explicit review decisions.
+1. Extract reusable scan services with structured progress and cancellation.
+2. Add a read-only PySide6 desktop interface for scans and side-by-side review.
+3. Add safe quarantine/recycle actions with preflight checks and an operation
+   journal. Permanent deletion is not part of the initial implementation.
+4. Add a separate transcoding module and `samesame-transcode` command using the
+   four presets in `docs/ANIME_ENCODING_PRESETS.md`.
+5. Integrate a validated transcoding queue into the desktop interface.
+
+Ongoing matching work remains evidence-driven:
+
+- add representative labeled pairs, especially hard negatives and low-texture
+  video variants;
+- add video/audio candidate blocking only if real performance measurements
+  justify it;
+- improve alternate-cut hints without weakening content-backed matching;
+- keep episode-in-compilation segment matching and crop/rotation-resistant
+  image matching as separately scoped future features.
 
 ## Working Tree Handoff
 
 Threshold benchmarking was committed in `da9d33b`. At the time of this update,
 versioned sequence-aligned video matching, contextual name hints, version 1.5.0
-metadata, documentation, and tests are uncommitted. A new session should begin
-with:
+metadata, the desktop/transcoding roadmap, documentation, and tests are
+uncommitted. A new session should begin with:
 
 ```powershell
 git status --short
@@ -156,7 +165,8 @@ video-alignment and contextual-name change when ready.
 ## Suggested Prompt for a New Chat
 
 ```text
-Read README.md, docs/USAGE.md, docs/CONFIG.md, and docs/STATUS.md.
+Read README.md, docs/USAGE.md, docs/CONFIG.md, docs/STATUS.md,
+docs/ROADMAP.md, and docs/ANIME_ENCODING_PRESETS.md.
 Preserve the current uncommitted working-tree changes. Verify the test suite,
-then continue from the "Recommended Next Work" section in docs/STATUS.md.
+then continue from the planned release sequence in docs/ROADMAP.md.
 ```

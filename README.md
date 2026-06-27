@@ -1,151 +1,220 @@
 # SameSame
 
-SameSame is a Python CLI tool for finding duplicate media files across multiple
-folders. It is built for large media collections where the same video, image,
-or audio recording may exist under different filenames, encodes, sizes,
-formats, or folder structures.
+SameSame `1.5.0` is a command-line tool for finding duplicate and similar
+media files. It scans one or more folder trees recursively and writes reports
+for manual review.
 
-It detects:
+The current release is report-only: it never moves, renames, compresses, or
+deletes media. A desktop review interface, safe file actions, and an anime
+transcoding module are planned but are not implemented yet.
 
-- exact byte-identical duplicates by partial and full hashing;
-- similar video content using versioned 15-frame fingerprints, sequence
-  alignment, and alternate-cut duration gating;
-- similar images after resize, recompression, or format conversion by perceptual fingerprints;
-- similar audio across common encodes using ffmpeg Chromaprint fingerprints;
-- overlapping folders by canonical cluster IDs;
-- low-confidence name-only hints using Anthropic, LM Studio, or local heuristics.
+## What SameSame Finds
+
+- exact byte-identical files, confirmed by full hashes;
+- similar videos across container, resolution, bitrate, and ordinary cut
+  differences;
+- similar images across resize, recompression, and common format changes;
+- similar audio across codec, bitrate, container, and moderate volume changes;
+- related folder trees based on their canonical media clusters;
+- lower-confidence name hints for files that deserve manual inspection.
+
+Exact, video, image, and audio results are content-backed. Name-only results
+are hints and must not be treated as deletion evidence.
 
 ## Requirements
 
-- Python 3.11+
-- Pillow for image fingerprinting (installed automatically)
-- `ffmpeg` and `ffprobe` for video and audio fingerprinting
-- Optional `ANTHROPIC_API_KEY` for Claude title normalization
-- Optional LM Studio local server for private/local title normalization
+- Python 3.11 or newer;
+- `ffmpeg` and `ffprobe` for video and audio matching;
+- optional Anthropic API access or LM Studio for title normalization.
+
+Pillow and the other Python dependencies are installed with SameSame.
 
 ## Install
+
+From the project directory in PowerShell:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e .
+python -m pip install -e .
 ```
 
-After installation:
+Verify the commands:
 
 ```powershell
 samesame --help
+ffmpeg -version
+ffprobe -version
 ```
 
-You can also run directly from the repository:
-
-```powershell
-python dedupe.py --help
-```
-
-## ffmpeg On Windows
+If FFmpeg is missing on Windows, install a build that provides both commands,
+then restart the terminal. For example:
 
 ```powershell
 winget install Gyan.FFmpeg
 ```
 
-Restart the terminal, then verify:
+If PowerShell blocks virtual-environment activation, the executable can be
+called directly:
 
 ```powershell
-ffmpeg -version
-ffprobe -version
+.\.venv\Scripts\samesame.exe --help
 ```
 
-If ffmpeg is not installed yet, run with `--skip-video --skip-audio`. Exact
-hashing, similar image detection, name hints, and folder comparison remain enabled.
+## First Scan
 
-## Quick Start
+The simplest private/local scan uses built-in name heuristics and does not call
+an AI service:
 
 ```powershell
-samesame --folders "D:\Anime\A" "D:\Anime\B" --output report.html --json-output report.json
+samesame --folders "D:\Anime" --name-provider none
 ```
 
-Pass one folder or several folders. SameSame scans each folder recursively,
-including all nested subfolders, and compares files both within and across them.
-With one input folder, file-level duplicates are still found; folder-pair
-comparison naturally requires at least two input roots.
-
-SameSame is report-only: it does not move, merge, rename, or delete files.
-Content clusters exist only in the generated reports.
-
-Use a config file:
+To compare several collection roots:
 
 ```powershell
-samesame --config docs/samesame.example.json
+samesame --folders "D:\Anime\Collection A" "E:\Anime\Collection B" --name-provider none
 ```
 
-Override any config value from CLI:
+One root finds duplicates anywhere below that root. Several roots additionally
+produce folder-pair similarity. Every supplied root is scanned recursively.
+
+By default the command writes these files in the current directory:
+
+- `report.html`: expandable report intended for manual review;
+- `report.json`: structured report for scripts and other tools;
+- `.dedupe_cache.sqlite3`: reusable fingerprint cache.
+
+The first media scan can take time because hashes and fingerprints must be
+created. Later runs reuse the cache when files have not changed.
+
+## Recommended Config Workflow
+
+Copy the example instead of typing every option repeatedly:
 
 ```powershell
-samesame --config samesame.json --name-provider lmstudio --no-skip-video --video-threshold 94
+Copy-Item docs\samesame.example.json samesame.json
 ```
 
-Refresh only one cache layer when needed:
+Edit at least the `folders` list, then run:
 
 ```powershell
-samesame --config samesame.json --refresh-names
+samesame --config samesame.json
+```
+
+The example writes its reports under `reports/` and its cache under `.cache/`.
+Config values can be overridden for one run:
+
+```powershell
+samesame --config samesame.json --video-threshold 88 --log-level DEBUG
+```
+
+Configuration precedence is: built-in defaults, config file, then CLI flags.
+See [Configuration](docs/CONFIG.md) for every key.
+
+## If FFmpeg Is Not in PATH
+
+Pass the executable paths explicitly:
+
+```powershell
+samesame --folders "D:\Anime" `
+  --ffmpeg "C:\ffmpeg\bin\ffmpeg.exe" `
+  --ffprobe "C:\ffmpeg\bin\ffprobe.exe" `
+  --name-provider none
+```
+
+Without FFmpeg, exact hashes, image matching, and name hints can still run:
+
+```powershell
+samesame --folders "D:\Media" --skip-video --skip-audio --name-provider none
+```
+
+## Reviewing Results Safely
+
+Use the report sections in this order:
+
+1. **Exact duplicates** have identical full hashes and are the strongest
+   candidates for manual cleanup.
+2. **Video, image, and audio matches** are content-backed, but should still be
+   compared before changing files because alternate editions may contain
+   different tracks, subtitles, credits, or metadata.
+3. **Folder matches** summarize overlap between supplied collection roots.
+4. **Name hints** are review leads only. Similar names or episode numbers do
+   not prove identical content.
+
+SameSame deliberately rejects an individual episode as a content duplicate of
+a much longer compilation. Segment matching inside compilations is not part of
+the current release.
+
+## Common Commands
+
+Refresh one cache layer after changing matching logic or troubleshooting stale
+results:
+
+```powershell
 samesame --config samesame.json --refresh-hashes
 samesame --config samesame.json --refresh-video
 samesame --config samesame.json --refresh-images
 samesame --config samesame.json --refresh-audio
+samesame --config samesame.json --refresh-names
 ```
 
-Inspect the cache without scanning folders:
+Inspect cache statistics without scanning:
 
 ```powershell
-samesame --inspect-cache --cache .dedupe_cache.sqlite3
+samesame --inspect-cache --cache .cache\samesame.sqlite3
 ```
 
-Benchmark matching thresholds:
-
-```powershell
-samesame-benchmark --ffmpeg ffmpeg --ffprobe ffprobe --output threshold-benchmark.json
-```
-
-## Name Providers
-
-Anthropic:
+Use Anthropic title normalization:
 
 ```powershell
 $env:ANTHROPIC_API_KEY = "your-key"
-samesame --folders "D:\Anime\A" "D:\Anime\B" --name-provider anthropic
+samesame --config samesame.json --name-provider anthropic
 ```
 
-LM Studio:
+Use a running LM Studio server:
 
 ```powershell
-samesame --folders "D:\Anime\A" "D:\Anime\B" --name-provider lmstudio --lmstudio-url http://localhost:1234/v1 --lmstudio-model local-model
+samesame --config samesame.json `
+  --name-provider lmstudio `
+  --lmstudio-url http://localhost:1234/v1 `
+  --lmstudio-model local-model
 ```
 
-Local heuristics only:
+Measure matching thresholds with a labeled manifest:
 
 ```powershell
-samesame --folders "D:\Anime\A" "D:\Anime\B" --name-provider none
+samesame-benchmark `
+  --manifest docs\threshold-manifest.example.json `
+  --ffmpeg ffmpeg `
+  --ffprobe ffprobe `
+  --output threshold-results.json
 ```
 
-## Output
+## Current and Planned Interfaces
 
-SameSame writes:
+Available now:
 
-- `report.html`: human-readable report with expandable sections;
-- `report.json`: machine-readable report for automation;
-- `.dedupe_cache.sqlite3`: reusable cache for hashes, video/image/audio fingerprints, and names.
+- `samesame`: duplicate scanner and HTML/JSON report generator;
+- `samesame-benchmark`: threshold benchmark utility.
 
-Name-only matches are intentionally not treated as safe deletion candidates.
-They are hints unless confirmed by exact hashes, video fingerprints, image
-fingerprints, or audio fingerprints.
-Folder reports include both content-backed similarity and broader name-assisted
-similarity.
+Planned, not available in `1.5.0`:
+
+- a PySide6 desktop interface for scanning and side-by-side review;
+- safe quarantine/recycle-bin actions with an operation journal;
+- a separate transcoding engine and queue;
+- anime compression presets using `libx265`, `hevc_nvenc`, and `av1_nvenc`.
+
+The implementation order, safety requirements, and complexity estimates are in
+the [Development roadmap](docs/ROADMAP.md). The exact initial encoding presets
+are specified in [Anime encoding presets](docs/ANIME_ENCODING_PRESETS.md).
 
 ## Documentation
 
 - [Usage guide](docs/USAGE.md)
 - [Configuration reference](docs/CONFIG.md)
 - [Threshold benchmarking](docs/THRESHOLDS.md)
+- [Development roadmap](docs/ROADMAP.md)
+- [Anime encoding preset specification](docs/ANIME_ENCODING_PRESETS.md)
 - [Example config](docs/samesame.example.json)
-- [Project status and roadmap](docs/STATUS.md)
+- [Project status and handoff](docs/STATUS.md)

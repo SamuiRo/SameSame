@@ -15,7 +15,7 @@
     "name": 92
   },
   "names": {
-    "name_provider": "lmstudio",
+    "name_provider": "none",
     "lmstudio_url": "http://localhost:1234/v1",
     "lmstudio_model": "local-model"
   },

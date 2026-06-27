@@ -1,5 +1,9 @@
 # Usage Guide
 
+This guide describes SameSame `1.5.0`. The current application is a
+report-only CLI: there is no desktop interface, transcoding command, or file
+deletion workflow yet. Planned features are documented in `docs/ROADMAP.md`.
+
 SameSame finds duplicate media on six levels:
 
 1. Exact byte duplicates, confirmed by full file hash.
@@ -63,13 +67,13 @@ Image fingerprinting does not require ffmpeg and remains enabled with
 Scan one folder recursively:
 
 ```powershell
-samesame --folders "D:\Media" --skip-video
+samesame --folders "D:\Media" --name-provider none
 ```
 
 Scan and compare several folder trees:
 
 ```powershell
-samesame --folders "D:\Anime\A" "D:\Anime\B" --output report.html --json-output report.json
+samesame --folders "D:\Anime\A" "D:\Anime\B" --name-provider none --output report.html --json-output report.json
 ```
 
 All supported files below each input root are scanned recursively. Duplicate
@@ -92,6 +96,16 @@ Relative output paths are written to the current working directory. Use
 SameSame never moves, merges, renames, or deletes media. A content cluster is
 only a logical group in the HTML/JSON report. Every report entry keeps the
 original full paths so the files remain easy to locate.
+
+For repeated scans, copy and edit the example config:
+
+```powershell
+Copy-Item docs\samesame.example.json samesame.json
+samesame --config samesame.json
+```
+
+At minimum, replace the example `folders` values. The example uses local name
+heuristics and therefore works without Anthropic or LM Studio.
 
 ## Supported Media
 
@@ -198,3 +212,11 @@ to count as shared. Both are Jaccard similarity: intersection divided by union.
 Name hints are intentionally low confidence. They are useful for sorting and
 review, but should not be treated as deletion proof unless confirmed by exact
 hashes, video fingerprints, image fingerprints, or audio fingerprints.
+
+## Planned Desktop and Transcoding Features
+
+The future desktop interface will provide side-by-side review and safe
+quarantine/recycle actions. A separate transcoding module will implement the
+presets in `docs/ANIME_ENCODING_PRESETS.md`. These are roadmap items, not
+commands available in version 1.5.0. See `docs/ROADMAP.md` for scope, order,
+safety requirements, and complexity estimates.
