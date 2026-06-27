@@ -234,6 +234,12 @@ exact, video, image, and audio results can also quarantine or recycle one
 explicitly selected file. Exact groups additionally support a confirmed batch
 quarantine that preserves the selected keeper.
 
+The comparison panel also provides a checklist of every file in the current
+content-backed result. Use **Check all except current** or check files manually,
+then choose **Quarantine checked** or **Recycle checked**. Every checked file is
+individually identity-verified and journaled. Selecting every file produces an
+additional warning because no copy from that review result will remain in place.
+
 Before every mutation, SameSame verifies the scan path, size, modification
 time, and a newly calculated SHA-256 identity, then verifies quarantined output
 again. Quarantine preserves the collection-relative path, handles name

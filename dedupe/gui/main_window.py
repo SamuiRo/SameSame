@@ -75,6 +75,7 @@ class MainWindow(QMainWindow):
         self.comparison = ComparisonWidget(self)
         self.comparison.action_requested.connect(self._request_action)
         self.comparison.batch_quarantine_requested.connect(self._request_batch_quarantine)
+        self.comparison.batch_action_requested.connect(self._request_batch_action)
         self.comparison.transcode_requested.connect(self._open_transcode)
         root_splitter.addWidget(self.comparison)
         root_splitter.setStretchFactor(0, 0)
@@ -548,23 +549,69 @@ class MainWindow(QMainWindow):
         jobs.extend(ActionJob(record, FileAction.QUARANTINE, group_id) for record in records)
         self._start_action_worker(jobs)
 
-    def _confirm_action(self, action: FileAction, paths: list[Path], *, keep_path: str | None = None) -> bool:
+    def _request_batch_action(self, paths_value: object, action_value: object) -> None:
+        if self._scan_thread is not None or self._action_thread is not None or self._transcode_is_busy():
+            return
+        item = self._current_review_item()
+        if (
+            item is None
+            or item.category not in {"exact", "video", "image", "audio"}
+            or not isinstance(paths_value, tuple)
+            or not isinstance(action_value, FileAction)
+            or action_value not in {FileAction.QUARANTINE, FileAction.RECYCLE}
+        ):
+            return
+        allowed_paths = set(item.paths)
+        records: list[FileRecord] = []
+        seen: set[str] = set()
+        for path_value in paths_value:
+            path_text = str(path_value)
+            if path_text not in allowed_paths or path_text in seen:
+                continue
+            record = self._record_for_path(path_text)
+            if record is not None:
+                records.append(record)
+                seen.add(path_text)
+        if not records:
+            QMessageBox.warning(self, "No available files", "None of the checked files are still available.")
+            return
+        all_selected = len(seen) == len(set(item.paths))
+        if not self._confirm_action(
+            action_value,
+            [record.path for record in records],
+            all_selected=all_selected,
+        ):
+            return
+        group_id = self._group_id(item)
+        self._start_action_worker([ActionJob(record, action_value, group_id) for record in records])
+
+    def _confirm_action(
+        self,
+        action: FileAction,
+        paths: list[Path],
+        *,
+        keep_path: str | None = None,
+        all_selected: bool = False,
+    ) -> bool:
         if action in {FileAction.KEEP, FileAction.IGNORE}:
             return True
         path_lines = "\n".join(f"• {path}" for path in paths[:12])
         if len(paths) > 12:
             path_lines += f"\n… and {len(paths) - 12} more"
+        all_warning = "\n\nWARNING: Every file in this review result is selected; no copy will remain here." if all_selected else ""
         if action == FileAction.QUARANTINE:
             keep_line = f"\nKept in place:\n{keep_path}\n" if keep_path else ""
             text = (
                 f"Move {len(paths)} file(s) to quarantine?\n{keep_line}\n{path_lines}\n\n"
                 "Every file will be revalidated against its scan identity and the operation will be journaled."
+                f"{all_warning}"
             )
             title = "Confirm quarantine"
         else:
             text = (
                 f"Send {len(paths)} file(s) to the operating-system recycle bin?\n\n{path_lines}\n\n"
                 "Every file will be revalidated. SameSame cannot automatically restore recycle-bin items."
+                f"{all_warning}"
             )
             title = "Confirm recycle"
         answer = QMessageBox.question(

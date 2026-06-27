@@ -11,7 +11,10 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QHBoxLayout,
+    QGroupBox,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
     QSlider,
@@ -305,6 +308,7 @@ class MediaPane(QWidget):
 class ComparisonWidget(QWidget):
     action_requested = Signal(object, str)
     batch_quarantine_requested = Signal(object, str)
+    batch_action_requested = Signal(object, object)
     transcode_requested = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -356,6 +360,31 @@ class ComparisonWidget(QWidget):
         file_actions.addWidget(self.batch_quarantine_button)
         file_actions.addWidget(self.transcode_button)
         file_actions.addStretch(1)
+
+        batch_group = QGroupBox("Batch cleanup — check files you do not want")
+        batch_layout = QVBoxLayout(batch_group)
+        self.batch_file_list = QListWidget()
+        self.batch_file_list.setMaximumHeight(105)
+        self.batch_file_list.itemChanged.connect(self._update_action_controls)
+        batch_layout.addWidget(self.batch_file_list)
+        batch_controls = QHBoxLayout()
+        self.check_others_button = QPushButton("Check all except current")
+        self.clear_checked_button = QPushButton("Clear checks")
+        self.batch_quarantine_checked_button = QPushButton("Quarantine checked…")
+        self.batch_recycle_checked_button = QPushButton("Recycle checked…")
+        self.batch_recycle_checked_button.setStyleSheet("color: #c62828; font-weight: 600")
+        self.check_others_button.clicked.connect(self._check_all_except_current)
+        self.clear_checked_button.clicked.connect(self._clear_checked)
+        self.batch_quarantine_checked_button.clicked.connect(
+            lambda: self._emit_batch_action(FileAction.QUARANTINE)
+        )
+        self.batch_recycle_checked_button.clicked.connect(lambda: self._emit_batch_action(FileAction.RECYCLE))
+        batch_controls.addWidget(self.check_others_button)
+        batch_controls.addWidget(self.clear_checked_button)
+        batch_controls.addStretch(1)
+        batch_controls.addWidget(self.batch_quarantine_checked_button)
+        batch_controls.addWidget(self.batch_recycle_checked_button)
+        batch_layout.addLayout(batch_controls)
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self.left)
         splitter.addWidget(self.right)
@@ -364,6 +393,7 @@ class ComparisonWidget(QWidget):
         layout.addLayout(header)
         layout.addLayout(review_actions)
         layout.addLayout(file_actions)
+        layout.addWidget(batch_group)
         layout.addWidget(splitter, 1)
         self._syncing = False
         self._item: ReviewItem | None = None
@@ -380,6 +410,7 @@ class ComparisonWidget(QWidget):
         self.decision_label.setText("No review decision")
         self.left.set_candidates(item.paths, 0)
         self.right.set_candidates(item.paths, 1)
+        self._populate_batch_files(item.paths)
         self._update_action_controls()
 
     def clear(self) -> None:
@@ -388,6 +419,7 @@ class ComparisonWidget(QWidget):
         self.decision_label.setText("No review decision")
         self.left.clear()
         self.right.clear()
+        self.batch_file_list.clear()
         self._update_action_controls()
 
     def set_decision(self, message: str) -> None:
@@ -445,6 +477,57 @@ class ComparisonWidget(QWidget):
                 and any(is_video_path(Path(path)) and Path(path).is_file() for path in self._item.paths)
             )
         )
+        checked_paths = self._checked_batch_paths()
+        can_batch_mutate = bool(
+            content_backed and self._actions_enabled and any(Path(path).is_file() for path in checked_paths)
+        )
+        self.batch_file_list.setEnabled(bool(content_backed and self._actions_enabled))
+        self.check_others_button.setEnabled(bool(content_backed and self._actions_enabled))
+        self.clear_checked_button.setEnabled(bool(checked_paths and self._actions_enabled))
+        self.batch_quarantine_checked_button.setEnabled(can_batch_mutate)
+        self.batch_recycle_checked_button.setEnabled(can_batch_mutate)
+
+    def _populate_batch_files(self, paths: tuple[str, ...]) -> None:
+        self.batch_file_list.blockSignals(True)
+        self.batch_file_list.clear()
+        for path_text in paths:
+            path = Path(path_text)
+            item = QListWidgetItem(path.name or str(path))
+            item.setToolTip(str(path))
+            item.setData(Qt.ItemDataRole.UserRole, str(path))
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
+            self.batch_file_list.addItem(item)
+        self.batch_file_list.blockSignals(False)
+
+    def _checked_batch_paths(self) -> tuple[str, ...]:
+        return tuple(
+            str(item.data(Qt.ItemDataRole.UserRole))
+            for index in range(self.batch_file_list.count())
+            for item in [self.batch_file_list.item(index)]
+            if item.checkState() == Qt.CheckState.Checked
+        )
+
+    def _check_all_except_current(self) -> None:
+        current = self._selected_path()
+        self.batch_file_list.blockSignals(True)
+        try:
+            for index in range(self.batch_file_list.count()):
+                item = self.batch_file_list.item(index)
+                path = str(item.data(Qt.ItemDataRole.UserRole))
+                item.setCheckState(Qt.CheckState.Unchecked if path == current else Qt.CheckState.Checked)
+        finally:
+            self.batch_file_list.blockSignals(False)
+        self._update_action_controls()
+
+    def _clear_checked(self) -> None:
+        self.batch_file_list.blockSignals(True)
+        try:
+            for index in range(self.batch_file_list.count()):
+                self.batch_file_list.item(index).setCheckState(Qt.CheckState.Unchecked)
+        finally:
+            self.batch_file_list.blockSignals(False)
+        self._update_action_controls()
 
     def _emit_action(self, action: FileAction) -> None:
         path = self._selected_path()
@@ -454,6 +537,11 @@ class ComparisonWidget(QWidget):
     def _emit_batch_quarantine(self) -> None:
         if self._item is not None:
             self.batch_quarantine_requested.emit(self._item.paths, self._selected_path())
+
+    def _emit_batch_action(self, action: FileAction) -> None:
+        paths = self._checked_batch_paths()
+        if self._item is not None and paths:
+            self.batch_action_requested.emit(paths, action)
 
     def _emit_transcode(self) -> None:
         if self._item is not None:

@@ -79,6 +79,8 @@ Implemented:
   broader video extensions, and visible rows even when metadata probing fails;
 - optional red auto-recycle control that acts only after output validation and
   source SHA-256 identity verification, with explicit confirmation and journaling.
+- duplicate-review batch cleanup checklist with quick select-all-except-current,
+  quarantine/recycle actions, all-files warnings, per-file identity checks, and journaling.
 
 The scanner CLI remains report-only. The desktop interface modifies a source only
 after an explicit quarantine or recycle confirmation and a successful identity

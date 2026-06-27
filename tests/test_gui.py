@@ -205,6 +205,8 @@ class GuiSmokeTests(unittest.TestCase):
                 self.assertFalse(window.comparison.quarantine_button.isEnabled())
                 self.assertFalse(window.comparison.recycle_button.isEnabled())
                 self.assertFalse(window.comparison.batch_quarantine_button.isEnabled())
+                self.assertFalse(window.comparison.batch_quarantine_checked_button.isEnabled())
+                self.assertFalse(window.comparison.batch_recycle_checked_button.isEnabled())
             finally:
                 window.close()
                 self.application.processEvents()
@@ -423,9 +425,9 @@ class GuiSmokeTests(unittest.TestCase):
 
     def test_background_quarantine_and_restore_update_the_journal(self) -> None:
         from PIL import Image
-        from PySide6.QtCore import QEventLoop, QTimer
+        from PySide6.QtCore import QEventLoop, QTimer, Qt
 
-        from dedupe.actions import FileActionService, OperationStatus
+        from dedupe.actions import FileAction, FileActionService, OperationStatus
         from dedupe.gui.journal_dialog import JournalDialog
         from dedupe.gui.main_window import MainWindow
         from dedupe.metadata import basic_media_metadata
@@ -469,14 +471,20 @@ class GuiSmokeTests(unittest.TestCase):
             window._scan_completed(result)
 
             window._confirm_action = lambda *_args, **_kwargs: True  # type: ignore[method-assign]
-            window._request_batch_quarantine(paths, str(left))
+            self.assertEqual(window.comparison.batch_file_list.count(), 3)
+            for index in range(window.comparison.batch_file_list.count()):
+                checkbox = window.comparison.batch_file_list.item(index)
+                if checkbox.data(Qt.ItemDataRole.UserRole) in {str(right), str(third)}:
+                    checkbox.setCheckState(Qt.CheckState.Checked)
+            self.assertTrue(window.comparison.batch_quarantine_checked_button.isEnabled())
+            window._request_batch_action((str(right), str(third)), FileAction.QUARANTINE)
             wait_for_action(window)
 
             self.assertFalse(right.exists())
             self.assertFalse(third.exists())
             self.assertTrue(left.exists())
             operations = FileActionService(journal_path, quarantine_root).recent_operations()
-            self.assertEqual(len(operations), 3)
+            self.assertEqual(len(operations), 2)
             self.assertEqual(operations[0].status, OperationStatus.COMPLETED)
             dialog = JournalDialog(journal_path, quarantine_root)
             dialog.table.selectRow(0)
@@ -489,7 +497,7 @@ class GuiSmokeTests(unittest.TestCase):
             try:
                 self.assertTrue(operations[0].source.exists())
                 self.assertEqual(operations[0].source.read_bytes(), left.read_bytes())
-                self.assertEqual(len(FileActionService(journal_path, quarantine_root).recent_operations()), 4)
+                self.assertEqual(len(FileActionService(journal_path, quarantine_root).recent_operations()), 3)
             finally:
                 dialog.close()
                 window.close()

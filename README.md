@@ -163,6 +163,8 @@ the current release.
 Desktop file actions are deliberately conservative:
 
 - quarantine is the preferred default and can be restored from the operation journal;
+- duplicate review includes a per-result checklist for quarantining or recycling
+  several explicitly checked content-backed files in one confirmed batch;
 - every quarantine/recycle action rechecks path, size, modification time, and
   a full SHA-256 identity before acting;
 - exact groups can quarantine all copies except the explicitly selected keeper;
