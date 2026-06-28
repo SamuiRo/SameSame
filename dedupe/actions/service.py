@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+import time
 import uuid
 from dataclasses import replace
 from pathlib import Path
@@ -9,8 +10,19 @@ from typing import Callable
 
 from ..models import FileRecord
 from .journal import OperationJournal
-from .models import ActionOutcome, FileAction, OperationRecord, OperationStatus, PreparedAction
+from .models import ActionOutcome, FileAction, FileIdentity, OperationRecord, OperationStatus, PreparedAction
 from .preflight import PreflightError, prepare_identity, verify_content, verify_identity
+
+
+def _retry_sharing_violation(operation: Callable[[], None], attempts: int = 8, delay: float = 0.25) -> None:
+    for attempt in range(attempts):
+        try:
+            operation()
+            return
+        except OSError as exc:
+            if getattr(exc, "winerror", None) != 32 or attempt + 1 >= attempts:
+                raise
+            time.sleep(delay)
 
 
 class FileActionService:
@@ -20,10 +32,12 @@ class FileActionService:
         quarantine_root: Path,
         *,
         recycle: Callable[[str], None] | None = None,
+        allow_unsafe_recycle: bool = False,
     ) -> None:
         self.journal_path = journal_path
         self.quarantine_root = quarantine_root
         self._recycle = recycle
+        self.allow_unsafe_recycle = allow_unsafe_recycle or recycle is not None
 
     def prepare(
         self,
@@ -81,6 +95,63 @@ class FileActionService:
             return outcome
         return self.execute(request)
 
+    def perform_if_matches(
+        self,
+        record: FileRecord,
+        action: FileAction,
+        reference: FileRecord,
+        *,
+        group_id: str | None = None,
+    ) -> ActionOutcome:
+        """Perform a mutation only when source and keeper still have identical SHA-256 content."""
+        request: PreparedAction | None = None
+        try:
+            request = self.prepare(record, action, group_id=group_id)
+            reference_identity = prepare_identity(reference)
+            if request.identity is None:
+                raise PreflightError("Content comparison requires a preflight identity")
+            if (
+                request.identity.size != reference_identity.size
+                or request.identity.hash_algorithm != reference_identity.hash_algorithm
+                or request.identity.hash_value != reference_identity.hash_value
+            ):
+                outcome = ActionOutcome(
+                    request.operation_id,
+                    action,
+                    OperationStatus.SKIPPED,
+                    request.source,
+                    message="Source no longer matches the selected keeper by SHA-256; no file was moved",
+                    group_id=group_id,
+                )
+                with OperationJournal(self.journal_path) as journal:
+                    journal.record_requested(request)
+                    journal.record_outcome(outcome)
+                return outcome
+        except Exception as exc:  # noqa: BLE001 - comparison failures must be journaled without mutating files.
+            request = request or PreparedAction(
+                operation_id=uuid.uuid4().hex,
+                action=action,
+                source=record.path.resolve(),
+                collection_root=record.root.resolve(),
+                identity=None,
+                quarantine_root=self.quarantine_root.resolve() if action == FileAction.QUARANTINE else None,
+                group_id=group_id,
+            )
+            outcome = ActionOutcome(
+                request.operation_id,
+                action,
+                OperationStatus.FAILED,
+                request.source,
+                destination=request.destination,
+                message=f"Cannot compare source with selected keeper: {exc}",
+                group_id=group_id,
+            )
+            with OperationJournal(self.journal_path) as journal:
+                journal.record_requested(request)
+                journal.record_outcome(outcome)
+            return outcome
+        return self.execute(request)
+
     def execute(self, request: PreparedAction) -> ActionOutcome:
         with OperationJournal(self.journal_path) as journal:
             journal.record_requested(request)
@@ -103,8 +174,13 @@ class FileActionService:
                     if destination.exists():
                         destination = self._available_path(destination)
                     destination.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.move(str(request.source), str(destination))
-                    verify_content(destination, request.identity)
+                    _retry_sharing_violation(lambda: shutil.move(str(request.source), str(destination)))
+                    try:
+                        verify_content(destination, request.identity)
+                    except Exception as exc:
+                        rollback = self._rollback_move(destination, request.source, request.identity)
+                        destination = destination if destination.exists() else None
+                        raise RuntimeError(f"Quarantine verification failed: {exc}; {rollback}") from exc
                     outcome = ActionOutcome(
                         request.operation_id,
                         request.action,
@@ -118,6 +194,11 @@ class FileActionService:
                 elif request.action == FileAction.RECYCLE:
                     if request.identity is None:
                         raise PreflightError("Recycle request is missing preflight identity")
+                    if not self.allow_unsafe_recycle:
+                        raise RuntimeError(
+                            "Operating-system recycle is blocked by Safe mode because Windows may permanently "
+                            "delete files when Recycle Bin is disabled or unavailable; use quarantine instead"
+                        )
                     verify_identity(request.source, request.identity)
                     recycle = self._recycle
                     if recycle is None:
@@ -126,7 +207,7 @@ class FileActionService:
                         except ImportError as exc:
                             raise RuntimeError("Recycle support requires Send2Trash; install the GUI extra") from exc
                         recycle = send2trash
-                    recycle(str(request.source))
+                    _retry_sharing_violation(lambda: recycle(str(request.source)))
                     if request.source.exists():
                         raise RuntimeError(f"Recycle integration returned but the source still exists: {request.source}")
                     outcome = ActionOutcome(
@@ -144,8 +225,13 @@ class FileActionService:
                         raise PreflightError(f"Cannot restore because the original path exists: {request.destination}")
                     verify_content(request.source, request.identity)
                     request.destination.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.move(str(request.source), str(request.destination))
-                    verify_content(request.destination, request.identity)
+                    _retry_sharing_violation(lambda: shutil.move(str(request.source), str(request.destination)))
+                    try:
+                        verify_content(request.destination, request.identity)
+                    except Exception as exc:
+                        rollback = self._rollback_move(request.destination, request.source, request.identity)
+                        destination = request.destination if request.destination.exists() else None
+                        raise RuntimeError(f"Restore verification failed: {exc}; {rollback}") from exc
                     destination = request.destination
                     outcome = ActionOutcome(
                         request.operation_id,
@@ -250,3 +336,17 @@ class FileActionService:
             if not candidate.exists():
                 return candidate
         raise FileExistsError(f"Cannot allocate a collision-free quarantine path for {path}")
+
+    @staticmethod
+    def _rollback_move(current: Path, original: Path, identity: FileIdentity) -> str:
+        if original.exists():
+            return "rollback skipped because the original path is occupied"
+        if not current.exists():
+            return "rollback failed because the moved file is unavailable"
+        try:
+            original.parent.mkdir(parents=True, exist_ok=True)
+            _retry_sharing_violation(lambda: shutil.move(str(current), str(original)))
+            verify_content(original, identity)
+            return "source restored to its original location"
+        except Exception as exc:  # noqa: BLE001 - preserve the primary failure while reporting rollback state.
+            return f"rollback failed: {exc}"

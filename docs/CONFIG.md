@@ -9,7 +9,7 @@ SameSame reads settings from three places, in this order:
 CLI flags always win over the config file. This means you can keep a stable
 project config and override only one value for a specific run.
 
-This page documents the scanner configuration available in SameSame `1.6.0`.
+This page documents the scanner configuration available in SameSame `1.6.4`.
 Desktop UI state, quarantine location, review decisions, and operation history
 are managed by the GUI and its journal rather than scanner config keys. Anime
 transcoding settings are not scanner configuration keys; use the independent
@@ -225,15 +225,15 @@ $env:LMSTUDIO_MODEL = "qwen2.5-7b-instruct"
 | `json_output` | `report.json` | Machine-readable JSON report path. |
 | `cache` | `.dedupe_cache.sqlite3` | SQLite cache path. |
 | `extensions` | common video, image, and audio extensions | File extensions to scan; a custom list replaces the defaults. |
-| `video_threshold` | `85` | Minimum sequence-aligned video fingerprint similarity percent. |
-| `image_threshold` | `90` | Minimum perceptual image similarity percent. |
-| `audio_threshold` | `94` | Minimum Chromaprint audio similarity percent. |
-| `folder_threshold` | `50` | Minimum folder Jaccard similarity percent. |
-| `name_threshold` | `92` | Minimum fuzzy name hint similarity percent. |
+| `video_threshold` | `85` | Minimum sequence-aligned video fingerprint similarity percent; finite `0`–`100`. |
+| `image_threshold` | `90` | Minimum perceptual image similarity percent; finite `0`–`100`. |
+| `audio_threshold` | `94` | Minimum Chromaprint audio similarity percent; finite `0`–`100`. |
+| `folder_threshold` | `50` | Minimum folder Jaccard similarity percent; finite `0`–`100`. |
+| `name_threshold` | `92` | Minimum fuzzy name hint similarity percent; finite `0`–`100`. |
 | `name_provider` | `auto` | `auto`, `anthropic`, `lmstudio`, or `none`. |
 | `lmstudio_url` | `http://localhost:1234/v1` | LM Studio API base URL. |
 | `lmstudio_model` | `local-model` | Model name sent to LM Studio. |
-| `workers` | `4` | Worker threads for IO-heavy operations. |
+| `workers` | `4` | Worker threads for IO-heavy operations; accepted range `1`–`64`. |
 | `skip_video` | `false` | Skip ffmpeg/ffprobe video fingerprints. |
 | `skip_images` | `false` | Skip perceptual image fingerprints. |
 | `skip_audio` | `false` | Skip Chromaprint audio fingerprints. |

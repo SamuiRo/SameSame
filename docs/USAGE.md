@@ -1,6 +1,6 @@
 # Usage Guide
 
-This guide describes SameSame `1.6.1`. The current application provides a
+This guide describes SameSame `1.6.4`. The current application provides a
 report-only CLI and an optional desktop review interface with explicit,
 journaled quarantine/recycle actions and a transcoding queue. There is no
 permanent-delete command.
@@ -41,7 +41,7 @@ The desktop interface supports multiple collection roots, background scans,
 progress and cancellation, filters for every report category, side-by-side
 image/video/audio review, synchronized video seeking, detailed stream metadata,
 and HTML/JSON report export. Source media is modified only after an explicit,
-confirmed quarantine or recycle action.
+confirmed quarantine action or an explicitly enabled unsafe recycle action.
 
 You can also run without installing:
 
@@ -240,12 +240,17 @@ then choose **Quarantine checked** or **Recycle checked**. Every checked file is
 individually identity-verified and journaled. Selecting every file produces an
 additional warning because no copy from that review result will remain in place.
 
+Safe mode is the default. In Safe mode, **Recycle** offers to use SameSame
+Quarantine instead. The red **Allow OS Recycle Bin** setting is required before
+calling the operating-system recycle integration. Windows Recycle Bin properties
+can specify immediate deletion, so enabling this setting may be irreversible.
+
 Before every mutation, SameSame verifies the scan path, size, modification
 time, and a newly calculated SHA-256 identity, then verifies quarantined output
 again. Quarantine preserves the collection-relative path, handles name
-collisions, and can be restored from the operation journal. Recycle uses the
-operating-system recycle bin; SameSame does not promise automatic restore for
-it. Folder and name-only hints never enable file mutation. Permanent deletion
+collisions, and can be restored from the operation journal. Unsafe recycle uses
+the operating-system recycle integration; SameSame cannot verify or restore its
+result. Folder and name-only hints never enable file mutation. Permanent deletion
 is not implemented.
 
 ## Independent Transcoding
@@ -257,12 +262,10 @@ offers the four anime presets from `ANIME_ENCODING_PRESETS.md` plus custom
 libx265, AV1 NVENC, and HEVC NVENC settings. An optional output directory can
 be selected before opening the queue.
 
-The red **Move originals to Recycle Bin** checkbox is optional and requires a
-separate confirmation when the queue starts. SameSame first validates the
-encoded output, then verifies the original against its recorded size,
-modification time, and SHA-256 identity before sending it to the operating-system
-Recycle Bin and recording the action in the operation journal. Recycle is not
-automatically restorable by SameSame.
+The cleanup checkbox uses reversible SameSame Quarantine by default. SameSame
+first validates the encoded output, then verifies the original against its
+recorded size, modification time, and SHA-256 identity before cleanup. It uses
+OS Recycle only when the separate unsafe setting is enabled.
 
 Alternatively, select a review result containing videos and choose
 **Transcode videos**. The shared queue dialog provides preset selection, encoder/GPU

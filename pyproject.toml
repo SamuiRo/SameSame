@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "samesame"
-version = "1.6.4"
+version = "1.6.5"
 description = "CLI and optional desktop tool for finding exact and similar media files."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -41,7 +41,8 @@ gui = [
 dev = [
   "build>=1.2.0",
   "pytest>=8.0.0",
-  "ruff>=0.6.0"
+  "ruff>=0.6.0",
+  "setuptools>=77"
 ]
 
 [project.scripts]

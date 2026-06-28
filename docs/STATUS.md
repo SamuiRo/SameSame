@@ -1,6 +1,6 @@
 # Project Status and Roadmap
 
-Last updated: 2026-06-27
+Last updated: 2026-06-28
 
 This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
@@ -77,13 +77,13 @@ Implemented:
   the existing capability checks, source-preserving queue, and output validation.
 - cycle-safe, unlimited-depth folder traversal with linked-directory support,
   broader video extensions, and visible rows even when metadata probing fails;
-- optional red auto-recycle control that acts only after output validation and
-  source SHA-256 identity verification, with explicit confirmation and journaling.
+- optional post-encode cleanup that defaults to reversible quarantine and acts
+  only after output validation and source SHA-256 identity verification;
 - duplicate-review batch cleanup checklist with quick select-all-except-current,
   quarantine/recycle actions, all-files warnings, per-file identity checks, and journaling.
 
 The scanner CLI remains report-only. The desktop interface modifies a source only
-after an explicit quarantine or recycle confirmation and a successful identity
+after an explicit quarantine confirmation, or an unsafe recycle opt-in, and a successful identity
 preflight. There is no permanent-delete action. Encoding always creates and
 validates a new MKV and keeps the original; promotion is a later explicit,
 quarantine-first action.
@@ -100,8 +100,8 @@ quarantine-first action.
   thread-safe token, and request detailed metadata only for selected files.
 - Desktop users can run the optional `samesame-gui` interface without changing
   the CLI-only dependency footprint.
-- Quarantine is the reversible default; recycle delegates to the operating
-  system and is not automatically restorable by SameSame.
+- Quarantine is the reversible default. OS recycle is blocked unless the user
+  explicitly enables the red unsafe option because Windows may delete permanently.
 - Python callers can use `dedupe.transcode.TranscodeQueue`; CLI users can run
   `samesame-transcode` independently of scanning and the desktop interface.
 - Desktop users can queue reviewed videos, inspect capability and validation
@@ -109,9 +109,9 @@ quarantine-first action.
 
 ## Verification Completed
 
-The available suite currently contains 79 unit/integration tests.
+The available suite currently contains 87 unit/integration tests.
 
-- All 79 pass under both `unittest` and pytest in the project-local Python
+- All 87 pass under both `unittest` and pytest in the project-local Python
   3.11.9 virtual environment with all runtime/dev dependencies installed.
 - Service coverage verifies structured events, warnings, failure reporting,
   cooperative cancellation/cache preservation, and review metadata.
@@ -119,7 +119,9 @@ The available suite currently contains 79 unit/integration tests.
   and an end-to-end background scan through the Qt event loop.
 - Action coverage verifies scan-to-preflight failures, pre-action changes,
   SHA-256 quarantine validation, collision allocation, journal persistence,
-  recycle delegation, batch quarantine, and restore through a Qt worker.
+  safe recycle blocking/explicit delegation, Windows sharing-violation retry,
+  exact-batch keeper equality, rollback after failed move verification, batch
+  quarantine, and restore through a Qt worker.
 - Ruff passes with no findings.
 - A real ffmpeg integration test passes with ffmpeg/ffprobe
   `2026-06-15-git-44d082edc8`. It generates a short source video, a resized
@@ -134,7 +136,7 @@ The available suite currently contains 79 unit/integration tests.
   destination conflicts, and automatic source restore after a simulated move failure.
 - Python compilation, JSON config parsing, cache migration, CLI startup, and
   `git diff --check` pass.
-- Package builds produce both the `samesame-1.6.0` source archive and
+- Package builds produce both the `samesame-1.6.4` source archive and
   universal wheel.
 - A recursive CLI test confirms that a resized/recompressed JPEG in a nested
   folder matches its PNG source and appears in HTML/JSON and folder clusters.
@@ -188,8 +190,8 @@ in this session uses the absolute executable paths.
   root through which it is discovered.
 - Name-only matches remain hints and are not deletion evidence.
 - Permanent deletion is intentionally not implemented.
-- Recycle-bin operations depend on operating-system behavior and are not
-  automatically restorable by SameSame; use quarantine when rollback matters.
+- Unsafe recycle operations depend on operating-system behavior and are not
+  automatically restorable. They are blocked by default; use quarantine when rollback matters.
 - Restore is available only while the quarantined file still matches its
   journaled identity and the original path remains free.
 - Hardware presets require compatible NVIDIA hardware and drivers; capability
@@ -216,7 +218,7 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 4 are implemented through release `1.6.0`. The scanner CLI
+Phases 0 through 4 are implemented, and the current package version is `1.6.4`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:
@@ -230,6 +232,9 @@ python -m unittest discover -s tests -v
 Check the working tree before continuing and preserve any user changes that are
 present. Start deferred features only after the service, GUI/action, and full
 FFmpeg/transcode integration suites remain green.
+
+The latest cross-project findings, fixes, verification matrix, and residual
+risks are recorded in `docs/AUDIT.md`.
 
 ## Suggested Prompt for a New Chat
 

@@ -212,6 +212,11 @@ class GuiSmokeTests(unittest.TestCase):
                 self.application.processEvents()
 
     def test_video_review_enables_transcode_queue_action(self) -> None:
+        from unittest.mock import patch
+
+        from PySide6.QtWidgets import QMessageBox
+
+        from dedupe.actions import FileAction
         from dedupe.gui.main_window import MainWindow
         from dedupe.metadata import basic_media_metadata
         from dedupe.models import FileRecord
@@ -235,6 +240,12 @@ class GuiSmokeTests(unittest.TestCase):
 
             try:
                 self.assertTrue(window.comparison.transcode_button.isEnabled())
+                self.assertFalse(window.allow_unsafe_recycle.isChecked())
+                with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+                    self.assertEqual(window._resolve_recycle_action(FileAction.RECYCLE), FileAction.QUARANTINE)
+                window.comparison.release_paths([left])
+                self.application.processEvents()
+                self.assertEqual(window.comparison.left.current_path, "")
             finally:
                 window.close()
                 self.application.processEvents()

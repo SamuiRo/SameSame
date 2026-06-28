@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import sqlite3
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from dedupe import __version__
 from dedupe.cache import Cache
 from dedupe.cli import parse_args
 from dedupe.exact_hash import find_exact_duplicates
@@ -30,6 +32,22 @@ from dedupe.video_fingerprint import (
 
 
 class CoreTests(unittest.TestCase):
+    def test_package_version_matches_project_metadata(self) -> None:
+        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        metadata = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        self.assertEqual(__version__, metadata["project"]["version"])
+
+    def test_cli_rejects_unsafe_numeric_limits(self) -> None:
+        invalid_arguments = (
+            ["--folders", ".", "--video-threshold", "-1"],
+            ["--folders", ".", "--audio-threshold", "nan"],
+            ["--folders", ".", "--workers", "0"],
+            ["--folders", ".", "--workers", "65"],
+        )
+        for arguments in invalid_arguments:
+            with self.subTest(arguments=arguments), self.assertRaises(SystemExit):
+                parse_args(arguments)
+
     def test_fallback_normalize_removes_common_noise(self) -> None:
         result = fallback_normalize("[Group] Show_Name.01.1080p.x264.SUB")
         self.assertEqual(result.core_title, "Show Name")

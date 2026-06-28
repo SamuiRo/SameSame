@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 import sys
 from dataclasses import dataclass
@@ -285,21 +286,42 @@ def parse_args(argv: list[str] | None = None) -> Config:
     if not folders and not merged.get("inspect_cache"):
         raise SystemExit("At least one folder is required. Use --folders or a config file.")
 
+    thresholds: dict[str, float] = {}
+    for key in ("video_threshold", "image_threshold", "audio_threshold", "folder_threshold", "name_threshold"):
+        try:
+            value = float(merged[key])
+        except (TypeError, ValueError) as exc:
+            raise SystemExit(f"{key} must be a number between 0 and 100") from exc
+        if not math.isfinite(value) or not 0.0 <= value <= 100.0:
+            raise SystemExit(f"{key} must be a finite number between 0 and 100")
+        thresholds[key] = value
+
+    try:
+        workers = int(merged["workers"])
+    except (TypeError, ValueError) as exc:
+        raise SystemExit("workers must be an integer between 1 and 64") from exc
+    if not 1 <= workers <= 64:
+        raise SystemExit("workers must be between 1 and 64")
+    if merged["name_provider"] not in {"auto", "anthropic", "lmstudio", "none"}:
+        raise SystemExit("name_provider must be one of: auto, anthropic, lmstudio, none")
+    if merged["log_level"] not in {"DEBUG", "INFO", "WARNING", "ERROR"}:
+        raise SystemExit("log_level must be one of: DEBUG, INFO, WARNING, ERROR")
+
     return Config(
         folders=[Path(folder) for folder in folders or []],
         output=Path(str(merged["output"])),
         json_output=Path(str(merged["json_output"])),
         cache=Path(str(merged["cache"])),
         extensions=normalize_extensions(merged.get("extensions")),
-        video_threshold=float(merged["video_threshold"]),
-        image_threshold=float(merged["image_threshold"]),
-        audio_threshold=float(merged["audio_threshold"]),
-        folder_threshold=float(merged["folder_threshold"]),
-        name_threshold=float(merged["name_threshold"]),
+        video_threshold=thresholds["video_threshold"],
+        image_threshold=thresholds["image_threshold"],
+        audio_threshold=thresholds["audio_threshold"],
+        folder_threshold=thresholds["folder_threshold"],
+        name_threshold=thresholds["name_threshold"],
         name_provider=str(merged["name_provider"]),
         lmstudio_url=str(merged["lmstudio_url"]),
         lmstudio_model=str(merged["lmstudio_model"]),
-        workers=max(1, int(merged["workers"])),
+        workers=workers,
         skip_video=bool(merged["skip_video"]),
         skip_images=bool(merged["skip_images"]),
         skip_audio=bool(merged["skip_audio"]),

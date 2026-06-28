@@ -173,6 +173,12 @@ class MainWindow(QMainWindow):
         quarantine_layout.addWidget(self.quarantine_path, 1)
         quarantine_layout.addWidget(quarantine_button)
         settings_layout.addRow("Quarantine", quarantine_row)
+        self.allow_unsafe_recycle = QCheckBox("Allow OS Recycle Bin (may permanently delete)")
+        self.allow_unsafe_recycle.setStyleSheet("color: #c62828; font-weight: 600")
+        self.allow_unsafe_recycle.setToolTip(
+            "Disabled by default. Windows may permanently delete when Recycle Bin is disabled or unavailable."
+        )
+        settings_layout.addRow(self.allow_unsafe_recycle)
         layout.addWidget(settings_group)
         self.settings_group = settings_group
 
@@ -509,6 +515,9 @@ class MainWindow(QMainWindow):
         item = self._current_review_item()
         if item is None:
             return
+        action_value = self._resolve_recycle_action(action_value)
+        if action_value is None:
+            return
         allow_directory = action_value in {FileAction.KEEP, FileAction.IGNORE}
         record = self._record_for_path(path_text, allow_directory=allow_directory)
         if record is None:
@@ -541,16 +550,22 @@ class MainWindow(QMainWindow):
         ]
         if not records:
             return
+        keeper = self._record_for_path(keep_path)
+        if keeper is None:
+            QMessageBox.warning(self, "Keeper unavailable", "The selected keeper is no longer available in this scan.")
+            return
         if not self._confirm_action(FileAction.QUARANTINE, [record.path for record in records], keep_path=keep_path):
             return
         group_id = self._group_id(item)
-        keeper = self._record_for_path(keep_path)
-        jobs = [ActionJob(keeper, FileAction.KEEP, group_id)] if keeper is not None else []
-        jobs.extend(ActionJob(record, FileAction.QUARANTINE, group_id) for record in records)
+        jobs = [ActionJob(keeper, FileAction.KEEP, group_id)]
+        jobs.extend(ActionJob(record, FileAction.QUARANTINE, group_id, keeper) for record in records)
         self._start_action_worker(jobs)
 
     def _request_batch_action(self, paths_value: object, action_value: object) -> None:
         if self._scan_thread is not None or self._action_thread is not None or self._transcode_is_busy():
+            return
+        action_value = self._resolve_recycle_action(action_value)
+        if action_value is None:
             return
         item = self._current_review_item()
         if (
@@ -585,6 +600,22 @@ class MainWindow(QMainWindow):
         group_id = self._group_id(item)
         self._start_action_worker([ActionJob(record, action_value, group_id) for record in records])
 
+    def _resolve_recycle_action(self, action_value: object) -> FileAction | None:
+        if not isinstance(action_value, FileAction):
+            return None
+        if action_value != FileAction.RECYCLE or self.allow_unsafe_recycle.isChecked():
+            return action_value
+        answer = QMessageBox.question(
+            self,
+            "Safe removal fallback",
+            "Operating-system Recycle Bin cannot guarantee recovery: disabled bins, network locations, removable "
+            "drives, or Windows policy may permanently delete the file.\n\n"
+            "Safe mode is active. Move the selected file(s) to SameSame Quarantine instead?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        return FileAction.QUARANTINE if answer == QMessageBox.StandardButton.Yes else None
+
     def _confirm_action(
         self,
         action: FileAction,
@@ -610,7 +641,8 @@ class MainWindow(QMainWindow):
         else:
             text = (
                 f"Send {len(paths)} file(s) to the operating-system recycle bin?\n\n{path_lines}\n\n"
-                "Every file will be revalidated. SameSame cannot automatically restore recycle-bin items."
+                "WARNING: Windows may permanently delete these files if Recycle Bin is disabled or unavailable. "
+                "SameSame cannot verify or automatically restore recycle-bin items. Every file will be revalidated."
                 f"{all_warning}"
             )
             title = "Confirm recycle"
@@ -637,6 +669,7 @@ class MainWindow(QMainWindow):
             self._quarantine_root(),
             jobs=jobs,
             restore_operation_id=restore_operation_id,
+            allow_unsafe_recycle=self.allow_unsafe_recycle.isChecked(),
         )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -658,7 +691,13 @@ class MainWindow(QMainWindow):
         self.settings_group.setEnabled(False)
         self.category_filter.setEnabled(False)
         self.result_list.setEnabled(False)
-        thread.start()
+        mutating_paths = [
+            job.record.path
+            for job in (jobs or [])
+            if job.action in {FileAction.QUARANTINE, FileAction.RECYCLE}
+        ]
+        self.comparison.release_paths(mutating_paths)
+        QTimer.singleShot(0, thread.start)
 
     def _action_progress(self, current: int, total: int, message: str) -> None:
         self.progress_bar.setRange(0, max(1, total))
@@ -796,6 +835,7 @@ class MainWindow(QMainWindow):
             self._transcode_dialog.add_paths(paths, selected_preset)
             self._transcode_dialog.set_output_dir(output_dir)
             self._transcode_dialog.set_auto_recycle_originals(recycle_originals)
+            self._transcode_dialog.set_allow_unsafe_recycle(self.allow_unsafe_recycle.isChecked())
             if collection_root is not None:
                 for path in paths:
                     self._transcode_dialog.collection_roots[str(path.expanduser().resolve())] = collection_root
@@ -819,10 +859,12 @@ class MainWindow(QMainWindow):
             initial_preset=selected_preset,
             initial_output_dir=output_dir,
             auto_recycle_originals=recycle_originals,
+            allow_unsafe_recycle=self.allow_unsafe_recycle.isChecked(),
             parent=self,
         )
         dialog.busy_changed.connect(self._transcode_busy_changed)
         dialog.journal_changed.connect(self._transcode_journal_changed)
+        self.allow_unsafe_recycle.toggled.connect(dialog.set_allow_unsafe_recycle)
         dialog.finished.connect(self._transcode_closed)
         self._transcode_dialog = dialog
         dialog.show()

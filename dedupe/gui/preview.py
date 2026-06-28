@@ -196,6 +196,16 @@ class MediaPane(QWidget):
         self.open_file_button.setEnabled(False)
         self.open_folder_button.setEnabled(False)
 
+    def release_path(self, paths: set[str]) -> None:
+        if self._current_path not in paths:
+            return
+        self.player.stop()
+        self.player.setSource(QUrl())
+        self._current_path = ""
+        self.path_changed.emit("")
+        self.play_button.setEnabled(False)
+        self.timeline.setEnabled(False)
+
     @property
     def current_path(self) -> str:
         return self._current_path
@@ -433,6 +443,11 @@ class ComparisonWidget(QWidget):
         self.left.player.stop()
         self.right.player.stop()
         self.thread_pool.waitForDone(2000)
+
+    def release_paths(self, paths: list[Path]) -> None:
+        resolved = {str(path.expanduser().resolve()) for path in paths}
+        self.left.release_path(resolved)
+        self.right.release_path(resolved)
 
     def _sync(self, source: MediaPane, target: MediaPane, position: int) -> None:
         if self._syncing or not self.sync_checkbox.isChecked() or target.player.duration() <= 0:

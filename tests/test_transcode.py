@@ -26,6 +26,7 @@ from dedupe.transcode.probe import list_encoders, probe_media
 from dedupe.transcode.runner import run_transcode
 from dedupe.transcode.queue import TranscodeQueue
 from dedupe.transcode.source_cleanup import recycle_transcode_source
+from dedupe.transcode.source_cleanup import cleanup_transcode_source
 from dedupe.transcode.validation import validate_output
 
 
@@ -235,6 +236,41 @@ class RunnerAndValidationTests(unittest.TestCase):
 
 
 class QueueTests(unittest.TestCase):
+    def test_validated_transcode_uses_reversible_quarantine_in_safe_mode(self) -> None:
+        from dedupe.actions import FileAction, OperationStatus
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.mkv"
+            output = root / "source.encoded.mkv"
+            source.write_bytes(b"original video")
+            output.write_bytes(b"encoded video")
+            stat = source.stat()
+            result = TranscodeResult(
+                "job",
+                JobStatus.COMPLETED,
+                source,
+                output,
+                None,
+                "anime_x265_balanced",
+                input_size=stat.st_size,
+                output_size=output.stat().st_size,
+                validation=ValidationResult(True, output_info=media(output, size=output.stat().st_size)),
+                input_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+                input_modified_at=stat.st_mtime,
+            )
+            outcome = cleanup_transcode_source(
+                result,
+                action=FileAction.QUARANTINE,
+                journal_path=root / "journal.sqlite3",
+                quarantine_root=root / "quarantine",
+                collection_root=root,
+            )
+            self.assertEqual(outcome.status, OperationStatus.COMPLETED)
+            self.assertTrue(outcome.reversible)
+            self.assertFalse(source.exists())
+            self.assertTrue(outcome.destination.exists())  # type: ignore[union-attr]
+
     def test_validated_transcode_can_identity_check_and_recycle_its_source(self) -> None:
         from dedupe.actions import FileAction, FileActionService, OperationStatus
 

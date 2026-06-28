@@ -15,7 +15,7 @@ from ..transcode.models import TranscodeRequest
 from ..transcode.presets import TranscodePreset, get_preset
 from ..transcode.promotion import promote_transcode
 from ..transcode.queue import TranscodeQueue
-from ..transcode.source_cleanup import recycle_transcode_source
+from ..transcode.source_cleanup import cleanup_transcode_source
 
 
 class ScanWorker(QObject):
@@ -76,6 +76,7 @@ class ActionJob:
     record: FileRecord
     action: FileAction
     group_id: str | None = None
+    reference_record: FileRecord | None = None
 
 
 class ActionWorker(QObject):
@@ -91,16 +92,22 @@ class ActionWorker(QObject):
         *,
         jobs: list[ActionJob] | None = None,
         restore_operation_id: str | None = None,
+        allow_unsafe_recycle: bool = False,
     ) -> None:
         super().__init__()
         self.journal_path = journal_path
         self.quarantine_root = quarantine_root
         self.jobs = jobs or []
         self.restore_operation_id = restore_operation_id
+        self.allow_unsafe_recycle = allow_unsafe_recycle
 
     @Slot()
     def run(self) -> None:
-        service = FileActionService(self.journal_path, self.quarantine_root)
+        service = FileActionService(
+            self.journal_path,
+            self.quarantine_root,
+            allow_unsafe_recycle=self.allow_unsafe_recycle,
+        )
         try:
             if self.restore_operation_id is not None:
                 self.progress.emit(0, 1, "Validating quarantine restore")
@@ -121,7 +128,15 @@ class ActionWorker(QObject):
                         )
                     else:
                         seen_sources.add(job.record.path_key)
-                        outcome = service.perform(job.record, job.action, group_id=job.group_id)
+                        if job.reference_record is not None:
+                            outcome = service.perform_if_matches(
+                                job.record,
+                                job.action,
+                                job.reference_record,
+                                group_id=job.group_id,
+                            )
+                        else:
+                            outcome = service.perform(job.record, job.action, group_id=job.group_id)
                     self.outcome.emit(outcome)
                     self.progress.emit(index, total, outcome.message)
         except Exception as exc:  # noqa: BLE001 - surface unexpected journal/action worker failures.
@@ -167,6 +182,8 @@ class TranscodeWorker(QObject):
         journal_path: Path | None = None,
         quarantine_root: Path | None = None,
         collection_roots: dict[str, Path] | None = None,
+        source_cleanup_action: FileAction = FileAction.QUARANTINE,
+        allow_unsafe_recycle: bool = False,
     ) -> None:
         super().__init__()
         self.requests = requests
@@ -176,6 +193,8 @@ class TranscodeWorker(QObject):
         self.journal_path = journal_path
         self.quarantine_root = quarantine_root
         self.collection_roots = collection_roots or {}
+        self.source_cleanup_action = source_cleanup_action
+        self.allow_unsafe_recycle = allow_unsafe_recycle
         self.cancellation = CancellationToken()
 
     @Slot()
@@ -193,11 +212,13 @@ class TranscodeWorker(QObject):
                 return
             key = str(result.input_path.expanduser().resolve())
             try:
-                outcome = recycle_transcode_source(
+                outcome = cleanup_transcode_source(
                     result,
+                    action=self.source_cleanup_action,
                     journal_path=self.journal_path,
                     quarantine_root=self.quarantine_root,
                     collection_root=self.collection_roots.get(key),
+                    allow_unsafe_recycle=self.allow_unsafe_recycle,
                 )
                 self.source_action.emit(outcome)
             except Exception as exc:  # noqa: BLE001 - preserve the successful output and report cleanup failure.

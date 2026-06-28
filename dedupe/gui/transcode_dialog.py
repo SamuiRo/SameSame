@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..actions import ActionOutcome, OperationStatus
+from ..actions import ActionOutcome, FileAction, OperationStatus
 from ..scanner import is_video_path
 from ..transcode.command_builder import default_output_path
 from ..transcode.models import (
@@ -55,6 +55,7 @@ class TranscodeDialog(QDialog):
         initial_preset: TranscodePreset | None = None,
         initial_output_dir: Path | None = None,
         auto_recycle_originals: bool = False,
+        allow_unsafe_recycle: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -63,6 +64,7 @@ class TranscodeDialog(QDialog):
         self.journal_path = journal_path
         self.quarantine_root = quarantine_root
         self.collection_roots = collection_roots or {}
+        self.allow_unsafe_recycle = allow_unsafe_recycle
         self._capability: EncoderCapability | None = None
         self._capability_preset = ""
         self._capability_thread: QThread | None = None
@@ -108,6 +110,12 @@ class TranscodeDialog(QDialog):
     def set_auto_recycle_originals(self, enabled: bool) -> None:
         if not self.is_busy:
             self.recycle_originals.setChecked(enabled)
+
+    def set_allow_unsafe_recycle(self, enabled: bool) -> None:
+        if self.is_busy:
+            return
+        self.allow_unsafe_recycle = enabled
+        self._update_cleanup_label()
 
     def _install_preset(self, preset: TranscodePreset) -> None:
         if preset.preset_id in PRESETS and preset == PRESETS[preset.preset_id]:
@@ -163,11 +171,9 @@ class TranscodeDialog(QDialog):
         output_row.addWidget(self.add_files_button)
         output_row.addWidget(self.remove_button)
 
-        self.recycle_originals = QCheckBox("Move each original to Recycle Bin after successful validation")
+        self.recycle_originals = QCheckBox()
         self.recycle_originals.setStyleSheet("color: #c62828; font-weight: 600")
-        self.recycle_originals.setToolTip(
-            "The encoded MKV is validated first. The original is then identity-checked and journaled before recycling."
-        )
+        self._update_cleanup_label()
 
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(["Input", "Preset", "Status", "Progress", "Output", "Size / savings"])
@@ -227,6 +233,22 @@ class TranscodeDialog(QDialog):
         layout.addLayout(status_row)
         self._set_queue_running(False)
         self._selection_changed()
+
+    def _update_cleanup_label(self) -> None:
+        if self.allow_unsafe_recycle:
+            self.recycle_originals.setText(
+                "Move each original to OS Recycle Bin after validation (may permanently delete)"
+            )
+            self.recycle_originals.setToolTip(
+                "Windows may permanently delete when Recycle Bin is disabled or unavailable."
+            )
+        else:
+            self.recycle_originals.setText(
+                "Move each original to SameSame Quarantine after successful validation"
+            )
+            self.recycle_originals.setToolTip(
+                "Safe default: validated originals remain restorable through the operation journal."
+            )
 
     @staticmethod
     def _key(path: Path) -> str:
@@ -383,6 +405,10 @@ class TranscodeDialog(QDialog):
             journal_path=self.journal_path,
             quarantine_root=self.quarantine_root,
             collection_roots=self.collection_roots,
+            source_cleanup_action=(
+                FileAction.RECYCLE if self.allow_unsafe_recycle else FileAction.QUARANTINE
+            ),
+            allow_unsafe_recycle=self.allow_unsafe_recycle,
         )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -404,15 +430,24 @@ class TranscodeDialog(QDialog):
     def _confirm_recycle_originals(self) -> bool:
         if not self.recycle_originals.isChecked():
             return True
-        answer = QMessageBox.warning(
-            self,
-            "Recycle originals after compression?",
-            "WARNING: Every original will be moved to the operating-system Recycle Bin immediately after its "
-            "encoded output passes validation and the original passes an identity check.\n\n"
-            "SameSame cannot automatically restore Recycle Bin items. Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
+        if self.allow_unsafe_recycle:
+            answer = QMessageBox.warning(
+                self,
+                "Recycle originals after compression?",
+                "WARNING: Windows may permanently delete every original if Recycle Bin is disabled or unavailable. "
+                "SameSame cannot verify or restore these items. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+        else:
+            answer = QMessageBox.question(
+                self,
+                "Quarantine originals after compression?",
+                "Each original will be moved to SameSame Quarantine only after output validation and an identity "
+                "check. The operation will be journaled and restorable. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
         return answer == QMessageBox.StandardButton.Yes
 
     def _row_for_path(self, path: Path) -> int:
@@ -460,7 +495,12 @@ class TranscodeDialog(QDialog):
         self._source_actions[key] = value
         row = self._row_for_path(value.source)
         if row >= 0:
-            status = "Completed; original recycled" if value.status == OperationStatus.COMPLETED else "Recycle failed"
+            action_label = "recycled" if value.action == FileAction.RECYCLE else "quarantined"
+            status = (
+                f"Completed; original {action_label}"
+                if value.status == OperationStatus.COMPLETED
+                else f"Original {value.action.value} failed"
+            )
             self.table.item(row, 2).setText(status)
         self.status_label.setText(value.message)
         self.journal_changed.emit()
@@ -471,7 +511,8 @@ class TranscodeDialog(QDialog):
         self._source_actions[self._key(source)] = message
         row = self._row_for_path(source)
         if row >= 0:
-            self.table.item(row, 2).setText("Completed; original recycle failed")
+            action_label = "recycle" if self.allow_unsafe_recycle else "quarantine"
+            self.table.item(row, 2).setText(f"Completed; original {action_label} failed")
         self.status_label.setText(f"Original was kept: {message}")
         self._selection_changed()
 

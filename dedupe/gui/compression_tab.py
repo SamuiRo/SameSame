@@ -315,10 +315,10 @@ class CompressionTab(QWidget):
         output_layout.addWidget(self.output_button)
         layout.addWidget(output_group)
 
-        self.recycle_originals = QCheckBox("Move originals to Recycle Bin after successful compression")
+        self.recycle_originals = QCheckBox("Remove originals after compression (safe quarantine by default)")
         self.recycle_originals.setStyleSheet("color: #c62828; font-weight: 600")
         self.recycle_originals.setToolTip(
-            "Only validated outputs trigger this action. Each original is identity-checked and journaled first."
+            "Only validated outputs trigger cleanup. OS Recycle requires the separate unsafe setting in Duplicate review."
         )
         layout.addWidget(self.recycle_originals)
         layout.addStretch(1)

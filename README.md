@@ -1,13 +1,13 @@
 # SameSame
 
-SameSame `1.6.1` finds duplicate and similar media files through a command-line
+SameSame `1.6.4` finds duplicate and similar media files through a command-line
 scanner or an optional desktop review interface. It scans one or more folder
 trees recursively and writes reports for manual review.
 
 The CLI remains report-only. The desktop interface can record keep/ignore
 decisions, move explicitly selected content-backed files to reversible
-quarantine, or send an explicitly confirmed file to the operating-system
-recycle bin. The CLI and desktop UI can transcode videos with four anime-oriented
+quarantine, or—only after enabling an unsafe opt-in—send an explicitly confirmed
+file to the operating-system recycle bin. The CLI and desktop UI can transcode videos with four anime-oriented
 FFmpeg presets. Encoding always keeps the source; a separate explicit GUI action
 can identity-check and quarantine it before promoting the validated MKV.
 
@@ -168,10 +168,12 @@ Desktop file actions are deliberately conservative:
 - every quarantine/recycle action rechecks path, size, modification time, and
   a full SHA-256 identity before acting;
 - exact groups can quarantine all copies except the explicitly selected keeper;
+- exact-group batch cleanup additionally SHA-256-compares every candidate with
+  the selected keeper immediately before moving it;
 - video, image, and audio matches require an individual confirmation;
 - folder and name hints allow keep/ignore decisions but never enable file mutation;
-- recycle uses the operating-system recycle bin and is not automatically
-  restorable by SameSame;
+- OS recycle is blocked by default because Windows settings can turn it into
+  permanent deletion; Recycle buttons offer SameSame Quarantine as the safe fallback;
 - every requested, completed, and failed operation is stored in a SQLite journal.
 
 ## Video Compression in the GUI
@@ -187,11 +189,11 @@ batch work:
    or HEVC NVENC quality, speed, pixel-format, and encoder options.
 4. Choose an optional output folder and open the sequential compression queue.
 
-The red **Move originals to Recycle Bin** option is deliberately opt-in and
-requires confirmation. An original is recycled only after its encoded MKV has
-passed validation and the source still matches its recorded size, modification
-time, and SHA-256 identity. The operation is journaled, but SameSame cannot
-automatically restore items from the operating-system Recycle Bin.
+The cleanup option moves originals to reversible SameSame Quarantine by default,
+and only after the encoded MKV passes validation and the source matches its
+recorded size, modification time, and SHA-256 identity. OS Recycle requires the
+separate red unsafe opt-in in Duplicate review because Windows may permanently
+delete when its Recycle Bin is disabled or unavailable.
 
 Reviewed duplicate results can still be sent directly to the same queue with
 **Transcode videos…** in the comparison panel.
@@ -324,3 +326,4 @@ are specified in [Anime encoding presets](docs/ANIME_ENCODING_PRESETS.md).
 - [Anime encoding preset specification](docs/ANIME_ENCODING_PRESETS.md)
 - [Example config](docs/samesame.example.json)
 - [Project status and handoff](docs/STATUS.md)
+- [Project audit](docs/AUDIT.md)
