@@ -1,6 +1,6 @@
 # SameSame
 
-SameSame `1.6.4` finds duplicate and similar media files through a command-line
+SameSame `1.6.6` finds duplicate and similar media files through a command-line
 scanner or an optional desktop review interface. It scans one or more folder
 trees recursively and writes reports for manual review.
 
@@ -320,6 +320,7 @@ are specified in [Anime encoding presets](docs/ANIME_ENCODING_PRESETS.md).
 ## Documentation
 
 - [Usage guide](docs/USAGE.md)
+- [Desktop interface reference](docs/GUI_REFERENCE.md)
 - [Configuration reference](docs/CONFIG.md)
 - [Threshold benchmarking](docs/THRESHOLDS.md)
 - [Development roadmap](docs/ROADMAP.md)

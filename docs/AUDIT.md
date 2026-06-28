@@ -1,7 +1,7 @@
 # Project Audit
 
 Audit date: 2026-06-28  
-Audited version: `1.6.4`
+Audited version: `1.6.6`
 
 ## Outcome
 
@@ -43,7 +43,7 @@ validated before scanning starts.
 ### Medium: package version metadata was inconsistent
 
 `pyproject.toml`, `dedupe.__version__`, and the current documentation reported
-different versions. They now agree on `1.6.4`, with a regression test comparing
+different versions. They now agree on `1.6.6`, with a regression test comparing
 the package constant to project metadata.
 
 ### Low: developer installs did not request the declared build backend
@@ -80,9 +80,9 @@ control whether files are stored or deleted immediately:
 - every JSON file under `docs/`: parses successfully.
 - `samesame --help`, `samesame-benchmark --help`, transcode preset listing, and
   offscreen GUI construction: successful.
-- isolated PEP 517 build: produced `samesame-1.6.4.tar.gz` and
-  `samesame-1.6.4-py3-none-any.whl`.
-- clean temporary wheel installation: package reports `1.6.4` and installs the
+- isolated PEP 517 build: produced `samesame-1.6.6.tar.gz` and
+  `samesame-1.6.6-py3-none-any.whl`.
+- clean temporary wheel installation: package reports `1.6.6` and installs the
   `samesame-transcode` entry point.
 
 ## Remaining Known Risks and Limits

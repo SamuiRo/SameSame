@@ -1,9 +1,12 @@
 # Usage Guide
 
-This guide describes SameSame `1.6.4`. The current application provides a
+This guide describes SameSame `1.6.6`. The current application provides a
 report-only CLI and an optional desktop review interface with explicit,
 journaled quarantine/recycle actions and a transcoding queue. There is no
 permanent-delete command.
+
+For a button-by-button description of both tabs and every dialog, see the
+[Desktop interface reference](GUI_REFERENCE.md).
 
 SameSame finds duplicate media on six levels:
 

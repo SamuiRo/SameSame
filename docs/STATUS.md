@@ -136,7 +136,7 @@ The available suite currently contains 87 unit/integration tests.
   destination conflicts, and automatic source restore after a simulated move failure.
 - Python compilation, JSON config parsing, cache migration, CLI startup, and
   `git diff --check` pass.
-- Package builds produce both the `samesame-1.6.4` source archive and
+- Package builds produce both the `samesame-1.6.6` source archive and
   universal wheel.
 - A recursive CLI test confirms that a resized/recompressed JPEG in a nested
   folder matches its PNG source and appears in HTML/JSON and folder clusters.
@@ -218,7 +218,7 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 4 are implemented, and the current package version is `1.6.4`. The scanner CLI
+Phases 0 through 4 are implemented, and the current package version is `1.6.6`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:
