@@ -59,11 +59,43 @@ class GuiSmokeTests(unittest.TestCase):
             self.assertEqual(window.category_filter.count(), len(CATEGORY_LABELS))
             self.assertIn("transcoding", window.windowTitle())
             self.assertFalse(window.cancel_button.isEnabled())
-            self.assertEqual(window.centralWidget().count(), 2)
+            self.assertEqual(window.centralWidget().count(), 3)
             self.assertEqual(window.centralWidget().tabText(1), "Video compression")
+            self.assertEqual(window.centralWidget().tabText(2), "Folder consolidation")
         finally:
             window.close()
             self.application.processEvents()
+
+    def test_folder_consolidation_tab_shows_folder_mapping_and_file_preview(self) -> None:
+        from dedupe.gui.main_window import MainWindow
+
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "[F0001] Title"
+            left = root / "folder1" / "Title"
+            right = root / "folder2" / "Translated Title"
+            left.mkdir(parents=True)
+            right.mkdir(parents=True)
+            (left / "01.mkv").write_bytes(b"one")
+            (right / "02.mkv").write_bytes(b"two")
+            window = MainWindow()
+            window._journal_path = lambda: base / "operations.sqlite3"  # type: ignore[method-assign]
+            try:
+                tab = window.consolidation_tab
+                tab.title_path.setText(str(root))
+                tab._analyze()
+
+                self.assertEqual(tab.final_name.text(), "Title")
+                self.assertEqual(tab.mapping_table.rowCount(), 2)
+                self.assertEqual(tab.preview_table.rowCount(), 2)
+                self.assertTrue(tab.execute_button.isEnabled())
+                destinations = {
+                    tab.preview_table.item(row, 2).text() for row in range(tab.preview_table.rowCount())
+                }
+                self.assertEqual(destinations, {str(base / "Title" / "01.mkv"), str(base / "Title" / "02.mkv")})
+            finally:
+                window.close()
+                self.application.processEvents()
 
     def test_compression_filters_and_custom_preset(self) -> None:
         from dedupe.gui.compression_tab import (

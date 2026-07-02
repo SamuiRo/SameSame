@@ -291,6 +291,22 @@ Suggested milestones:
 The original GUI/transcoding roadmap is complete. Deferred work below remains
 separately scoped and should continue to be evidence-driven.
 
+## Phase 5: Safe Folder Consolidation
+
+Status: completed in `1.7.0`.
+
+The desktop interface includes a third tab for reorganizing the files left
+after duplicate cleanup. It discovers current on-disk source folders, proposes
+an editable final title name and explicit source-to-target mappings, and shows
+every exact file move before confirmation. Individual folders and files can be
+excluded.
+
+Execution is independent from stale scan results. Existing destinations are
+never overwritten; every move is size/mtime rechecked, SHA-256 verified, and
+journaled in a batch. Failures roll completed moves back where possible, and
+the latest completed batch has a separately confirmed SHA-256-verified undo.
+Empty source directories are removed only after full success.
+
 ## Deferred Work
 
 These remain separate from the GUI/transcoding roadmap:

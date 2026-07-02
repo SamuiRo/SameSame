@@ -1,8 +1,8 @@
 # Desktop Interface Reference
 
-This page documents the SameSame `1.6.6` desktop interface button by button.
-The GUI is launched with `samesame-gui` and contains two main tabs:
-**Duplicate review** and **Video compression**.
+This page documents the SameSame `1.7.0` desktop interface button by button.
+The GUI is launched with `samesame-gui` and contains three main tabs:
+**Duplicate review**, **Video compression**, and **Folder consolidation**.
 
 ## Shared status area
 
@@ -181,3 +181,38 @@ over the source file.
 
 Restore is disabled for keep/ignore decisions, failed/skipped actions, OS
 Recycle operations, and quarantined sources whose original path is occupied.
+
+## Folder consolidation tab
+
+### Folder and name selection
+
+| Control | Purpose |
+| --- | --- |
+| **Choose title folder** | Selects the title-level folder containing the surviving files and source wrappers. |
+| **Analyze folders** | Reads the current filesystem, discovers folders containing files, and proposes mappings. |
+| **Final folder name** | Accepts the program suggestion or an edited canonical title name. The complete destination path is always shown. |
+
+### Mapping and exact preview
+
+The mapping table displays **Source folder → Target subfolder**. A target of
+`.` means the files move directly into the final title folder. Relative target
+folders preserve seasons, sequels, or other meaningful structure. Each source
+folder can be excluded.
+
+**Generate exact move preview** validates every mapping and fills the file
+table with the complete source and destination paths. Ready files start
+checked, can be unchecked individually, and are the only files eligible to
+move. Existing or duplicate destinations are marked as conflicts and disabled;
+SameSame never overwrites them.
+
+### Execution and undo
+
+| Control | Purpose |
+| --- | --- |
+| **Consolidate selected files** | Shows the final folder and folder mappings again, then performs the confirmed journaled batch. |
+| **Undo last consolidation** | SHA-256-verifies and restores the latest completed consolidation batch when original paths are free. |
+
+Every move rechecks the previewed size and modification time, calculates
+SHA-256, and verifies destination content. A failed batch attempts to restore
+all already moved files in reverse order. Empty source directories are removed
+only after the complete batch succeeds.

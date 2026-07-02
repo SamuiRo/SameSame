@@ -14,6 +14,7 @@ from dedupe.cache import Cache
 from dedupe.events import CancellationToken, ScanCancelled, ScanEvent, ScanEventType, ScanStage
 from dedupe.metadata import probe_media_metadata
 from dedupe.models import FileRecord
+from dedupe.progress import progress_scope, tqdm
 from dedupe.service import ScanOptions, ScanService
 
 
@@ -49,6 +50,20 @@ class ScanServiceTests(unittest.TestCase):
             self.assertTrue(any(event.event_type == ScanEventType.PROGRESS for event in events))
             self.assertEqual(events[-1].event_type, ScanEventType.COMPLETED)
             self.assertEqual(events[-1].total, 2)
+
+    def test_nonterminal_progress_does_not_construct_tqdm_in_background_clients(self) -> None:
+        events: list[ScanEvent] = []
+        with patch("dedupe.progress._tqdm") as terminal_progress:
+            with progress_scope(
+                stage=ScanStage.SCANNING,
+                callback=events.append,
+                cancellation=CancellationToken(),
+                show_terminal=False,
+            ):
+                self.assertEqual(list(tqdm(["a", "b"], total=2, desc="Files")), ["a", "b"])
+
+        terminal_progress.assert_not_called()
+        self.assertEqual([event.current for event in events], [1, 2])
 
     def test_cancellation_emits_event_and_preserves_completed_scan_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

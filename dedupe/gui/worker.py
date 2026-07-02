@@ -6,6 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
 from ..actions import FileAction, FileActionService
+from ..consolidation import ConsolidationPlan, ConsolidationService
 from ..events import CancellationToken, ScanCancelled, ScanEvent
 from ..metadata import MediaMetadata, probe_media_metadata
 from ..models import FileRecord
@@ -140,6 +141,41 @@ class ActionWorker(QObject):
                     self.outcome.emit(outcome)
                     self.progress.emit(index, total, outcome.message)
         except Exception as exc:  # noqa: BLE001 - surface unexpected journal/action worker failures.
+            self.failed.emit(str(exc))
+        finally:
+            self.finished.emit()
+
+
+class ConsolidationWorker(QObject):
+    progress = Signal(int, int, str)
+    completed = Signal(object)
+    failed = Signal(str)
+    finished = Signal()
+
+    def __init__(
+        self,
+        journal_path: Path,
+        *,
+        plan: ConsolidationPlan | None = None,
+        undo_batch_id: str | None = None,
+    ) -> None:
+        super().__init__()
+        self.journal_path = journal_path
+        self.plan = plan
+        self.undo_batch_id = undo_batch_id
+
+    @Slot()
+    def run(self) -> None:
+        service = ConsolidationService(self.journal_path)
+        try:
+            if self.undo_batch_id is not None:
+                result = service.undo(self.undo_batch_id, progress=self.progress.emit)
+            elif self.plan is not None:
+                result = service.execute(self.plan, progress=self.progress.emit)
+            else:
+                raise ValueError("Consolidation worker has no plan or undo batch")
+            self.completed.emit(result)
+        except Exception as exc:  # noqa: BLE001 - surface filesystem/journal failures in the GUI.
             self.failed.emit(str(exc))
         finally:
             self.finished.emit()

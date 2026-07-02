@@ -1,6 +1,6 @@
 # SameSame
 
-SameSame `1.6.6` finds duplicate and similar media files through a command-line
+SameSame `1.7.0` finds duplicate and similar media files through a command-line
 scanner or an optional desktop review interface. It scans one or more folder
 trees recursively and writes reports for manual review.
 
@@ -208,6 +208,28 @@ only then promotes the validated MKV into the collection. Destination conflicts
 are rejected before the source is moved, and a failed promotion attempts to
 restore the original.
 
+## Folder Consolidation in the GUI
+
+The third desktop tab, **Folder consolidation**, reorganizes the files that
+remain after duplicate review without relying on a possibly stale scan report:
+
+1. Choose one title folder containing source wrappers such as `folder1` and
+   `folder2`.
+2. Review the proposed final folder name and edit it when needed.
+3. Review or edit every **Source folder → Target subfolder** mapping.
+4. Generate the exact per-file move preview and uncheck files that should stay
+   in place.
+5. Confirm the journaled consolidation.
+
+The planner makes common numbered wrapper folders transparent, proposes that
+base-title and translated-title folders merge into the final title folder, and
+preserves distinct sequel/subseries folder names. Existing destination files
+are reported as conflicts and are never overwritten. Immediately before each
+move, SameSame rechecks size and modification time, calculates SHA-256, then
+verifies the destination content. A failed batch rolls completed moves back;
+the latest successful batch can be undone from the same tab after another
+SHA-256 verification. Empty source folders are removed only after success.
+
 ## Common Commands
 
 Inspect the four transcode presets and verify which encoders can initialize:
@@ -280,8 +302,8 @@ Available now:
 
 - `samesame`: duplicate scanner and HTML/JSON report generator;
 - `samesame-benchmark`: threshold benchmark utility.
-- `samesame-gui`: desktop review with journaled file actions and a cancellable
-  transcoding queue;
+- `samesame-gui`: desktop review with journaled file actions, safe folder
+  consolidation, and a cancellable transcoding queue;
 - `samesame-transcode`: independent sequential transcoding queue with four
   validated anime presets;
 - `dedupe.service.ScanService`: UI-agnostic Python scan API with structured

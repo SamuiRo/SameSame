@@ -1,6 +1,6 @@
 # Usage Guide
 
-This guide describes SameSame `1.6.6`. The current application provides a
+This guide describes SameSame `1.7.0`. The current application provides a
 report-only CLI and an optional desktop review interface with explicit,
 journaled quarantine/recycle actions and a transcoding queue. There is no
 permanent-delete command.
@@ -255,6 +255,26 @@ collisions, and can be restored from the operation journal. Unsafe recycle uses
 the operating-system recycle integration; SameSame cannot verify or restore its
 result. Folder and name-only hints never enable file mutation. Permanent deletion
 is not implemented.
+
+## Folder Consolidation
+
+Use the third **Folder consolidation** tab after duplicate cleanup. Choose the
+title-level folder that contains the remaining source folders. SameSame reads
+the current filesystem rather than trusting paths from the earlier scan.
+
+The first table shows every proposed **Source folder → Target subfolder**
+mapping. Edit a target to `.` to place that folder's files directly in the
+final title folder, enter a relative subfolder to preserve a sequel or season,
+or uncheck the source folder entirely. The final title-folder name is also
+editable.
+
+Generate the exact preview before executing. The second table shows every
+source and destination file; individual files can be unchecked. Conflicting
+destinations are disabled and never overwritten. Confirmed moves are
+journaled, identity-checked with SHA-256, and rolled back if a later move in the
+batch fails. **Undo last consolidation** restores the latest successful batch
+when every destination still matches its recorded SHA-256 and the original
+paths are free.
 
 ## Independent Transcoding
 

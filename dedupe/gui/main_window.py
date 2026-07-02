@@ -38,6 +38,7 @@ from ..report import write_html_report, write_json_report
 from ..service import ScanOptions, ScanResult
 from ..transcode.presets import TranscodePreset
 from .compression_tab import CompressionTab
+from .consolidation_tab import ConsolidationTab
 from .journal_dialog import JournalDialog
 from .preview import ComparisonWidget
 from .result_items import CATEGORY_LABELS, ReviewItem, build_review_items, category_counts
@@ -48,7 +49,7 @@ from .worker import ActionJob, ActionWorker, ScanWorker
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("SameSame · Media review and transcoding")
+        self.setWindowTitle("SameSame · Media review, consolidation, and transcoding")
         self.resize(1500, 900)
         self.setMinimumSize(1080, 680)
         self._scan_thread: QThread | None = None
@@ -85,9 +86,14 @@ class MainWindow(QMainWindow):
         self.compression_tab = CompressionTab(self)
         self.compression_tab.queue_requested.connect(self._open_compression_queue)
         self.compression_tab.busy_changed.connect(self._compression_busy_changed)
+        self.consolidation_tab = ConsolidationTab(lambda: self._journal_path(), self)
+        self.consolidation_tab.busy_changed.connect(self._consolidation_busy_changed)
+        self.consolidation_tab.log_message.connect(self._append_log)
+        self.consolidation_tab.journal_changed.connect(self._consolidation_journal_changed)
         tabs = QTabWidget()
         tabs.addTab(root_splitter, "Duplicate review")
         tabs.addTab(self.compression_tab, "Video compression")
+        tabs.addTab(self.consolidation_tab, "Folder consolidation")
         self.setCentralWidget(tabs)
 
         self.log_view = QPlainTextEdit()
@@ -298,7 +304,7 @@ class MainWindow(QMainWindow):
         )
 
     def _start_scan(self) -> None:
-        if self._scan_thread is not None or self._transcode_is_busy():
+        if self._scan_thread is not None or self._transcode_is_busy() or self.consolidation_tab.is_busy:
             return
         if self.folder_list.count() == 0:
             QMessageBox.information(self, "No folders", "Add at least one collection root before scanning.")
@@ -416,6 +422,9 @@ class MainWindow(QMainWindow):
         self.open_report_button.setEnabled(not running and self._last_report_path is not None)
         self.journal_button.setEnabled(not running and self._action_thread is None)
         self.comparison.set_actions_enabled(not running and self._action_thread is None and not transcode_busy)
+        self.consolidation_tab.set_external_actions_enabled(
+            not running and self._action_thread is None and not transcode_busy and not compression_busy
+        )
 
     def _update_category_filter(self, items: list[ReviewItem]) -> None:
         counts = category_counts(items)
@@ -510,6 +519,7 @@ class MainWindow(QMainWindow):
             or self._scan_thread is not None
             or self._action_thread is not None
             or self._transcode_is_busy()
+            or self.consolidation_tab.is_busy
         ):
             return
         item = self._current_review_item()
@@ -536,7 +546,12 @@ class MainWindow(QMainWindow):
         self._start_action_worker([ActionJob(record, action_value, self._group_id(item))])
 
     def _request_batch_quarantine(self, paths_value: object, keep_path: str) -> None:
-        if self._scan_thread is not None or self._action_thread is not None or self._transcode_is_busy():
+        if (
+            self._scan_thread is not None
+            or self._action_thread is not None
+            or self._transcode_is_busy()
+            or self.consolidation_tab.is_busy
+        ):
             return
         item = self._current_review_item()
         if item is None or item.category != "exact" or not isinstance(paths_value, tuple):
@@ -562,7 +577,12 @@ class MainWindow(QMainWindow):
         self._start_action_worker(jobs)
 
     def _request_batch_action(self, paths_value: object, action_value: object) -> None:
-        if self._scan_thread is not None or self._action_thread is not None or self._transcode_is_busy():
+        if (
+            self._scan_thread is not None
+            or self._action_thread is not None
+            or self._transcode_is_busy()
+            or self.consolidation_tab.is_busy
+        ):
             return
         action_value = self._resolve_recycle_action(action_value)
         if action_value is None:
@@ -685,6 +705,7 @@ class MainWindow(QMainWindow):
         if self._transcode_dialog is not None:
             self._transcode_dialog.set_external_actions_enabled(False)
         self.comparison.set_actions_enabled(False)
+        self.consolidation_tab.set_external_actions_enabled(False)
         self.scan_button.setEnabled(False)
         self.journal_button.setEnabled(False)
         self.folder_list.setEnabled(False)
@@ -732,6 +753,11 @@ class MainWindow(QMainWindow):
         self.scan_button.setEnabled(self._scan_thread is None and not self._transcode_is_busy())
         self.journal_button.setEnabled(self._scan_thread is None)
         self.comparison.set_actions_enabled(self._scan_thread is None and not self._transcode_is_busy())
+        self.consolidation_tab.set_external_actions_enabled(
+            self._scan_thread is None
+            and not self._transcode_is_busy()
+            and not self.compression_tab.is_loading
+        )
         self.folder_list.setEnabled(self._scan_thread is None)
         self.settings_group.setEnabled(self._scan_thread is None)
         self.category_filter.setEnabled(True)
@@ -793,7 +819,12 @@ class MainWindow(QMainWindow):
         return bool(self._transcode_dialog and self._transcode_dialog.is_busy)
 
     def _open_transcode(self, paths_value: object) -> None:
-        if self._scan_thread is not None or self._action_thread is not None or not isinstance(paths_value, tuple):
+        if (
+            self._scan_thread is not None
+            or self._action_thread is not None
+            or self.consolidation_tab.is_busy
+            or not isinstance(paths_value, tuple)
+        ):
             return
         paths = [Path(str(path)) for path in paths_value]
         self._show_transcode(paths)
@@ -806,7 +837,12 @@ class MainWindow(QMainWindow):
         root_value: object,
         recycle_originals: bool,
     ) -> None:
-        if self._scan_thread is not None or self._action_thread is not None or not isinstance(paths_value, list):
+        if (
+            self._scan_thread is not None
+            or self._action_thread is not None
+            or self.consolidation_tab.is_busy
+            or not isinstance(paths_value, list)
+        ):
             return
         if not isinstance(preset_value, TranscodePreset):
             return
@@ -878,6 +914,12 @@ class MainWindow(QMainWindow):
         )
         self.journal_button.setEnabled(not busy and self._scan_thread is None and self._action_thread is None)
         self.comparison.set_actions_enabled(not busy and self._scan_thread is None and self._action_thread is None)
+        self.consolidation_tab.set_external_actions_enabled(
+            not busy
+            and self._scan_thread is None
+            and self._action_thread is None
+            and not self.compression_tab.is_loading
+        )
 
     def _compression_busy_changed(self, busy: bool) -> None:
         self.scan_button.setEnabled(
@@ -888,6 +930,38 @@ class MainWindow(QMainWindow):
         )
         if not busy and self._close_when_finished:
             QTimer.singleShot(0, self.close)
+        self.consolidation_tab.set_external_actions_enabled(
+            not busy
+            and not self._transcode_is_busy()
+            and self._scan_thread is None
+            and self._action_thread is None
+        )
+
+    def _consolidation_busy_changed(self, busy: bool) -> None:
+        self.folder_list.setEnabled(not busy and self._scan_thread is None)
+        self.add_folder_button.setEnabled(not busy and self._scan_thread is None)
+        self.remove_folder_button.setEnabled(not busy and self._scan_thread is None)
+        self.settings_group.setEnabled(not busy and self._scan_thread is None)
+        self.scan_button.setEnabled(
+            not busy
+            and self._scan_thread is None
+            and self._action_thread is None
+            and not self._transcode_is_busy()
+            and not self.compression_tab.is_loading
+        )
+        self.journal_button.setEnabled(
+            not busy and self._scan_thread is None and self._action_thread is None and not self._transcode_is_busy()
+        )
+        self.comparison.set_actions_enabled(
+            not busy and self._scan_thread is None and self._action_thread is None and not self._transcode_is_busy()
+        )
+        self.compression_tab.setEnabled(not busy)
+        if not busy and self._close_when_finished:
+            QTimer.singleShot(0, self.close)
+
+    def _consolidation_journal_changed(self) -> None:
+        if self._journal_dialog is not None:
+            self._journal_dialog.refresh()
 
     def _transcode_journal_changed(self) -> None:
         self._append_log("A journaled transcode source action was recorded")
@@ -921,6 +995,11 @@ class MainWindow(QMainWindow):
             self._close_when_finished = True
             self.status_label.setText("Waiting for video folder loading to stop…")
             self.compression_tab.cancel_loading()
+            event.ignore()
+            return
+        if self.consolidation_tab.is_busy:
+            self._close_when_finished = True
+            self.status_label.setText("Waiting for the journaled folder consolidation to finish safely…")
             event.ignore()
             return
         self.comparison.stop()

@@ -55,8 +55,13 @@ def tqdm(iterable: Iterable[T], *args: object, **kwargs: object) -> Iterator[T]:
 
     progress_kwargs = dict(kwargs)
     if context is not None and not context.show_terminal:
-        progress_kwargs["disable"] = True
-    wrapped = _tqdm(iterable, *args, **progress_kwargs) if _tqdm is not None else iterable
+        # Constructing even a disabled tqdm lazily creates a multiprocessing
+        # lock. On Windows that import/lock initialization can crash when a Qt
+        # scan first reaches it from a background QThread. GUI clients already
+        # receive structured progress events, so no tqdm object is needed.
+        wrapped = iterable
+    else:
+        wrapped = _tqdm(iterable, *args, **progress_kwargs) if _tqdm is not None else iterable
     description = str(progress_kwargs.get("desc") or "")
     unit = str(progress_kwargs.get("unit") or "item")
     total_value = progress_kwargs.get("total")

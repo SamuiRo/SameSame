@@ -81,6 +81,13 @@ Implemented:
   only after output validation and source SHA-256 identity verification;
 - duplicate-review batch cleanup checklist with quick select-all-except-current,
   quarantine/recycle actions, all-files warnings, per-file identity checks, and journaling.
+- third desktop Folder consolidation tab with editable final title names,
+  explicit source-folder to target-subfolder mappings, and exact per-file previews;
+- conflict-safe consolidation that never overwrites existing paths, rechecks
+  preview identity, SHA-256-verifies every move, rolls failed batches back, and
+  supports SHA-256-verified undo of the latest completed batch;
+- automatic cleanup of empty source folders only after a fully successful
+  consolidation batch.
 
 The scanner CLI remains report-only. The desktop interface modifies a source only
 after an explicit quarantine confirmation, or an unsafe recycle opt-in, and a successful identity
@@ -109,12 +116,13 @@ quarantine-first action.
 
 ## Verification Completed
 
-The available suite currently contains 87 unit/integration tests.
+The available suite currently contains 95 unit/integration tests.
 
-- All 87 pass under both `unittest` and pytest in the project-local Python
+- All 95 pass under both `unittest` and pytest in the project-local Python
   3.11.9 virtual environment with all runtime/dev dependencies installed.
 - Service coverage verifies structured events, warnings, failure reporting,
-  cooperative cancellation/cache preservation, and review metadata.
+  cooperative cancellation/cache preservation, review metadata, and stable
+  GUI progress without constructing terminal progress locks in Qt workers.
 - GUI coverage verifies all result-category adapters, offscreen window startup,
   and an end-to-end background scan through the Qt event loop.
 - Action coverage verifies scan-to-preflight failures, pre-action changes,
@@ -122,6 +130,9 @@ The available suite currently contains 87 unit/integration tests.
   safe recycle blocking/explicit delegation, Windows sharing-violation retry,
   exact-batch keeper equality, rollback after failed move verification, batch
   quarantine, and restore through a Qt worker.
+- Consolidation coverage verifies folder/name suggestions, numeric titles,
+  path validation, conflict previews, changed-file rejection, verified batch
+  execution, rollback, journal persistence, and undo.
 - Ruff passes with no findings.
 - A real ffmpeg integration test passes with ffmpeg/ffprobe
   `2026-06-15-git-44d082edc8`. It generates a short source video, a resized
@@ -136,7 +147,7 @@ The available suite currently contains 87 unit/integration tests.
   destination conflicts, and automatic source restore after a simulated move failure.
 - Python compilation, JSON config parsing, cache migration, CLI startup, and
   `git diff --check` pass.
-- Package builds produce both the `samesame-1.6.6` source archive and
+- Package builds produce both the `samesame-1.7.0` source archive and
   universal wheel.
 - A recursive CLI test confirms that a resized/recompressed JPEG in a nested
   folder matches its PNG source and appears in HTML/JSON and folder clusters.
@@ -218,7 +229,7 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 4 are implemented, and the current package version is `1.6.6`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.7.0`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:
