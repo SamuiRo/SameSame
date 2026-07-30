@@ -87,7 +87,6 @@ class ScanConfiguration(Protocol):
     refresh_images: bool
     refresh_audio: bool
     refresh_names: bool
-    max_video_candidates_per_bucket: int
     max_image_candidates: int
     max_video_duration_ratio: float
     max_video_duration_delta: float
@@ -119,7 +118,6 @@ class ScanOptions:
     refresh_images: bool = False
     refresh_audio: bool = False
     refresh_names: bool = False
-    max_video_candidates_per_bucket: int = 250
     max_image_candidates: int = 250
     max_video_duration_ratio: float = DEFAULT_MAX_DURATION_RATIO
     max_video_duration_delta: float = DEFAULT_MAX_DURATION_DELTA
@@ -236,6 +234,9 @@ class ScanService:
             ):
                 records = scan_folders(config.folders, config.extensions, cache)
             LOGGER.info("Scanned %d media files", len(records))
+            # Resolved once and reused by both the video and audio stages
+            # below instead of a redundant shutil.which() round trip each.
+            resolved_ffmpeg, resolved_ffprobe = check_video_tools(config.ffmpeg, config.ffprobe)
 
             with self._stage(
                 ScanStage.EXACT_MATCHING,
@@ -262,7 +263,7 @@ class ScanService:
                 message="Finding similar videos",
             ):
                 if video_records and not config.skip_video:
-                    ffmpeg, ffprobe = check_video_tools(config.ffmpeg, config.ffprobe)
+                    ffmpeg, ffprobe = resolved_ffmpeg, resolved_ffprobe
                     if not ffmpeg or not ffprobe:
                         self._warning(
                             "ffmpeg/ffprobe were not found. Install them and ensure they are in PATH, "
@@ -283,7 +284,6 @@ class ScanService:
                             ffmpeg=ffmpeg,
                             ffprobe=ffprobe,
                             workers=config.workers,
-                            max_candidates_per_bucket=config.max_video_candidates_per_bucket,
                             max_duration_ratio=config.max_video_duration_ratio,
                             max_duration_delta=config.max_video_duration_delta,
                         )
@@ -328,7 +328,7 @@ class ScanService:
                 message="Finding similar audio",
             ):
                 if audio_records and not config.skip_audio:
-                    ffmpeg, ffprobe = check_video_tools(config.ffmpeg, config.ffprobe)
+                    ffmpeg, ffprobe = resolved_ffmpeg, resolved_ffprobe
                     if not ffmpeg or not ffprobe:
                         self._warning(
                             "ffmpeg/ffprobe were not found. Audio fingerprinting is skipped; "

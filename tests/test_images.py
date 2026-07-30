@@ -139,10 +139,7 @@ class ImageFingerprintTests(unittest.TestCase):
                 exact_groups = find_exact_duplicates(records, cache, workers=1)
                 image_matches = find_image_matches(records, cache, threshold=90, workers=1)
 
-            normalized = {
-                record.raw_name: NormalizedName(record.raw_name, record.raw_name)
-                for record in records
-            }
+            normalized = {record.raw_name: NormalizedName(record.raw_name, record.raw_name) for record in records}
             assignments, _clusters = build_cluster_assignments(
                 records,
                 exact_groups,

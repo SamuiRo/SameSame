@@ -65,6 +65,23 @@ class ScanServiceTests(unittest.TestCase):
         terminal_progress.assert_not_called()
         self.assertEqual([event.current for event in events], [1, 2])
 
+    def test_progress_events_are_throttled_but_first_and_last_always_fire(self) -> None:
+        # F-04: each PROGRESS event is a queued cross-thread Qt signal in the
+        # GUI, so scanning a large library used to queue one signal per file
+        # even during discovery. A fast burst of 500 items must not produce
+        # 500 events - but the first (liveness) and the true last (accurate
+        # final count) must always be there regardless of timing.
+        events: list[ScanEvent] = []
+        with progress_scope(
+            stage=ScanStage.SCANNING, callback=events.append, cancellation=CancellationToken(), show_terminal=False
+        ):
+            items = list(range(500))
+            self.assertEqual(list(tqdm(items, total=len(items), desc="Files")), items)
+
+        self.assertLess(len(events), len(items))
+        self.assertEqual(events[0].current, 1)
+        self.assertEqual(events[-1].current, len(items))
+
     def test_cancelling_mid_backlog_does_not_wait_for_queued_work(self) -> None:
         # F-02: `with ThreadPoolExecutor(...) as executor:` calls
         # shutdown(wait=True) on exit no matter how the block exits, so a
@@ -83,9 +100,7 @@ class ScanServiceTests(unittest.TestCase):
 
         cancellation = CancellationToken()
         start = time.monotonic()
-        with progress_scope(
-            stage=ScanStage.SCANNING, callback=None, cancellation=cancellation, show_terminal=False
-        ):
+        with progress_scope(stage=ScanStage.SCANNING, callback=None, cancellation=cancellation, show_terminal=False):
             with self.assertRaises(ScanCancelled):
                 with cancellable_executor(2) as executor:
                     futures = {executor.submit(slow_job, index): index for index in range(40)}

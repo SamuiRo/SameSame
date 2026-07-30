@@ -88,8 +88,7 @@ def build_content_clusters(
             match for match in audio_matches or [] if match.left in path_set and match.right in path_set
         ]
         component_types = sum(
-            bool(matches)
-            for matches in (component_video_matches, component_image_matches, component_audio_matches)
+            bool(matches) for matches in (component_video_matches, component_image_matches, component_audio_matches)
         )
         if component_types > 1:
             level = "content"
@@ -180,7 +179,9 @@ def build_cluster_assignments(
             cluster_id = f"name:{title}|{year}|{episode}"
             assignments[record.path_key] = ClusterAssignment(cluster_id=cluster_id, level="name", confidence=70.0)
         else:
-            assignments[record.path_key] = ClusterAssignment(cluster_id=f"path:{record.path_key}", level="path", confidence=0.0)
+            assignments[record.path_key] = ClusterAssignment(
+                cluster_id=f"path:{record.path_key}", level="path", confidence=0.0
+            )
     return assignments, content_clusters
 
 
@@ -234,7 +235,9 @@ def compare_folders(
             continue
         matched = []
         for cluster_id in sorted(name_intersection):
-            sample_path = (cluster_to_paths.get((left, cluster_id)) or cluster_to_paths.get((right, cluster_id)) or [""])[0]
+            sample_path = (
+                cluster_to_paths.get((left, cluster_id)) or cluster_to_paths.get((right, cluster_id)) or [""]
+            )[0]
             assignment = assignments.get(sample_path, ClusterAssignment(cluster_id, "unknown", 0.0))
             matched.append(
                 {
@@ -246,8 +249,12 @@ def compare_folders(
                     "right_paths": sorted(cluster_to_paths.get((right, cluster_id), [])),
                 }
             )
-        left_only = sorted(path for cluster_id in left_set - right_set for path in cluster_to_paths.get((left, cluster_id), []))
-        right_only = sorted(path for cluster_id in right_set - left_set for path in cluster_to_paths.get((right, cluster_id), []))
+        left_only = sorted(
+            path for cluster_id in left_set - right_set for path in cluster_to_paths.get((left, cluster_id), [])
+        )
+        right_only = sorted(
+            path for cluster_id in right_set - left_set for path in cluster_to_paths.get((right, cluster_id), [])
+        )
         pairs.append(
             FolderPair(
                 left=left,

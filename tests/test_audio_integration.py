@@ -95,10 +95,7 @@ class AudioIntegrationTests(unittest.TestCase):
             )
 
             report = json.loads(json_report.read_text(encoding="utf-8"))
-            matched_names = [
-                {Path(match["left"]).name, Path(match["right"]).name}
-                for match in report["audio_matches"]
-            ]
+            matched_names = [{Path(match["left"]).name, Path(match["right"]).name} for match in report["audio_matches"]]
             self.assertEqual(exit_code, 0)
             self.assertEqual(report["scanned_files"], 4)
             self.assertIn({"source.wav", "copy.mp3"}, matched_names)

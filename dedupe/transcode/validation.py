@@ -26,19 +26,14 @@ def validate_output(
     tolerance = max(1.0, plan.input_info.duration * 0.005)
     duration_delta = abs(output_info.duration - plan.input_info.duration)
     if duration_delta > tolerance:
-        errors.append(
-            f"Duration differs by {duration_delta:.3f}s "
-            f"(allowed {tolerance:.3f}s)"
-        )
+        errors.append(f"Duration differs by {duration_delta:.3f}s (allowed {tolerance:.3f}s)")
     for kind in ("video", "audio", "subtitle", "attachment"):
         expected = plan.input_info.stream_count(kind)
         actual = output_info.stream_count(kind)
         if actual < expected:
             errors.append(f"Missing {kind} streams: expected {expected}, found {actual}")
     if output_info.chapter_count < plan.input_info.chapter_count:
-        errors.append(
-            f"Missing chapters: expected {plan.input_info.chapter_count}, found {output_info.chapter_count}"
-        )
+        errors.append(f"Missing chapters: expected {plan.input_info.chapter_count}, found {output_info.chapter_count}")
 
     executable = resolve_binary(ffmpeg)
     if not executable:

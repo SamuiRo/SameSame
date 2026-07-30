@@ -27,6 +27,7 @@ class FileActionTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             _retry_sharing_violation(denied)
         denied.assert_called_once()
+
     def _record(self, path: Path, root: Path) -> FileRecord:
         stat = path.stat()
         return FileRecord(path.resolve(), root.resolve(), stat.st_size, stat.st_mtime, path.stem)

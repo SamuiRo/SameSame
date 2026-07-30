@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from queue import Empty, Queue
 from threading import Thread
 
@@ -47,9 +47,9 @@ def _progress(plan: TranscodePlan, values: dict[str, str]) -> TranscodeProgress:
     )
 
 
-def _read_lines(stream: object, lines: Queue[str | None]) -> None:
+def _read_lines(stream: Iterable[str], lines: Queue[str | None]) -> None:
     try:
-        for line in stream:  # type: ignore[union-attr]
+        for line in stream:
             lines.put(str(line).strip())
     finally:
         lines.put(None)

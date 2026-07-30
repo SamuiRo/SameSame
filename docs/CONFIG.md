@@ -64,7 +64,6 @@ python dedupe.py --config samesame.json
   "skip_video": false,
   "skip_images": false,
   "skip_audio": false,
-  "max_video_candidates_per_bucket": 250,
   "max_image_candidates": 250,
   "max_video_duration_ratio": 1.5,
   "max_video_duration_delta": 900,
@@ -122,7 +121,6 @@ For readability, these nested sections are also supported:
   "refresh_images": false,
   "refresh_audio": false,
   "refresh_names": false,
-  "max_video_candidates_per_bucket": 250,
   "log_level": "INFO"
 }
 ```
@@ -246,7 +244,6 @@ $env:LMSTUDIO_MODEL = "qwen2.5-7b-instruct"
 | `refresh_images` | `false` | Recompute image fingerprints for this run. |
 | `refresh_audio` | `false` | Recompute audio durations and fingerprints for this run. |
 | `refresh_names` | `false` | Recompute normalized names for this run. |
-| `max_video_candidates_per_bucket` | `250` | Reserved compatibility setting; sequence matching currently checks all duration-compatible pairs. |
 | `max_image_candidates` | `250` | Above this image count, use safe pHash blocking before pairwise comparison. |
 | `max_video_duration_ratio` | `1.5` | Reject a video candidate pair before content comparison when the longer file is more than this many times the shorter file's duration; finite, `> 1`. |
 | `max_video_duration_delta` | `900` | Reject a video candidate pair before content comparison when durations differ by more than this many seconds; finite, `>= 0`. |

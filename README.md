@@ -270,7 +270,7 @@ Inspect cache statistics without scanning:
 samesame --inspect-cache --cache .cache\samesame.sqlite3
 ```
 
-Use Anthropic title normalization:
+Use Anthropic title normalization (requires `pip install -e ".[ai]"`):
 
 ```powershell
 $env:ANTHROPIC_API_KEY = "your-key"

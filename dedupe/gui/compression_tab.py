@@ -327,7 +327,9 @@ class CompressionTab(QWidget):
     def _build_video_panel(self) -> QVBoxLayout:
         layout = QVBoxLayout()
         self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(("Use", "Video", "Folder", "Ext", "Size", "Duration", "Codec / resolution"))
+        self.table.setHorizontalHeaderLabels(
+            ("Use", "Video", "Folder", "Ext", "Size", "Duration", "Codec / resolution")
+        )
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.itemChanged.connect(self._update_summary)

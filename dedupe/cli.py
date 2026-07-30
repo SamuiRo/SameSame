@@ -42,11 +42,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "refresh_images": False,
     "refresh_audio": False,
     "refresh_names": False,
-    "max_video_candidates_per_bucket": 250,
     "max_image_candidates": 250,
     "max_video_duration_ratio": DEFAULT_MAX_DURATION_RATIO,
     "max_video_duration_delta": DEFAULT_MAX_DURATION_DELTA,
     "inspect_cache": False,
+    "vacuum_cache": False,
     "ffmpeg": "ffmpeg",
     "ffprobe": "ffprobe",
     "log_level": "INFO",
@@ -77,11 +77,11 @@ class Config:
     refresh_images: bool
     refresh_audio: bool
     refresh_names: bool
-    max_video_candidates_per_bucket: int
     max_image_candidates: int
     max_video_duration_ratio: float
     max_video_duration_delta: float
     inspect_cache: bool
+    vacuum_cache: bool
     ffmpeg: str
     ffprobe: str
     log_level: str
@@ -91,7 +91,7 @@ def _load_config_file(path: Path) -> dict[str, Any]:
     raw = path.read_text(encoding="utf-8")
     if path.suffix.lower() in {".yaml", ".yml"}:
         try:
-            import yaml  # type: ignore
+            import yaml
         except ImportError as exc:
             raise SystemExit("YAML config requires PyYAML. Install it or use JSON config.") from exc
         return dict(yaml.safe_load(raw) or {})
@@ -205,9 +205,15 @@ def parse_args(argv: list[str] | None = None) -> Config:
     parser.add_argument("--json-output", type=Path, default=None, help="JSON report path.")
     parser.add_argument("--cache", type=Path, default=None, help="SQLite cache path.")
     parser.add_argument("--extensions", nargs="*", help="File extensions to include.")
-    parser.add_argument("--video-threshold", type=float, default=None, help="Video fingerprint match threshold, percent.")
-    parser.add_argument("--image-threshold", type=float, default=None, help="Image fingerprint match threshold, percent.")
-    parser.add_argument("--audio-threshold", type=float, default=None, help="Audio fingerprint match threshold, percent.")
+    parser.add_argument(
+        "--video-threshold", type=float, default=None, help="Video fingerprint match threshold, percent."
+    )
+    parser.add_argument(
+        "--image-threshold", type=float, default=None, help="Image fingerprint match threshold, percent."
+    )
+    parser.add_argument(
+        "--audio-threshold", type=float, default=None, help="Audio fingerprint match threshold, percent."
+    )
     parser.add_argument("--folder-threshold", type=float, default=None, help="Folder Jaccard threshold, percent.")
     parser.add_argument("--name-threshold", type=float, default=None, help="Fuzzy title hint threshold, percent.")
     parser.add_argument(
@@ -228,8 +234,16 @@ def parse_args(argv: list[str] | None = None) -> Config:
     )
     parser.add_argument("--workers", type=int, default=None, help="Worker threads for IO-heavy steps.")
     parser.add_argument("--no-ai-names", action="store_true", help="Use local heuristic title normalization only.")
-    parser.add_argument("--skip-video", dest="skip_video", action="store_true", default=None, help="Skip ffmpeg/ffprobe video fingerprinting.")
-    parser.add_argument("--no-skip-video", dest="skip_video", action="store_false", help="Enable ffmpeg/ffprobe video fingerprinting.")
+    parser.add_argument(
+        "--skip-video",
+        dest="skip_video",
+        action="store_true",
+        default=None,
+        help="Skip ffmpeg/ffprobe video fingerprinting.",
+    )
+    parser.add_argument(
+        "--no-skip-video", dest="skip_video", action="store_false", help="Enable ffmpeg/ffprobe video fingerprinting."
+    )
     parser.add_argument(
         "--skip-images",
         dest="skip_images",
@@ -256,8 +270,12 @@ def parse_args(argv: list[str] | None = None) -> Config:
         action="store_false",
         help="Enable Chromaprint audio fingerprinting.",
     )
-    parser.add_argument("--refresh-hashes", action="store_true", default=None, help="Recompute partial and full file hashes.")
-    parser.add_argument("--refresh-video", action="store_true", default=None, help="Recompute cached video durations and fingerprints.")
+    parser.add_argument(
+        "--refresh-hashes", action="store_true", default=None, help="Recompute partial and full file hashes."
+    )
+    parser.add_argument(
+        "--refresh-video", action="store_true", default=None, help="Recompute cached video durations and fingerprints."
+    )
     parser.add_argument(
         "--refresh-images",
         action="store_true",
@@ -270,12 +288,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
         default=None,
         help="Recompute cached audio durations and fingerprints.",
     )
-    parser.add_argument("--refresh-names", action="store_true", default=None, help="Recompute cached title normalization results.")
     parser.add_argument(
-        "--max-video-candidates-per-bucket",
-        type=int,
-        default=None,
-        help="Reserved compatibility setting for video candidate scaling.",
+        "--refresh-names", action="store_true", default=None, help="Recompute cached title normalization results."
     )
     parser.add_argument(
         "--max-image-candidates",
@@ -301,7 +315,15 @@ def parse_args(argv: list[str] | None = None) -> Config:
             f"than this many seconds. Default {DEFAULT_MAX_DURATION_DELTA:.0f}."
         ),
     )
-    parser.add_argument("--inspect-cache", action="store_true", default=None, help="Print cache statistics as JSON and exit.")
+    parser.add_argument(
+        "--inspect-cache", action="store_true", default=None, help="Print cache statistics as JSON and exit."
+    )
+    parser.add_argument(
+        "--vacuum-cache",
+        action="store_true",
+        default=None,
+        help="Remove cache rows for files that no longer exist on disk, VACUUM, and exit.",
+    )
     parser.add_argument("--ffmpeg", default=None, help="ffmpeg executable path/name.")
     parser.add_argument("--ffprobe", default=None, help="ffprobe executable path/name.")
     parser.add_argument("--log-level", default=None, choices=["DEBUG", "INFO", "WARNING", "ERROR"])
@@ -310,7 +332,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     file_config: dict[str, Any] = _load_config_file(args.config) if args.config else {}
     merged = _merge_config(file_config, _load_cli_overrides(args))
     folders = merged.get("folders")
-    if not folders and not merged.get("inspect_cache"):
+    if not folders and not merged.get("inspect_cache") and not merged.get("vacuum_cache"):
         raise SystemExit("At least one folder is required. Use --folders or a config file.")
 
     thresholds: dict[str, float] = {}
@@ -371,11 +393,11 @@ def parse_args(argv: list[str] | None = None) -> Config:
         refresh_images=bool(merged["refresh_images"]),
         refresh_audio=bool(merged["refresh_audio"]),
         refresh_names=bool(merged["refresh_names"]),
-        max_video_candidates_per_bucket=max(2, int(merged["max_video_candidates_per_bucket"])),
         max_image_candidates=max(2, int(merged["max_image_candidates"])),
         max_video_duration_ratio=max_video_duration_ratio,
         max_video_duration_delta=max_video_duration_delta,
         inspect_cache=bool(merged["inspect_cache"]),
+        vacuum_cache=bool(merged["vacuum_cache"]),
         ffmpeg=str(merged["ffmpeg"]),
         ffprobe=str(merged["ffprobe"]),
         log_level=str(merged["log_level"]),
@@ -395,6 +417,11 @@ def main(argv: list[str] | None = None) -> int:
     if config.inspect_cache:
         with Cache(config.cache) as cache:
             print(json.dumps(cache.stats(), ensure_ascii=False, indent=2))
+        return 0
+    if config.vacuum_cache:
+        with Cache(config.cache) as cache:
+            removed = cache.vacuum()
+        print(f"Removed {removed} cache row(s) for files that no longer exist and vacuumed {config.cache}.")
         return 0
     try:
         report = run(config)

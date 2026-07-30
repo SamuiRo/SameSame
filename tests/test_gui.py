@@ -133,9 +133,7 @@ class GuiSmokeTests(unittest.TestCase):
                 self.assertEqual(tab.mapping_table.rowCount(), 2)
                 self.assertEqual(tab.preview_table.rowCount(), 2)
                 self.assertTrue(tab.execute_button.isEnabled())
-                destinations = {
-                    tab.preview_table.item(row, 2).text() for row in range(tab.preview_table.rowCount())
-                }
+                destinations = {tab.preview_table.item(row, 2).text() for row in range(tab.preview_table.rowCount())}
                 self.assertEqual(destinations, {str(base / "Title" / "01.mkv"), str(base / "Title" / "02.mkv")})
             finally:
                 window.close()
@@ -207,7 +205,9 @@ class GuiSmokeTests(unittest.TestCase):
             unreadable_metadata = nested / "legacy.vob"
             source.write_bytes(b"video")
             unreadable_metadata.write_bytes(b"legacy video")
-            info = MediaInfo(source, source.stat().st_size, 25 * 60, "matroska", (StreamInfo(0, "video", "h264", 1280, 720),))
+            info = MediaInfo(
+                source, source.stat().st_size, 25 * 60, "matroska", (StreamInfo(0, "video", "h264", 1280, 720),)
+            )
             window = MainWindow()
             window.compression_tab.folder_path.setText(str(root))
 
@@ -220,9 +220,7 @@ class GuiSmokeTests(unittest.TestCase):
                 window.compression_tab._load_folder()
                 event_loop = QEventLoop()
                 poll = QTimer()
-                poll.timeout.connect(
-                    lambda: event_loop.quit() if not window.compression_tab.is_loading else None
-                )
+                poll.timeout.connect(lambda: event_loop.quit() if not window.compression_tab.is_loading else None)
                 timeout = QTimer()
                 timeout.setSingleShot(True)
                 timeout.timeout.connect(event_loop.quit)
@@ -269,7 +267,9 @@ class GuiSmokeTests(unittest.TestCase):
             for path in (left, right):
                 stat = path.stat()
                 records.append(FileRecord(path, root, stat.st_size, stat.st_mtime, path.stem))
-            report = DedupeReport(2, [], [], [], [], [], [NameHint("name:test", 95.0, [str(left), str(right)], "Episode")])
+            report = DedupeReport(
+                2, [], [], [], [], [], [NameHint("name:test", 95.0, [str(left), str(right)], "Episode")]
+            )
             result = ScanResult(report, records, {record.path_key: basic_media_metadata(record) for record in records})
             window = MainWindow()
             window._scan_completed(result)
@@ -323,8 +323,16 @@ class GuiSmokeTests(unittest.TestCase):
                 self.application.processEvents()
                 self.assertEqual(window.comparison.left.current_path, "")
             finally:
+                # Explicit teardown (F-06): closing the window releases both
+                # preview panes' media handles (see ComparisonWidget.stop()),
+                # but Qt Multimedia's backend can finish that release a
+                # cycle or two after setSource(QUrl()) returns, so pump the
+                # event loop a few times before the tempdir cleanup runs -
+                # this is what made the suite intermittently hit WinError 32
+                # on `right`, which nothing in this test used to release.
                 window.close()
-                self.application.processEvents()
+                for _ in range(5):
+                    self.application.processEvents()
 
     def test_transcode_dialog_displays_capability_and_before_after_metadata(self) -> None:
         from unittest.mock import patch
@@ -654,7 +662,10 @@ class GuiSmokeTests(unittest.TestCase):
             report = DedupeReport(
                 3,
                 [],
-                [VideoMatch(str(episode_a), str(episode_b), 91.0, 0.2), VideoMatch(str(episode_b), str(episode_c), 89.0, 0.3)],
+                [
+                    VideoMatch(str(episode_a), str(episode_b), 91.0, 0.2),
+                    VideoMatch(str(episode_b), str(episode_c), 89.0, 0.3),
+                ],
                 [],
                 [],
                 [],

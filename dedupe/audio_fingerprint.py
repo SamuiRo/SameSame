@@ -67,10 +67,7 @@ def audio_similarity(left: list[int], right: list[int], max_shift: int = MAX_ALI
         overlap = min(len(left) - left_start, len(right) - right_start)
         if overlap < minimum_overlap:
             continue
-        distance = sum(
-            (left[left_start + index] ^ right[right_start + index]).bit_count()
-            for index in range(overlap)
-        )
+        distance = sum((left[left_start + index] ^ right[right_start + index]).bit_count() for index in range(overlap))
         similarity = 100.0 * (1.0 - distance / (overlap * BITS_PER_VALUE))
         best = max(best, similarity)
     return max(0.0, best)
@@ -112,10 +109,7 @@ def find_audio_matches(
     missing_fingerprint = [record for record in records if record.audio_fingerprint is None]
     if missing_fingerprint:
         with cancellable_executor(workers) as executor:
-            futures = {
-                executor.submit(_ensure_fingerprint, record, ffmpeg): record
-                for record in missing_fingerprint
-            }
+            futures = {executor.submit(_ensure_fingerprint, record, ffmpeg): record for record in missing_fingerprint}
             for future in tqdm(as_completed(futures), total=len(futures), desc="Audio fingerprints", unit="file"):
                 record = futures[future]
                 _, fingerprint = future.result()

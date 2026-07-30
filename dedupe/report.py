@@ -24,7 +24,7 @@ def write_json_report(report: DedupeReport, path: Path) -> None:
 
 def _path_list(paths: list[str]) -> str:
     if not paths:
-        return "<p class=\"muted\">None</p>"
+        return '<p class="muted">None</p>'
     return "<ul>" + "".join(f"<li><code>{html.escape(path)}</code></li>" for path in paths) + "</ul>"
 
 
@@ -74,10 +74,10 @@ def write_html_report(report: DedupeReport, path: Path) -> None:
         matched = "".join(
             f"""
             <details>
-              <summary>{html.escape(item['level'])} · {float(item['confidence']):.2f}% · {html.escape(item['cluster_id'])}</summary>
+              <summary>{html.escape(item["level"])} · {float(item["confidence"]):.2f}% · {html.escape(item["cluster_id"])}</summary>
               <div class="columns">
-                <div><h4>Left</h4>{_path_list(item['left_paths'])}</div>
-                <div><h4>Right</h4>{_path_list(item['right_paths'])}</div>
+                <div><h4>Left</h4>{_path_list(item["left_paths"])}</div>
+                <div><h4>Right</h4>{_path_list(item["right_paths"])}</div>
               </div>
             </details>
             """
@@ -106,13 +106,15 @@ def write_html_report(report: DedupeReport, path: Path) -> None:
         name_items.append(
             f"""
             <details>
-              <summary>{' · '.join(parts)}</summary>
+              <summary>{" · ".join(parts)}</summary>
               {_path_list(hint.paths)}
             </details>
             """
         )
 
-    warnings = _path_list(report.warnings) if report.warnings else "<p class=\"muted\">No warnings captured in report.</p>"
+    warnings = (
+        _path_list(report.warnings) if report.warnings else '<p class="muted">No warnings captured in report.</p>'
+    )
     document = f"""<!doctype html>
 <html lang="uk">
 <head>
@@ -222,19 +224,19 @@ def write_html_report(report: DedupeReport, path: Path) -> None:
   </header>
   <main>
     <h2>Точні дублікати файлів</h2>
-    {''.join(exact_items) or '<p class="muted">No exact duplicates found.</p>'}
+    {"".join(exact_items) or '<p class="muted">No exact duplicates found.</p>'}
     <h2>Схожі відео</h2>
-    {''.join(video_items) or '<p class="muted">No similar videos found above threshold.</p>'}
+    {"".join(video_items) or '<p class="muted">No similar videos found above threshold.</p>'}
     <h2>Схожі зображення</h2>
-    {''.join(image_items) or '<p class="muted">No similar images found above threshold.</p>'}
+    {"".join(image_items) or '<p class="muted">No similar images found above threshold.</p>'}
     <h2>Схожі аудіозаписи</h2>
-    {''.join(audio_items) or '<p class="muted">No similar audio found above threshold.</p>'}
+    {"".join(audio_items) or '<p class="muted">No similar audio found above threshold.</p>'}
     <h2>Змішані докази</h2>
-    {''.join(content_items) or '<p class="muted">No mixed-evidence clusters found.</p>'}
+    {"".join(content_items) or '<p class="muted">No mixed-evidence clusters found.</p>'}
     <h2>Пари тек</h2>
-    {''.join(folder_items) or '<p class="muted">No folder pairs found above threshold.</p>'}
+    {"".join(folder_items) or '<p class="muted">No folder pairs found above threshold.</p>'}
     <h2>Підказки за назвою</h2>
-    {''.join(name_items) or '<p class="muted">No name-only hints found.</p>'}
+    {"".join(name_items) or '<p class="muted">No name-only hints found.</p>'}
     <h2>Warnings</h2>
     {warnings}
   </main>

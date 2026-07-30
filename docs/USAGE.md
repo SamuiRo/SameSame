@@ -145,6 +145,13 @@ Inspect cache state:
 samesame --inspect-cache --cache .dedupe_cache.sqlite3
 ```
 
+Cache rows for files that no longer exist are kept indefinitely; remove them
+and reclaim the space:
+
+```powershell
+samesame --vacuum-cache --cache .dedupe_cache.sqlite3
+```
+
 Refresh one cache layer without deleting the database:
 
 ```powershell
@@ -157,10 +164,17 @@ samesame --config samesame.json --refresh-names
 
 ## Anthropic Title Normalization
 
+Requires the `ai` extra:
+
 ```powershell
+pip install -e ".[ai]"
 $env:ANTHROPIC_API_KEY = "your-key"
 samesame --folders "D:\Anime\A" "D:\Anime\B" --name-provider anthropic
 ```
+
+Without the extra installed, `--name-provider anthropic` (and `auto` when
+`ANTHROPIC_API_KEY` is set) logs a warning and falls back to local heuristic
+normalization instead of failing the scan.
 
 `auto` mode uses Anthropic when `ANTHROPIC_API_KEY` is set:
 

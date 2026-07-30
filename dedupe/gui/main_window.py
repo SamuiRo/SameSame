@@ -513,11 +513,7 @@ class MainWindow(QMainWindow):
             not scanning and not action_busy and not transcode_busy and not consolidation_busy
         )
         self.comparison.set_actions_enabled(
-            not scanning
-            and not action_busy
-            and not transcode_busy
-            and not compression_busy
-            and not consolidation_busy
+            not scanning and not action_busy and not transcode_busy and not compression_busy and not consolidation_busy
         )
         self.consolidation_tab.set_external_actions_enabled(
             not scanning and not action_busy and not transcode_busy and not compression_busy
@@ -609,7 +605,9 @@ class MainWindow(QMainWindow):
         path = Path(path_text)
         if allow_directory and path.exists():
             stat = path.stat()
-            return FileRecord(path.resolve(), path.resolve(), stat.st_size if path.is_file() else 0, stat.st_mtime, path.stem)
+            return FileRecord(
+                path.resolve(), path.resolve(), stat.st_size if path.is_file() else 0, stat.st_mtime, path.stem
+            )
         return None
 
     def _request_action(self, action_value: object, path_text: str) -> None:
@@ -639,7 +637,9 @@ class MainWindow(QMainWindow):
             "audio",
             "content",
         }:
-            QMessageBox.warning(self, "Content evidence required", "File actions are disabled for name and folder hints.")
+            QMessageBox.warning(
+                self, "Content evidence required", "File actions are disabled for name and folder hints."
+            )
             return
         if not self._confirm_action(action_value, [record.path]):
             return
@@ -753,7 +753,11 @@ class MainWindow(QMainWindow):
         path_lines = "\n".join(f"• {path}" for path in paths[:12])
         if len(paths) > 12:
             path_lines += f"\n… and {len(paths) - 12} more"
-        all_warning = "\n\nWARNING: Every file in this review result is selected; no copy will remain here." if all_selected else ""
+        all_warning = (
+            "\n\nWARNING: Every file in this review result is selected; no copy will remain here."
+            if all_selected
+            else ""
+        )
         if action == FileAction.QUARANTINE:
             keep_line = f"\nKept in place:\n{keep_path}\n" if keep_path else ""
             text = (
@@ -817,9 +821,7 @@ class MainWindow(QMainWindow):
         self.category_filter.setEnabled(False)
         self.result_list.setEnabled(False)
         mutating_paths = [
-            job.record.path
-            for job in (jobs or [])
-            if job.action in {FileAction.QUARANTINE, FileAction.RECYCLE}
+            job.record.path for job in (jobs or []) if job.action in {FileAction.QUARANTINE, FileAction.RECYCLE}
         ]
         self.comparison.release_paths(mutating_paths)
         QTimer.singleShot(0, thread.start)
@@ -1054,7 +1056,8 @@ class MainWindow(QMainWindow):
             return
         if self.consolidation_tab.is_busy:
             self._close_when_finished = True
-            self.status_label.setText("Waiting for the journaled folder consolidation to finish safely…")
+            self.status_label.setText("Waiting for the journaled folder consolidation to stop safely…")
+            self.consolidation_tab.cancel_consolidation()
             event.ignore()
             return
         self.comparison.stop()

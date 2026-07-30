@@ -6,7 +6,6 @@ import logging
 import math
 import shutil
 import subprocess
-from collections import defaultdict
 from concurrent.futures import as_completed
 from functools import lru_cache
 from pathlib import Path
@@ -110,10 +109,7 @@ def phash(image: Image.Image, hash_size: int = 8, highfreq_factor: int = 4) -> i
     image = image.resize((size, size), Image.Resampling.LANCZOS).convert("L")
     pixels = [[image.getpixel((x, y)) for x in range(size)] for y in range(size)]
     cosines = _cosine_table(size, hash_size)
-    row_coefficients = [
-        [sum(row[x] * cosines[v][x] for x in range(size)) for v in range(hash_size)]
-        for row in pixels
-    ]
+    row_coefficients = [[sum(row[x] * cosines[v][x] for x in range(size)) for v in range(hash_size)] for row in pixels]
     coeffs: list[float] = []
     for u in range(hash_size):
         for v in range(hash_size):
@@ -174,10 +170,7 @@ def ordered_sequence_similarity(
     shorter_length = min(left_length, right_length)
     minimum_matches = max(1, math.ceil(shorter_length * minimum_coverage))
     negative_infinity = float("-inf")
-    dp = [
-        [[negative_infinity] * (shorter_length + 1) for _ in range(right_length + 1)]
-        for _ in range(left_length + 1)
-    ]
+    dp = [[[negative_infinity] * (shorter_length + 1) for _ in range(right_length + 1)] for _ in range(left_length + 1)]
     for left_index in range(left_length + 1):
         for right_index in range(right_length + 1):
             dp[left_index][right_index][0] = 0.0
@@ -215,19 +208,6 @@ def video_durations_compatible(
     if shorter <= 0:
         return False
     return longer / shorter <= max_ratio and longer - shorter <= max_delta
-
-
-def _candidate_pairs(
-    candidates: list[FileRecord],
-    max_candidates_per_bucket: int,
-    threshold: float = 90.0,
-) -> set[tuple[int, int]]:
-    del max_candidates_per_bucket, threshold
-    pairs: set[tuple[int, int]] = set()
-    for left in range(len(candidates)):
-        check_cancelled()
-        pairs.update((left, right) for right in range(left + 1, len(candidates)))
-    return pairs
 
 
 def _ensure_duration(record: FileRecord, ffprobe: str) -> tuple[str, float | None]:
@@ -283,11 +263,7 @@ def video_similarity(
     if left.fingerprint is None or right.fingerprint is None:
         return 0.0
     similarity = ordered_sequence_similarity(left.fingerprint, right.fingerprint)
-    if (
-        left.duration is not None
-        and right.duration is not None
-        and abs(left.duration - right.duration) > 0.05
-    ):
+    if left.duration is not None and right.duration is not None and abs(left.duration - right.duration) > 0.05:
         similarity = max(
             similarity,
             _duration_aligned_similarity(left, right, ffmpeg, aligned_cache if aligned_cache is not None else {}),
@@ -305,7 +281,6 @@ def find_video_matches(
     duration_tolerance: float = 2.0,
     max_duration_ratio: float = DEFAULT_MAX_DURATION_RATIO,
     max_duration_delta: float = DEFAULT_MAX_DURATION_DELTA,
-    max_candidates_per_bucket: int = 250,
 ) -> list[VideoMatch]:
     missing_duration = [record for record in records if record.duration is None]
     if missing_duration:
@@ -339,41 +314,35 @@ def find_video_matches(
                 len(missing_fingerprint),
             )
 
-    buckets: dict[int, list[FileRecord]] = defaultdict(list)
-    for record in records:
-        if record.duration is not None and record.fingerprint:
-            buckets[int(round(record.duration))].append(record)
+    # Sort by duration and sweep forward from each record: ratio and delta to
+    # a later (equal-or-longer) candidate only ever grow as duration
+    # increases, so compatibility can only go True -> False along this
+    # sweep, never back. That makes the inner loop's first incompatible
+    # `right` a safe place to stop, and every unordered pair is generated
+    # exactly once - no bucket windows, no re-visiting the same pair from
+    # multiple buckets (F-01).
+    candidates = sorted(
+        (record for record in records if record.duration is not None and record.fingerprint),
+        key=lambda record: record.duration,  # type: ignore[arg-type,return-value]
+    )
 
     matches: list[VideoMatch] = []
-    seen: set[tuple[str, str]] = set()
     aligned_fingerprints: dict[tuple[str, float, float], list[int] | None] = {}
-    bucket_keys = sorted(buckets)
-    for key in bucket_keys:
+    for left_index, left in enumerate(candidates):
         check_cancelled()
-        candidates: list[FileRecord] = []
-        minimum_duration = max(0, math.floor(max(key / max_duration_ratio, key - max_duration_delta)))
-        maximum_duration = math.ceil(min(key * max_duration_ratio, key + max_duration_delta))
-        for nearby in range(minimum_duration, maximum_duration + 1):
-            candidates.extend(buckets.get(nearby, []))
-        for left_index, right_index in _candidate_pairs(candidates, max_candidates_per_bucket, threshold):
-            check_cancelled()
-            left = candidates[left_index]
-            right = candidates[right_index]
-            pair = tuple(sorted((left.path_key, right.path_key)))
-            if pair in seen or left.full_hash and left.full_hash == right.full_hash:
-                continue
-            seen.add(pair)
-            if left.duration is None or right.duration is None or left.fingerprint is None or right.fingerprint is None:
-                continue
-            delta = abs(left.duration - right.duration)
+        for right in candidates[left_index + 1 :]:
             if not video_durations_compatible(
-                left.duration,
-                right.duration,
+                left.duration,  # type: ignore[arg-type]
+                right.duration,  # type: ignore[arg-type]
                 max_ratio=max_duration_ratio,
                 max_delta=max_duration_delta,
             ):
+                break
+            if left.full_hash and left.full_hash == right.full_hash:
                 continue
-            similarity = ordered_sequence_similarity(left.fingerprint, right.fingerprint)
+            pair = tuple(sorted((left.path_key, right.path_key)))
+            delta = abs(left.duration - right.duration)  # type: ignore[operator]
+            similarity = ordered_sequence_similarity(left.fingerprint, right.fingerprint)  # type: ignore[arg-type]
             # Recheck whenever the raw score clears the noise floor, independent of
             # `threshold`: gating on `< threshold` made this unreachable for any
             # threshold <= ALIGNMENT_RECHECK_FLOOR, which is exactly the range users

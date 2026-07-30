@@ -100,7 +100,9 @@ def promote_transcode(
         except OSError:
             pass
         rollback = action_service.restore(quarantine.operation_id)
-        rollback_note = "source restored" if rollback.status == OperationStatus.COMPLETED else f"restore failed: {rollback.message}"
+        rollback_note = (
+            "source restored" if rollback.status == OperationStatus.COMPLETED else f"restore failed: {rollback.message}"
+        )
         return PromotionResult(False, source, encoded, target, f"Promotion failed: {exc}; {rollback_note}", quarantine)
 
     return PromotionResult(

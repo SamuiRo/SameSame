@@ -173,6 +173,7 @@ class ConsolidationWorker(QObject):
         self.journal_path = journal_path
         self.plan = plan
         self.undo_batch_id = undo_batch_id
+        self.cancellation = CancellationToken()
 
     @Slot()
     def run(self) -> None:
@@ -181,7 +182,7 @@ class ConsolidationWorker(QObject):
             if self.undo_batch_id is not None:
                 result = service.undo(self.undo_batch_id, progress=self.progress.emit)
             elif self.plan is not None:
-                result = service.execute(self.plan, progress=self.progress.emit)
+                result = service.execute(self.plan, progress=self.progress.emit, cancellation=self.cancellation)
             else:
                 raise ValueError("Consolidation worker has no plan or undo batch")
             self.completed.emit(result)
@@ -189,6 +190,9 @@ class ConsolidationWorker(QObject):
             self.failed.emit(str(exc))
         finally:
             self.finished.emit()
+
+    def cancel(self) -> None:
+        self.cancellation.cancel()
 
 
 class TranscodeCapabilityWorker(QObject):

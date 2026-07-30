@@ -123,6 +123,55 @@ class ConsolidationServiceTests(unittest.TestCase):
             self.assertFalse(final_root.exists())
             self.assertIsNone(service.latest_undoable_batch())
 
+    def test_cancellation_stops_between_files_and_leaves_a_rollback_capable_batch(self) -> None:
+        # F-12: cancellation is checked between files, not mid-move, so a
+        # cancelled batch is left in exactly the same rollback-capable state
+        # as a normally completed one - undo() must still work on it.
+        class _CancelAfter:
+            def __init__(self, allowed_checks: int) -> None:
+                self._remaining = allowed_checks
+
+            @property
+            def is_cancelled(self) -> bool:
+                if self._remaining <= 0:
+                    return True
+                self._remaining -= 1
+                return False
+
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "[F0001] Title"
+            source = root / "folder1"
+            source.mkdir(parents=True)
+            first = source / "01.mkv"
+            second = source / "02.mkv"
+            third = source / "03.mkv"
+            first.write_bytes(b"one")
+            second.write_bytes(b"two")
+            third.write_bytes(b"three")
+            planner = ConsolidationPlanner()
+            plan = planner.build_plan(root, "Title", [FolderMapping(source, Path(), 3)])
+            service = ConsolidationService(base / "journal.sqlite3")
+
+            result = service.execute(plan, cancellation=_CancelAfter(1))
+
+            final_root = base / "Title"
+            self.assertEqual(result.status, BatchStatus.CANCELLED)
+            self.assertEqual(result.moved_count, 1)
+            moved_names = {path.name for path in final_root.iterdir()} if final_root.is_dir() else set()
+            self.assertEqual(len(moved_names), 1)
+            # The two untouched files are exactly where they started.
+            self.assertEqual(sum(1 for path in (first, second, third) if path.is_file()), 2)
+
+            latest = service.latest_undoable_batch()
+            self.assertIsNotNone(latest)
+            self.assertEqual(latest.batch_id, result.batch_id)  # type: ignore[union-attr]
+            self.assertEqual(latest.moved_count, 1)  # type: ignore[union-attr]
+
+            undone = service.undo(result.batch_id)
+            self.assertEqual(undone.status, BatchStatus.UNDONE)
+            self.assertTrue(all(path.is_file() for path in (first, second, third)))
+
     def test_changed_file_after_preview_fails_without_moving_other_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)

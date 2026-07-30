@@ -229,9 +229,7 @@ def _evaluate_pairs(pairs: list[PairSpec], ffmpeg: str, ffprobe: str) -> dict[st
                     if record.fingerprint is None:
                         raise RuntimeError(f"Cannot fingerprint video: {path}")
                     video_cache[path] = record
-            duration_delta = abs(
-                (video_cache[pair.left].duration or 0.0) - (video_cache[pair.right].duration or 0.0)
-            )
+            duration_delta = abs((video_cache[pair.left].duration or 0.0) - (video_cache[pair.right].duration or 0.0))
             raw_similarity = video_similarity(video_cache[pair.left], video_cache[pair.right], ffmpeg)
             if not video_durations_compatible(
                 video_cache[pair.left].duration or 0.0,
@@ -239,9 +237,7 @@ def _evaluate_pairs(pairs: list[PairSpec], ffmpeg: str, ffprobe: str) -> dict[st
             ):
                 similarity = 0.0
                 eligible = False
-                note = (
-                    f"duration delta {duration_delta:.3f}s exceeds matcher ratio/delta limits"
-                )
+                note = f"duration delta {duration_delta:.3f}s exceeds matcher ratio/delta limits"
             else:
                 similarity = raw_similarity
         elif pair.media_type == "audio":

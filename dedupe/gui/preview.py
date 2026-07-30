@@ -255,7 +255,9 @@ class MediaPane(QWidget):
             else:
                 pixmap = QPixmap.fromImage(image)
                 self.image_label.setPixmap(
-                    pixmap.scaled(800, 500, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    pixmap.scaled(
+                        800, 500, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                    )
                 )
                 self.preview_stack.setCurrentWidget(self.image_label)
         elif is_video_path(path) or is_audio_path(path):
@@ -385,9 +387,7 @@ class ComparisonWidget(QWidget):
         self.batch_recycle_checked_button.setStyleSheet("color: #c62828; font-weight: 600")
         self.check_others_button.clicked.connect(self._check_all_except_current)
         self.clear_checked_button.clicked.connect(self._clear_checked)
-        self.batch_quarantine_checked_button.clicked.connect(
-            lambda: self._emit_batch_action(FileAction.QUARANTINE)
-        )
+        self.batch_quarantine_checked_button.clicked.connect(lambda: self._emit_batch_action(FileAction.QUARANTINE))
         self.batch_recycle_checked_button.clicked.connect(lambda: self._emit_batch_action(FileAction.RECYCLE))
         batch_controls.addWidget(self.check_others_button)
         batch_controls.addWidget(self.clear_checked_button)
@@ -440,8 +440,14 @@ class ComparisonWidget(QWidget):
         self._update_action_controls()
 
     def stop(self) -> None:
-        self.left.player.stop()
-        self.right.player.stop()
+        # `player.stop()` alone pauses playback but does not release the
+        # underlying OS file handle - only `setSource(QUrl())` does that (see
+        # MediaPane.clear()/release_path()). Without it, closing the window
+        # left both panes' handles open, so a mutating action started
+        # immediately afterwards (or, in tests, tempdir cleanup) could still
+        # hit a Windows sharing violation (F-06).
+        self.left.clear()
+        self.right.clear()
         self.thread_pool.waitForDone(2000)
 
     def release_paths(self, paths: list[Path]) -> None:

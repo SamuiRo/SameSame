@@ -19,7 +19,7 @@ BLAKE2B_ALGO = "blake2b-128"
 
 def current_hash_algo() -> str:
     try:
-        import xxhash  # noqa: F401  # type: ignore
+        import xxhash  # noqa: F401
     except ImportError:
         return BLAKE2B_ALGO
     return XXHASH_ALGO
@@ -27,7 +27,7 @@ def current_hash_algo() -> str:
 
 def _new_hasher() -> tuple[str, object]:
     try:
-        import xxhash  # type: ignore
+        import xxhash
 
         return XXHASH_ALGO, xxhash.xxh3_128()
     except ImportError:

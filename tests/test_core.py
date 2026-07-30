@@ -61,7 +61,9 @@ class CoreTests(unittest.TestCase):
     def test_cli_exposes_video_duration_gate_overrides(self) -> None:
         # F-29: these were previously accepted by find_video_matches but
         # unreachable from the CLI/config.
-        config = parse_args(["--folders", ".", "--max-video-duration-ratio", "2.5", "--max-video-duration-delta", "120"])
+        config = parse_args(
+            ["--folders", ".", "--max-video-duration-ratio", "2.5", "--max-video-duration-delta", "120"]
+        )
         self.assertEqual(config.max_video_duration_ratio, 2.5)
         self.assertEqual(config.max_video_duration_delta, 120.0)
 
@@ -105,6 +107,28 @@ class CoreTests(unittest.TestCase):
         self.assertIn("Season Two", contextual_name(second))
         self.assertNotEqual(contextual_name(first), contextual_name(second))
 
+    def test_fuzzy_name_hints_only_compare_within_matching_year_and_episode(self) -> None:
+        # F-22: grouping by (year, episode) before the fuzzy comparison must
+        # not change which pairs are considered - only how cheaply they're
+        # found. "Show Name" and "Show Nam" (same year/episode) should hint;
+        # "Show Name" at a different year should not, even though the title
+        # alone is identical.
+        root = Path("library").resolve()
+        records = [
+            FileRecord(root / "a.mkv", root, 1, 0, "a"),
+            FileRecord(root / "b.mkv", root, 1, 0, "b"),
+            FileRecord(root / "c.mkv", root, 1, 0, "c"),
+        ]
+        normalized = {
+            records[0].path_key: NormalizedName("a", "Show Name", year=2020, episode=1),
+            records[1].path_key: NormalizedName("b", "Show Nam", year=2020, episode=1),
+            records[2].path_key: NormalizedName("c", "Show Name", year=2021, episode=1),
+        }
+        hints = find_name_hints(records, normalized, set(), set())
+
+        self.assertEqual(len(hints), 1)
+        self.assertEqual(set(hints[0].paths), {records[0].path_key, records[1].path_key})
+
     def test_generic_episode_names_in_different_seasons_do_not_create_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -122,12 +146,30 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(hints, [])
 
     def test_lmstudio_json_helpers_parse_response_content(self) -> None:
-        parsed = _extract_json_object('```json\n{"results":[{"id":0,"core_title":"Cowboy Bebop","year":1998,"episode":1,"flags":["dub"]}]}\n```')
+        parsed = _extract_json_object(
+            '```json\n{"results":[{"id":0,"core_title":"Cowboy Bebop","year":1998,"episode":1,"flags":["dub"]}]}\n```'
+        )
         results = _coerce_normalized_results(["Cowboy.Bebop.E01.1998.DUB"], parsed["results"], "lmstudio")
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].core_title, "Cowboy Bebop")
         self.assertEqual(results[0].source, "lmstudio")
         self.assertEqual(results[0].year, 1998)
+
+    def test_anthropic_provider_falls_back_cleanly_without_the_ai_extra(self) -> None:
+        # F-19: anthropic moved to an optional "ai" extra. Selecting the
+        # anthropic provider without it installed must degrade to local
+        # heuristics with one clear warning, not fail the scan.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            records = [FileRecord(base / "Show.Name.01.mkv", base, 1, 0, "Show.Name.01.mkv")]
+            with Cache(base / "cache.sqlite3") as cache:
+                with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+                    with patch("dedupe.name_normalizer._anthropic_available", return_value=False):
+                        with self.assertLogs("dedupe.name_normalizer", level="WARNING") as captured:
+                            normalized = normalize_names(records, cache, name_provider="anthropic")
+
+            self.assertTrue(any("ai" in message and "not installed" in message for message in captured.output))
+            self.assertEqual(normalized[records[0].path_key].source, "fallback")
 
     def test_claude_batch_backfills_ids_the_model_omitted(self) -> None:
         class FakeBlock:
@@ -375,10 +417,7 @@ class CoreTests(unittest.TestCase):
                 connection.close()
 
             with Cache(cache_path) as cache:
-                columns = {
-                    row["name"]
-                    for row in cache.conn.execute("PRAGMA table_info(files)")
-                }
+                columns = {row["name"] for row in cache.conn.execute("PRAGMA table_info(files)")}
 
             self.assertIn("audio_fingerprint", columns)
             self.assertIn("fingerprint_version", columns)
@@ -393,6 +432,29 @@ class CoreTests(unittest.TestCase):
                 hydrated = FileRecord(base / "video.mp4", base, 100, 1, "video")
                 self.assertTrue(cache.hydrate_if_current(hydrated))
             self.assertIsNone(hydrated.fingerprint)
+
+    def test_cache_vacuum_removes_rows_for_missing_files_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            present = base / "present.mp4"
+            present.write_bytes(b"still here")
+            missing = base / "missing.mp4"
+            with Cache(base / "cache.sqlite3") as cache:
+                cache.upsert_file(FileRecord(present, base, present.stat().st_size, present.stat().st_mtime, "present"))
+                cache.upsert_file(FileRecord(missing, base, 1, 0, "missing"))
+                cache.conn.commit()
+
+                removed = cache.vacuum()
+
+                self.assertEqual(removed, 1)
+                remaining_paths = {row["path"] for row in cache.conn.execute("SELECT path FROM files")}
+                self.assertEqual(remaining_paths, {str(present)})
+
+    def test_cli_vacuum_cache_does_not_require_folders(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "cache.sqlite3"
+            config = parse_args(["--vacuum-cache", "--cache", str(cache_path)])
+            self.assertTrue(config.vacuum_cache)
 
     def test_scan_deduplicates_resolved_paths_from_overlapping_roots(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -422,7 +484,9 @@ class CoreTests(unittest.TestCase):
                     cache.get_name("Show.Name.01", provider="lmstudio", model="local-model", prompt_hash=PROMPT_HASH)
                 )
                 self.assertIsNone(
-                    cache.get_name("Show.Name.01", provider="anthropic", model="claude-haiku-4-5", prompt_hash=PROMPT_HASH)
+                    cache.get_name(
+                        "Show.Name.01", provider="anthropic", model="claude-haiku-4-5", prompt_hash=PROMPT_HASH
+                    )
                 )
 
     def test_exact_duplicates_and_folder_overlap(self) -> None:
@@ -442,7 +506,9 @@ class CoreTests(unittest.TestCase):
             records = []
             for path, root in ((left_file, left), (right_file, right), (other_file, right)):
                 stat = path.stat()
-                records.append(FileRecord(path=path, root=root, size=stat.st_size, mtime=stat.st_mtime, raw_name=path.stem))
+                records.append(
+                    FileRecord(path=path, root=root, size=stat.st_size, mtime=stat.st_mtime, raw_name=path.stem)
+                )
 
             with Cache(base / "cache.sqlite3") as cache:
                 cache.upsert_files(records)
@@ -606,7 +672,41 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(matches, [])
             self.assertTrue(any("excluded from video matching" in message for message in captured.output))
 
-    def test_large_video_bucket_blocking_keeps_near_duplicate_candidates(self) -> None:
+    def test_video_matching_evaluates_each_compatible_pair_exactly_once(self) -> None:
+        # F-01: the old bucket-window approach regenerated the same pair from
+        # every duration bucket it fell in (measured up to 238x waste at
+        # 1000 files). The sorted-sweep replacement must evaluate each
+        # duration-compatible pair exactly once - no more, no less.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            records = [
+                FileRecord(
+                    base / f"video-{index}.mp4",
+                    base,
+                    100,
+                    1,
+                    f"video-{index}",
+                    duration=60.0 + index,
+                    fingerprint=[index << 8],
+                )
+                for index in range(100)
+            ]
+            expected_pairs = sum(
+                1
+                for i in range(len(records))
+                for j in range(i + 1, len(records))
+                if video_durations_compatible(records[i].duration, records[j].duration)  # type: ignore[arg-type]
+            )
+            self.assertGreater(expected_pairs, 0)
+
+            with Cache(base / "cache.sqlite3") as cache:
+                cache.upsert_files(records)
+                with patch("dedupe.video_fingerprint.ordered_sequence_similarity", return_value=0.0) as mock_similarity:
+                    find_video_matches(records, cache, threshold=200, ffmpeg="unused", ffprobe="unused", workers=1)
+
+            self.assertEqual(mock_similarity.call_count, expected_pairs)
+
+    def test_large_video_group_keeps_all_near_duplicate_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             records = [
@@ -639,7 +739,6 @@ class CoreTests(unittest.TestCase):
                     ffmpeg="unused",
                     ffprobe="unused",
                     workers=1,
-                    max_candidates_per_bucket=2,
                 )
 
             matched_paths = [{match.left, match.right} for match in matches]

@@ -146,8 +146,12 @@ class ConsolidationTab(QWidget):
         self.execute_button.clicked.connect(self._confirm_execute)
         self.undo_button = QPushButton("Undo last consolidation…")
         self.undo_button.clicked.connect(self._confirm_undo)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self.cancel_consolidation)
         controls.addWidget(self.status, 1)
         controls.addWidget(self.progress)
+        controls.addWidget(self.cancel_button)
         controls.addWidget(self.undo_button)
         controls.addWidget(self.execute_button)
         layout.addLayout(controls)
@@ -411,6 +415,13 @@ class ConsolidationTab(QWidget):
         )
         undoable = self._latest_undoable_batch() is not None
         self.undo_button.setEnabled(enabled and undoable)
+        self.cancel_button.setEnabled(self.is_busy and self._worker is not None and self._worker.plan is not None)
+
+    def cancel_consolidation(self) -> None:
+        if self._worker is not None and self._worker.plan is not None:
+            self._worker.cancel()
+            self.status.setText("Cancelling after the current file finishes…")
+            self.cancel_button.setEnabled(False)
 
     def _latest_undoable_batch(self) -> ConsolidationBatch | None:
         journal_path = self._journal_path()

@@ -72,14 +72,10 @@ def summarize_scores(scores: list[LabeledScore], current_threshold: float) -> di
     positives = [score.similarity for score in scores if score.expected_match]
     negatives = [score.similarity for score in scores if not score.expected_match]
     raw_positives = [
-        score.raw_similarity
-        for score in scores
-        if score.expected_match and score.raw_similarity is not None
+        score.raw_similarity for score in scores if score.expected_match and score.raw_similarity is not None
     ]
     raw_negatives = [
-        score.raw_similarity
-        for score in scores
-        if not score.expected_match and score.raw_similarity is not None
+        score.raw_similarity for score in scores if not score.expected_match and score.raw_similarity is not None
     ]
     current = evaluate_threshold(scores, current_threshold)
     recommended = recommend_threshold(scores, current_threshold)
@@ -92,9 +88,7 @@ def summarize_scores(scores: list[LabeledScore], current_threshold: float) -> di
         "raw_min_positive": round(min(raw_positives), 2) if raw_positives else None,
         "raw_max_negative": round(max(raw_negatives), 2) if raw_negatives else None,
         "ineligible_count": sum(not score.eligible for score in scores),
-        "positive_ineligible_count": sum(
-            score.expected_match and not score.eligible for score in scores
-        ),
+        "positive_ineligible_count": sum(score.expected_match and not score.eligible for score in scores),
         "current": asdict(current),
         "recommended": asdict(recommended),
         "weighting": "false positives count as 5 errors; false negatives count as 1",

@@ -135,8 +135,7 @@ def fallback_normalize(raw_name: str) -> NormalizedName:
     episode_matches = [
         match
         for match in EPISODE_RE.finditer(working)
-        if (year is None or int(match.group(1)) != year)
-        and int(match.group(1)) not in RESOLUTION_NUMBERS
+        if (year is None or int(match.group(1)) != year) and int(match.group(1)) not in RESOLUTION_NUMBERS
     ]
     episode_match = episode_matches[-1] if episode_matches else None
     episode = int(episode_match.group(1)) if episode_match else None
@@ -168,8 +167,16 @@ def contextual_name(record: FileRecord) -> str:
     return f"{parent_title} - {record.raw_name}" if parent_title else record.raw_name
 
 
+def _anthropic_available() -> bool:
+    try:
+        import anthropic  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
 def _normalize_batch_with_claude(batch: list[str]) -> list[NormalizedName]:
-    from anthropic import Anthropic  # type: ignore
+    from anthropic import Anthropic
 
     client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     payload = [{"id": idx, "raw": raw} for idx, raw in enumerate(batch)]
@@ -245,8 +252,8 @@ def _normalize_batch_with_lmstudio(
                 "role": "user",
                 "content": (
                     "Нормалізуй ці назви. Поверни лише валідний JSON-об'єкт без Markdown. "
-                    "Формат: {\"results\":[{\"id\":0,\"core_title\":\"...\",\"year\":null,"
-                    "\"episode\":null,\"flags\":[]}]}\n"
+                    'Формат: {"results":[{"id":0,"core_title":"...","year":null,'
+                    '"episode":null,"flags":[]}]}\n'
                     f"{json.dumps(payload, ensure_ascii=False)}"
                 ),
             },
@@ -315,6 +322,14 @@ def normalize_names(
         LOGGER.warning("Unknown name provider '%s'; using local heuristic name normalization.", name_provider)
         selected_provider = "fallback"
 
+    if selected_provider == "anthropic" and not _anthropic_available():
+        LOGGER.warning(
+            "name_provider is 'anthropic' but the 'anthropic' package is not installed; "
+            "install it with `pip install -e .[ai]`, or use --name-provider none/lmstudio. "
+            "Falling back to local heuristic normalization.",
+        )
+        selected_provider = "fallback"
+
     provider_model = {
         "anthropic": MODEL_NAME,
         "lmstudio": lmstudio_model,
@@ -349,7 +364,9 @@ def normalize_names(
                     executor.submit(_normalize_batch_with_lmstudio, batch, lmstudio_url, lmstudio_model): batch
                     for batch in batches
                 }
-            for future in tqdm(as_completed(futures), total=len(futures), desc=f"{selected_provider} name normalization", unit="batch"):
+            for future in tqdm(
+                as_completed(futures), total=len(futures), desc=f"{selected_provider} name normalization", unit="batch"
+            ):
                 batch = futures[future]
                 try:
                     batch_results = future.result()
@@ -384,10 +401,7 @@ def find_name_hints(
     fuzzy_threshold: float = 92.0,
 ) -> list[NameHint]:
     confirmed_paths = (
-        exact_cluster_paths
-        | video_cluster_paths
-        | (image_cluster_paths or set())
-        | (audio_cluster_paths or set())
+        exact_cluster_paths | video_cluster_paths | (image_cluster_paths or set()) | (audio_cluster_paths or set())
     )
     by_key: dict[tuple[str, int | None, int | None], list[FileRecord]] = {}
     for record in records:
@@ -414,31 +428,37 @@ def find_name_hints(
                 )
             )
 
-    names = list(by_key.keys())
-    for left_index, left_key in enumerate(names):
+    # Group by (year, episode) before the fuzzy comparison: two titles can
+    # only ever produce a hint if their year and episode already match, so
+    # comparing every name against every other name regardless of group is
+    # wasted work once there are many distinct titles (F-22).
+    by_year_episode: dict[tuple[int | None, int | None], list[tuple[str, int | None, int | None]]] = {}
+    for key in by_key:
+        by_year_episode.setdefault((key[1], key[2]), []).append(key)
+
+    for (year, episode), keys_in_group in by_year_episode.items():
         check_cancelled()
-        for right_key in names[left_index + 1 :]:
-            left_title, left_year, left_episode = left_key
-            right_title, right_year, right_episode = right_key
-            if left_year != right_year or left_episode != right_episode:
-                continue
-            similarity = float(fuzz.token_set_ratio(left_title, right_title))
-            if fuzzy_threshold <= similarity < 100.0:
-                paths = [
-                    record.path_key
-                    for record in by_key[left_key] + by_key[right_key]
-                    if record.path_key not in confirmed_paths
-                ]
-                if len(paths) > 1:
-                    hints.append(
-                        NameHint(
-                            key=f"fuzzy:{left_title}|{right_title}|{left_year}|{left_episode}",
-                            similarity=round(similarity, 2),
-                            paths=sorted(paths),
-                            title=f"{left_title} / {right_title}",
-                            year=left_year,
-                            episode=left_episode,
+        for left_index, left_key in enumerate(keys_in_group):
+            for right_key in keys_in_group[left_index + 1 :]:
+                left_title = left_key[0]
+                right_title = right_key[0]
+                similarity = float(fuzz.token_set_ratio(left_title, right_title))
+                if fuzzy_threshold <= similarity < 100.0:
+                    paths = [
+                        record.path_key
+                        for record in by_key[left_key] + by_key[right_key]
+                        if record.path_key not in confirmed_paths
+                    ]
+                    if len(paths) > 1:
+                        hints.append(
+                            NameHint(
+                                key=f"fuzzy:{left_title}|{right_title}|{year}|{episode}",
+                                similarity=round(similarity, 2),
+                                paths=sorted(paths),
+                                title=f"{left_title} / {right_title}",
+                                year=year,
+                                episode=episode,
+                            )
                         )
-                    )
     hints.sort(key=lambda item: (-item.similarity, item.title, item.paths))
     return hints

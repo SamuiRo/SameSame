@@ -105,10 +105,7 @@ class VideoIntegrationTests(unittest.TestCase):
                     workers=2,
                 )
 
-            matched_names = [
-                {Path(match.left).name, Path(match.right).name}
-                for match in matches
-            ]
+            matched_names = [{Path(match.left).name, Path(match.right).name} for match in matches]
             self.assertIn({"source.mp4", "reencoded.avi"}, matched_names)
             self.assertIn({"source.mp4", "extended.mkv"}, matched_names)
             self.assertFalse(any("unrelated.mp4" in pair for pair in matched_names))

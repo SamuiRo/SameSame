@@ -49,14 +49,23 @@ def media(path: Path, *, size: int = 1000, duration: float = 60.0) -> MediaInfo:
 
 class PresetAndPlanTests(unittest.TestCase):
     def test_all_four_presets_have_the_documented_encoder_settings(self) -> None:
-        self.assertEqual(set(PRESETS), {
-            "anime_x265_max",
-            "anime_x265_balanced",
-            "anime_av1_nvenc",
-            "anime_hevc_nvenc",
-        })
-        self.assertIn(("-crf", "20"), list(zip(PRESETS["anime_x265_max"].video_args[::2], PRESETS["anime_x265_max"].video_args[1::2])))
-        self.assertIn(("-crf", "22"), list(zip(PRESETS["anime_x265_balanced"].video_args[::2], PRESETS["anime_x265_balanced"].video_args[1::2])))
+        self.assertEqual(
+            set(PRESETS),
+            {
+                "anime_x265_max",
+                "anime_x265_balanced",
+                "anime_av1_nvenc",
+                "anime_hevc_nvenc",
+            },
+        )
+        self.assertIn(
+            ("-crf", "20"),
+            list(zip(PRESETS["anime_x265_max"].video_args[::2], PRESETS["anime_x265_max"].video_args[1::2])),
+        )
+        self.assertIn(
+            ("-crf", "22"),
+            list(zip(PRESETS["anime_x265_balanced"].video_args[::2], PRESETS["anime_x265_balanced"].video_args[1::2])),
+        )
         self.assertIn("fullres", PRESETS["anime_av1_nvenc"].video_args)
         self.assertEqual(PRESETS["anime_hevc_nvenc"].encoder, "hevc_nvenc")
 
@@ -113,7 +122,9 @@ class ProbeAndCapabilityTests(unittest.TestCase):
     @patch("dedupe.transcode.probe.resolve_binary", return_value="ffmpeg")
     @patch("dedupe.transcode.probe.subprocess.run")
     def test_encoder_listing(self, run_mock, _resolve_mock) -> None:
-        run_mock.return_value = subprocess.CompletedProcess([], 0, " V....D libx265 H.265\n V..... hevc_nvenc NVIDIA\n", "")
+        run_mock.return_value = subprocess.CompletedProcess(
+            [], 0, " V....D libx265 H.265\n V..... hevc_nvenc NVIDIA\n", ""
+        )
         self.assertEqual(list_encoders(), {"libx265", "hevc_nvenc"})
 
     @patch("dedupe.transcode.capabilities.list_encoders", return_value={"libx265"})
@@ -196,7 +207,9 @@ class RunnerAndValidationTests(unittest.TestCase):
     @patch("dedupe.transcode.validation.resolve_binary", return_value="ffmpeg")
     @patch("dedupe.transcode.validation.subprocess.run")
     @patch("dedupe.transcode.validation.probe_media")
-    def test_validation_accepts_preserved_tracks_and_warns_when_larger(self, probe_mock, run_mock, _resolve_mock) -> None:
+    def test_validation_accepts_preserved_tracks_and_warns_when_larger(
+        self, probe_mock, run_mock, _resolve_mock
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             plan = self._plan(root, (sys.executable, "-c", ""))
@@ -217,7 +230,9 @@ class RunnerAndValidationTests(unittest.TestCase):
     @patch("dedupe.transcode.validation.resolve_binary", return_value="ffmpeg")
     @patch("dedupe.transcode.validation.subprocess.run")
     @patch("dedupe.transcode.validation.probe_media")
-    def test_validation_rejects_missing_tracks_bad_duration_and_decode(self, probe_mock, run_mock, _resolve_mock) -> None:
+    def test_validation_rejects_missing_tracks_bad_duration_and_decode(
+        self, probe_mock, run_mock, _resolve_mock
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             plan = self._plan(root, (sys.executable, "-c", ""))
@@ -364,8 +379,12 @@ class QueueTests(unittest.TestCase):
             TranscodeRequest(Path("second.mkv"), Path("second.out.mkv"), "anime_x265_balanced"),
         ]
         produced = [
-            TranscodeResult("one", JobStatus.FAILED, requests[0].input_path, requests[0].output_path, None, requests[0].preset_id),
-            TranscodeResult("two", JobStatus.COMPLETED, requests[1].input_path, requests[1].output_path, None, requests[1].preset_id),
+            TranscodeResult(
+                "one", JobStatus.FAILED, requests[0].input_path, requests[0].output_path, None, requests[0].preset_id
+            ),
+            TranscodeResult(
+                "two", JobStatus.COMPLETED, requests[1].input_path, requests[1].output_path, None, requests[1].preset_id
+            ),
         ]
         callbacks: list[TranscodeResult] = []
         queue = TranscodeQueue(result_callback=callbacks.append)

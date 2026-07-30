@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -9,6 +10,7 @@ from typing import Iterable, Iterator, TypeVar
 from .events import CancellationToken, ScanEvent, ScanEventCallback, ScanEventType, ScanStage
 
 T = TypeVar("T")
+PROGRESS_MIN_INTERVAL = 0.1
 
 try:
     from tqdm import tqdm as _tqdm
@@ -90,11 +92,36 @@ def tqdm(iterable: Iterable[T], *args: object, **kwargs: object) -> Iterator[T]:
             total_value = None
     total = int(total_value) if isinstance(total_value, (int, float)) else None
 
+    # Emit at most once per PROGRESS_MIN_INTERVAL - each event is a queued
+    # cross-thread Qt signal in the GUI, and a large library queued one per
+    # file (even during discovery, before any real work starts) was enough to
+    # make the event loop fall behind exactly when the progress bar exists to
+    # show it's still alive (F-04). The very first and very last updates
+    # always go through regardless of timing, so the bar never looks stuck.
+    current = 0
+    last_emit_time: float | None = None
+    last_emitted_current = 0
     for current, item in enumerate(wrapped, start=1):
         if context is not None:
             context.cancellation.raise_if_cancelled()
         yield item
         if context is not None and context.callback is not None:
+            now = time.monotonic()
+            if last_emit_time is None or now - last_emit_time >= PROGRESS_MIN_INTERVAL:
+                last_emit_time = now
+                last_emitted_current = current
+                context.callback(
+                    ScanEvent(
+                        ScanEventType.PROGRESS,
+                        stage=context.stage,
+                        message=description,
+                        current=current,
+                        total=total,
+                        unit=unit,
+                    )
+                )
+    if context is not None:
+        if context.callback is not None and current > 0 and current != last_emitted_current:
             context.callback(
                 ScanEvent(
                     ScanEventType.PROGRESS,
@@ -105,5 +132,4 @@ def tqdm(iterable: Iterable[T], *args: object, **kwargs: object) -> Iterator[T]:
                     unit=unit,
                 )
             )
-    if context is not None:
         context.cancellation.raise_if_cancelled()

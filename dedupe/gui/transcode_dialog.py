@@ -243,9 +243,7 @@ class TranscodeDialog(QDialog):
                 "Windows may permanently delete when Recycle Bin is disabled or unavailable."
             )
         else:
-            self.recycle_originals.setText(
-                "Move each original to SameSame Quarantine after successful validation"
-            )
+            self.recycle_originals.setText("Move each original to SameSame Quarantine after successful validation")
             self.recycle_originals.setToolTip(
                 "Safe default: validated originals remain restorable through the operation journal."
             )
@@ -255,7 +253,10 @@ class TranscodeDialog(QDialog):
         return str(path.expanduser().resolve())
 
     def _add_paths(self, paths: list[Path]) -> None:
-        existing = {self._key(Path(self.table.item(row, 0).data(Qt.ItemDataRole.UserRole))) for row in range(self.table.rowCount())}
+        existing = {
+            self._key(Path(self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)))
+            for row in range(self.table.rowCount())
+        }
         for path in paths:
             resolved = path.expanduser().resolve()
             if not resolved.is_file() or not is_video_path(resolved) or self._key(resolved) in existing:
@@ -405,9 +406,7 @@ class TranscodeDialog(QDialog):
             journal_path=self.journal_path,
             quarantine_root=self.quarantine_root,
             collection_roots=self.collection_roots,
-            source_cleanup_action=(
-                FileAction.RECYCLE if self.allow_unsafe_recycle else FileAction.QUARANTINE
-            ),
+            source_cleanup_action=(FileAction.RECYCLE if self.allow_unsafe_recycle else FileAction.QUARANTINE),
             allow_unsafe_recycle=self.allow_unsafe_recycle,
         )
         worker.moveToThread(thread)
@@ -557,9 +556,7 @@ class TranscodeDialog(QDialog):
     def _media_line(label: str, info: MediaInfo | None) -> str:
         if info is None:
             return f"{label}: unavailable"
-        counts = ", ".join(
-            f"{kind}={info.stream_count(kind)}" for kind in ("video", "audio", "subtitle", "attachment")
-        )
+        counts = ", ".join(f"{kind}={info.stream_count(kind)}" for kind in ("video", "audio", "subtitle", "attachment"))
         return f"{label}: {info.size:,} bytes · {info.duration:.3f}s · {counts} · chapters={info.chapter_count}"
 
     def _selection_changed(self) -> None:
@@ -607,7 +604,11 @@ class TranscodeDialog(QDialog):
         result = self._selected_result()
         if result is None or result.status != JobStatus.COMPLETED or self.is_busy or not self._externally_enabled:
             return
-        target = result.input_path if result.input_path.suffix.casefold() == ".mkv" else result.input_path.with_suffix(".mkv")
+        target = (
+            result.input_path
+            if result.input_path.suffix.casefold() == ".mkv"
+            else result.input_path.with_suffix(".mkv")
+        )
         answer = QMessageBox.question(
             self,
             "Confirm source replacement",

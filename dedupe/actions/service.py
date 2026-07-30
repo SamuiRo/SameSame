@@ -209,7 +209,9 @@ class FileActionService:
                         recycle = send2trash
                     _retry_sharing_violation(lambda: recycle(str(request.source)))
                     if request.source.exists():
-                        raise RuntimeError(f"Recycle integration returned but the source still exists: {request.source}")
+                        raise RuntimeError(
+                            f"Recycle integration returned but the source still exists: {request.source}"
+                        )
                     outcome = ActionOutcome(
                         request.operation_id,
                         request.action,

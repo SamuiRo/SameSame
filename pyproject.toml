@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "samesame"
-version = "1.7.4"
+version = "1.7.5"
 description = "CLI and optional desktop tool for finding exact and similar media files."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,7 +25,6 @@ classifiers = [
   "Topic :: Utilities"
 ]
 dependencies = [
-  "anthropic>=0.39.0",
   "rapidfuzz>=3.9.0",
   "xxhash>=3.5.0",
   "Pillow>=10.4.0",
@@ -34,6 +33,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ai = [
+  "anthropic>=0.39.0"
+]
 gui = [
   "PySide6>=6.8,<7",
   "Send2Trash>=1.8.3"
@@ -42,6 +44,7 @@ dev = [
   "build>=1.2.0",
   "pytest>=8.0.0",
   "ruff>=0.6.0",
+  "mypy>=1.11.0",
   "setuptools>=77"
 ]
 
@@ -57,4 +60,12 @@ include = ["dedupe*"]
 [tool.ruff]
 line-length = 120
 target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+exclude = ["^dedupe/gui/", "^tests/"]
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
 

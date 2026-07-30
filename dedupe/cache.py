@@ -271,6 +271,19 @@ class Cache:
         self.conn.executemany("DELETE FROM name_cache WHERE raw_name = ?", [(raw_name,) for raw_name in raw_names])
         self.conn.commit()
 
+    def vacuum(self) -> int:
+        """Drop cached file rows whose path no longer exists on disk, then
+        VACUUM to reclaim the space. Rows for files no longer present are
+        otherwise kept forever - they don't participate in scans, but the
+        database only grows. Returns the number of rows removed."""
+        paths = [row["path"] for row in self.conn.execute("SELECT path FROM files")]
+        missing = [path for path in paths if not Path(path).exists()]
+        if missing:
+            self.conn.executemany("DELETE FROM files WHERE path = ?", [(path,) for path in missing])
+            self.conn.commit()
+        self.conn.execute("VACUUM")
+        return len(missing)
+
     def stats(self) -> dict[str, object]:
         file_counts = self.conn.execute(
             """

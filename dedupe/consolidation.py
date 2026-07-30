@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from .db import connect
+from .events import CancellationToken
 from .name_normalizer import fallback_normalize
 
 HASH_CHUNK_SIZE = 4 * 1024 * 1024
@@ -34,6 +35,7 @@ class BatchStatus(str, Enum):
     ROLLED_BACK = "rolled back"
     FAILED = "failed"
     UNDONE = "undone"
+    CANCELLED = "cancelled"
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,6 +270,7 @@ class ConsolidationService:
         plan: ConsolidationPlan,
         *,
         progress: Callable[[int, int, str], None] | None = None,
+        cancellation: CancellationToken | None = None,
     ) -> ConsolidationResult:
         moves = list(plan.ready_moves)
         if not moves:
@@ -279,10 +282,20 @@ class ConsolidationService:
             self._record_batch(connection, batch_id, plan, BatchStatus.RUNNING)
             total = len(moves)
             for index, move in enumerate(moves, start=1):
+                if cancellation is not None and cancellation.is_cancelled:
+                    # Checked between files, not mid-move: every move so far
+                    # is either untouched or fully moved-and-verified, so the
+                    # batch is left exactly as rollback-capable as a normal
+                    # completed batch - undo() already handles it (F-12).
+                    message = f"Cancelled after {len(completed)} of {total} file(s)"
+                    self._finish_batch(connection, batch_id, BatchStatus.CANCELLED, message)
+                    return ConsolidationResult(
+                        batch_id, BatchStatus.CANCELLED, plan.title_root, plan.final_root, len(completed), message
+                    )
                 if progress:
                     progress(index - 1, total, f"Validating {move.source.name}")
                 move_id = uuid.uuid4().hex
-                self._record_move_requested(connection, move_id, batch_id, move)
+                self._record_move_requested(connection, move_id, batch_id, move, sequence=index - 1)
                 try:
                     digest = self._move_one(move)
                 except Exception as exc:
@@ -343,8 +356,8 @@ class ConsolidationService:
             if batch_row is None:
                 raise ValueError(f"Unknown consolidation batch: {batch_id}")
             status = BatchStatus(str(batch_row["status"]))
-            if status not in {BatchStatus.COMPLETED, BatchStatus.RUNNING, BatchStatus.FAILED}:
-                raise ValueError("Only a completed or interrupted consolidation batch can be undone")
+            if status not in {BatchStatus.COMPLETED, BatchStatus.RUNNING, BatchStatus.FAILED, BatchStatus.CANCELLED}:
+                raise ValueError("Only a completed, interrupted, or cancelled consolidation batch can be undone")
             rows = connection.execute(
                 "SELECT * FROM consolidation_moves WHERE batch_id = ? AND status = 'completed' ORDER BY sequence DESC",
                 (batch_id,),
@@ -398,13 +411,18 @@ class ConsolidationService:
                 SELECT b.*, COUNT(m.move_id) AS moved_count
                 FROM consolidation_batches b
                 LEFT JOIN consolidation_moves m ON m.batch_id = b.batch_id AND m.status = 'completed'
-                WHERE b.status IN (?, ?, ?)
+                WHERE b.status IN (?, ?, ?, ?)
                 GROUP BY b.batch_id
                 HAVING COUNT(m.move_id) > 0
                 ORDER BY b.created_at DESC
                 LIMIT 1
                 """,
-                (BatchStatus.COMPLETED.value, BatchStatus.RUNNING.value, BatchStatus.FAILED.value),
+                (
+                    BatchStatus.COMPLETED.value,
+                    BatchStatus.RUNNING.value,
+                    BatchStatus.FAILED.value,
+                    BatchStatus.CANCELLED.value,
+                ),
             ).fetchone()
             return self._batch_from_row(row) if row is not None else None
         finally:
@@ -557,13 +575,13 @@ class ConsolidationService:
         move_id: str,
         batch_id: str,
         move: PlannedMove,
+        *,
+        sequence: int,
     ) -> None:
-        sequence = int(
-            connection.execute(
-                "SELECT COUNT(*) FROM consolidation_moves WHERE batch_id = ?",
-                (batch_id,),
-            ).fetchone()[0]
-        )
+        # `sequence` comes from the caller's own loop index instead of a
+        # SELECT COUNT(*) per move, and this insert is intentionally left
+        # uncommitted - it lands together with _record_move_status's UPDATE
+        # in a single commit per move instead of two (F-12).
         connection.execute(
             """
             INSERT INTO consolidation_moves(
@@ -581,7 +599,6 @@ class ConsolidationService:
                 move.modified_at,
             ),
         )
-        connection.commit()
 
     @staticmethod
     def _record_move_status(

@@ -39,6 +39,5 @@
   "refresh_images": false,
   "refresh_audio": false,
   "refresh_names": false,
-  "max_video_candidates_per_bucket": 250,
   "log_level": "INFO"
 }

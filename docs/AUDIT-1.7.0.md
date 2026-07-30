@@ -1257,20 +1257,123 @@ F-11: new `dedupe/db.py` with one `connect(path)` applying
 
 Full suite: 100 passed, 7 subtests, `ruff check .` clean.
 
-### Stage E — Scale and hygiene (~4 days)
+### Stage E — Scale and hygiene (~4 days) · done 2026-07-31 (CI intentionally skipped)
 
-| # | Work | Complexity |
-| --- | --- | ---: |
-| F-01 | Rewrite video pair enumeration; implement or remove the candidate cap | 3/5 |
-| F-06 | Deterministic preview handle release; de-flake the GUI test | 3/5 |
-| F-21 | `ruff format` commit, GitHub Actions, `mypy` baseline, coverage report | 2/5 |
-| F-12 | Cancellable consolidation with byte-level progress | 3/5 |
-| F-19 | Move `anthropic` to an extra; review the model id | 1/5 |
-| F-04 | Throttle progress events | 2/5 |
-| F-22 | `find_name_hints` blocking by `(year, episode)`; resolve ffmpeg once | 1/5 |
+| # | Work | Complexity | Status |
+| --- | --- | ---: | --- |
+| F-01 | Rewrite video pair enumeration; implement or remove the candidate cap | 3/5 | Done |
+| F-06 | Deterministic preview handle release; de-flake the GUI test | 3/5 | Done |
+| F-21 | `ruff format` commit, GitHub Actions, `mypy` baseline, coverage report | 2/5 | Done except GitHub Actions (user declined CI) |
+| F-12 | Cancellable consolidation with byte-level progress | 3/5 | Done except byte-level progress (see note) |
+| F-19 | Move `anthropic` to an extra; review the model id | 1/5 | Done |
+| F-04 | Throttle progress events | 2/5 | Done |
+| F-22 | `find_name_hints` blocking by `(year, episode)`; resolve ffmpeg once | 1/5 | Done (+ `--vacuum-cache`, see note) |
 
 F-01 stays in the plan even at 1,000 files: it still materialises ~119 million
 tuples, and it gets worse as thresholds are lowered during Stage C.
+
+**Implementation notes.**
+
+F-01: `_candidate_pairs` (the function that discarded its own limiting
+arguments) is gone. `find_video_matches` now sorts every fingerprinted record
+by duration once and sweeps forward from each record only while
+`video_durations_compatible` still holds - both the ratio and delta bounds
+are monotonic in a duration-sorted sweep, so the first incompatible
+neighbour is a safe place to `break`, and every unordered pair is generated
+exactly once. `max_video_candidates_per_bucket` (already dead - the old code
+discarded it) was deleted end-to-end: `find_video_matches`,
+`ScanOptions`/`ScanConfiguration`, the CLI flag/config key, docs, and the two
+example configs. Regression:
+`test_video_matching_evaluates_each_compatible_pair_exactly_once` asserts the
+similarity function is called exactly once per naively-computed
+duration-compatible pair - not the old bucket-window count.
+
+F-06: `ComparisonWidget.stop()` (called from `MainWindow.closeEvent`) only
+called `player.stop()`, which pauses playback but does not release the
+underlying OS file handle - only `setSource(QUrl())` does that. It now calls
+`MediaPane.clear()` on both panes. Also,
+`test_video_review_enables_transcode_queue_action` only ever released `left`
+via `release_paths([left])`; `right` was never released before the tempdir
+cleanup, which is what made the suite intermittently hit WinError 32. Its
+teardown now pumps the event loop a few times after `window.close()` to give
+Qt Multimedia's backend room to finish the async release. 18+ consecutive
+clean `test_gui.py` runs after the fix (was flaky roughly 1 in 4-5 before).
+
+F-21: `ruff format .` applied (24 files - folded into the same commit as the
+F-01/F-06 code changes above rather than kept as a separate mechanical commit,
+since those changes already touched several of the same files). Added
+`[tool.mypy]` to `pyproject.toml` (non-strict, `dedupe/` excluding `gui/` and
+`tests/`) and `mypy` to the `dev` extra. Fixed 4 stale `# type: ignore`
+comments and one real bug those exposed: `dedupe/process.py`'s `run()`/
+`popen()` were typed `list[str]` but `transcode/runner.py` passes a
+`tuple[str, ...]`, which mypy correctly rejected - widened to
+`Sequence[str]`. The remaining **37 errors across 9 files** are pre-existing
+(none in code touched this session) and are being kept as a documented
+baseline rather than fixed now - they span `Optional`-narrowing gaps in
+`video_fingerprint.py`/`audio_fingerprint.py`, a `ThreadPoolExecutor.submit`
+overload-inference quirk, an `anthropic` SDK overload mismatch, and a few
+`dict`-typed-as-`Any` indexing errors in probe/metadata parsing. GitHub
+Actions/CI explicitly **not** added per the user's explicit choice.
+
+F-12: `ConsolidationService.execute()` gained a `cancellation:
+CancellationToken | None` parameter, checked once per loop iteration
+(between files). On cancellation the batch is marked with a new
+`BatchStatus.CANCELLED` (added to `undo()`'s and `latest_undoable_batch()`'s
+accepted status sets) rather than rolled back - every move so far is either
+untouched or fully moved-and-verified, so it's exactly as undo-able as a
+normal completed batch. Wired end to end: `ConsolidationWorker` owns a
+`CancellationToken` and a `cancel()` method; `ConsolidationTab` gained a
+"Cancel" button (enabled only during `execute()`, not `undo()`, which has no
+cancellation support); `MainWindow.closeEvent`'s consolidation branch calls
+`consolidation_tab.cancel_consolidation()` instead of only displaying a
+"waiting" message, matching the pattern already used for scan/transcode/
+compression. Also addressed: `_record_move_requested` no longer runs a
+`SELECT COUNT(*)` per move (the caller's own loop index is the sequence
+number) and no longer commits separately from `_record_move_status` - both
+land in one transaction per move instead of two. **Byte-level progress
+reporting was not done** - the `progress: Callable[[int, int, str], None]`
+callback and `ConsolidationTab`'s progress bar are both built around
+per-*file* counts; reporting mid-file byte progress would mean changing that
+callback's semantics (and the GUI wiring that consumes it) rather than a
+contained change to `consolidation.py`, and was deferred as a separate,
+larger UI-facing change. Regression:
+`test_cancellation_stops_between_files_and_leaves_a_rollback_capable_batch`
+(1 of 3 files moved, cancelled, then successfully undone).
+
+F-19: `anthropic>=0.39.0` moved from `[project.dependencies]` to a new `ai`
+extra. `normalize_names` now checks `_anthropic_available()` up front when
+the anthropic provider is selected and logs one clear warning + falls back to
+local heuristics for the whole run, instead of the previous per-batch
+`ImportError` being caught by the generic exception handler with a less
+specific message. `MODEL_NAME = "claude-haiku-4-5"` was reviewed and left
+unchanged - it's a currently-valid model literal per the installed SDK.
+Docs (`README.md`, `docs/USAGE.md`) updated to mention `pip install -e
+".[ai]"`.
+
+F-04: `dedupe/progress.py`'s shared `tqdm()` wrapper (used by every
+fingerprinting stage and `scan_folders`'s discovery loop) now emits a
+PROGRESS event at most once per 100ms instead of once per item, while always
+emitting the very first and the true final update regardless of timing (a
+generator can't know an item is "last" until after it's yielded, so the final
+emit is a post-loop check comparing the true final count against whatever was
+last actually sent). Regression:
+`test_progress_events_are_throttled_but_first_and_last_always_fire` (500
+items → fewer than 500 events, first == 1, last == 500; fails against the
+un-throttled implementation).
+
+F-22: `service.py` now resolves `check_video_tools` once and reuses it for
+both the video and audio stages instead of a `shutil.which` round trip each
+(a small, deliberate behavior change: it's now always resolved once up
+front, even if both stages end up skipped, since the cost is negligible).
+`find_name_hints`'s fuzzy comparison now groups names by `(year, episode)`
+before the pairwise loop instead of comparing every distinct title against
+every other title and filtering year/episode inside the loop - same pairs
+compared, no longer full cross-product first. Added `Cache.vacuum()` (drops
+rows for files no longer on disk, then `VACUUM`) and a `--vacuum-cache` CLI
+flag/exit path, matching the existing `--inspect-cache` pattern.
+
+Full suite: 120 passed, 7 subtests, `ruff check .` and `ruff format --check .`
+clean, `mypy dedupe` at the documented 37-error baseline.
 
 ### Stage F — Product (~6 days)
 
