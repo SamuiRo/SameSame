@@ -1106,23 +1106,71 @@ Acceptance covered by
 and `tests/test_core.py::CoreTests::test_html_and_json_reports_group_chained_matches_into_one_cluster`.
 Full suite: 99 passed, 4 subtests, `ruff check .` clean.
 
-### Stage C — Detection quality (~7 days) · needs measurement, not guessing
+### Stage C — Detection quality (~7 days) · needs measurement, not guessing · partially done 2026-07-31
 
 The order matters: recalibrate the scale before re-tuning anything, because every
 threshold in the project is expressed on the broken scale.
 
-| # | Work | Complexity |
-| --- | --- | ---: |
-| F-26 | Tolerate partial fingerprints; retry once; report excluded files as a stage summary | 3/5 |
-| F-24 | Rescale similarity to a calibrated 0–100 confidence; bump the fingerprint version; re-derive defaults | 3/5 |
-| F-25 | Make the alignment recheck reachable; allow re-alignment at zero duration delta | 3/5 |
-| F-27 | Absolute-time sampling grid so different-length versions share a timeline | 3/5 |
-| F-29 | Expose the duration ratio/delta gates; report gated pairs separately | 2/5 |
-| — | **Build a real labelled anime corpus** — the current `threshold-baseline.json` is 27 synthetic pairs with no real anime, so nothing above can be validated today | 3/5 |
+**Scope decision (2026-07-31).** No real anime/video duplicate corpus was
+available in this environment — only the 27 synthetic pairs in
+`docs/threshold-baseline.json`. Per the audit's own warning below ("every
+other item is unverifiable without it"), F-24, F-27, and F-30 were
+**deliberately deferred** rather than implemented against guessed numbers.
+Only the items that are pure logic/reachability fixes - correct regardless of
+where the similarity scale eventually lands - were done now.
 
-Acceptance: the reported missed pairs are found at the default threshold, with no
-new false positives on the corpus, and every threshold change is backed by
-FP/FN numbers.
+| # | Work | Complexity | Status |
+| --- | --- | ---: | --- |
+| F-26 | Tolerate partial fingerprints; retry once; report excluded files as a stage summary | 3/5 | Done |
+| F-25 | Make the alignment recheck reachable | 3/5 | Done (reachability fix only; see note) |
+| F-29 | Expose the duration ratio/delta gates | 2/5 | Done (gate values only; gated-pair reporting deferred) |
+| F-24 | Rescale similarity to a calibrated 0–100 confidence; bump the fingerprint version; re-derive defaults | 3/5 | **Deferred — needs real corpus** |
+| F-27 | Absolute-time sampling grid so different-length versions share a timeline | 3/5 | **Deferred — needs real corpus** |
+| F-30 | Descriptor/sampling investigation | 4/5 | **Deferred — needs real corpus** |
+| — | **Build a real labelled anime corpus** | 3/5 | **Still open — blocks the three items above** |
+
+**Implementation notes.**
+F-25: `video_fingerprint.py`'s recheck guard no longer gates on `similarity <
+threshold` — it now fires whenever the raw score clears
+`ALIGNMENT_RECHECK_FLOOR` (65) and the duration delta is in range, independent
+of the accept threshold. This was the specific reachability bug (empty
+interval whenever `threshold <= 65`). The related "allow re-alignment at zero
+duration delta" sub-item was **not** done: with only two fixed offsets
+(`0.0`, `duration_delta`), re-aligning at delta≈0 tries the same offset twice
+and changes nothing observable - it's only meaningful together with F-27's
+offset-sweep rework, which is deferred. F-26: `fingerprint_video` now keeps
+whatever frames it can extract (retrying each failed sample once at a nudged
+timestamp) instead of discarding all 15 on a single failure, requires at
+least `MINIMUM_FRAME_COVERAGE` (50%) of samples to still consider the file
+fingerprinted, and logs a stage-level summary of how many files were
+excluded. `VIDEO_FINGERPRINT_VERSION` bumped 2 → 3 so old cached fingerprints
+(always exactly 15 samples) aren't compared against new partial ones under
+stale assumptions. `ordered_sequence_similarity`'s existing alignment DP
+already tolerates unequal-length fingerprints (proven by the pre-existing
+"tolerates inserted samples" test), so dropping failed samples needed no
+change there. F-29: `DEFAULT_MAX_DURATION_RATIO`/`DEFAULT_MAX_DURATION_DELTA`
+are now real CLI flags (`--max-video-duration-ratio`,
+`--max-video-duration-delta`), config keys (flat and nested under `video:`),
+and threaded through `ScanOptions`/`ScanConfiguration` into
+`find_video_matches`. Reporting duration-gated pairs in a separate bucket
+(the second half of F-29's original write-up) was **not** done - it's a
+report/UI feature, not a reachability fix, and was out of the approved scope
+for this pass.
+
+Regression coverage: `test_alignment_recheck_still_fires_at_a_low_threshold`
+(fails without the F-25 fix - reproduces the empty-interval bug directly),
+`test_video_fingerprint_tolerates_one_missing_frame`,
+`test_video_fingerprint_retries_a_failed_frame_once`,
+`test_video_fingerprint_gives_up_below_minimum_coverage`,
+`test_video_matching_logs_a_summary_when_files_are_excluded`,
+`test_cli_exposes_video_duration_gate_overrides`,
+`test_config_file_video_section_maps_duration_gate_keys` (all in
+`tests/test_core.py`). Full suite: 106 passed, 7 subtests, `ruff check .`
+clean.
+
+Acceptance (full stage, still pending F-24/F-27/F-30/corpus): the reported
+missed pairs are found at the default threshold, with no new false positives
+on the corpus, and every threshold change is backed by FP/FN numbers.
 
 **Do the corpus first if only one thing from this stage is done.** Every other
 item is unverifiable without it.

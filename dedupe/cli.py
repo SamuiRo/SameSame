@@ -16,6 +16,7 @@ from .name_normalizer import LMSTUDIO_MODEL, LMSTUDIO_URL
 from .report import write_html_report, write_json_report
 from .scanner import normalize_extensions
 from .service import ScanService
+from .video_fingerprint import DEFAULT_MAX_DURATION_DELTA, DEFAULT_MAX_DURATION_RATIO
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -43,6 +44,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "refresh_names": False,
     "max_video_candidates_per_bucket": 250,
     "max_image_candidates": 250,
+    "max_video_duration_ratio": DEFAULT_MAX_DURATION_RATIO,
+    "max_video_duration_delta": DEFAULT_MAX_DURATION_DELTA,
     "inspect_cache": False,
     "ffmpeg": "ffmpeg",
     "ffprobe": "ffprobe",
@@ -76,6 +79,8 @@ class Config:
     refresh_names: bool
     max_video_candidates_per_bucket: int
     max_image_candidates: int
+    max_video_duration_ratio: float
+    max_video_duration_delta: float
     inspect_cache: bool
     ffmpeg: str
     ffprobe: str
@@ -115,6 +120,10 @@ def _flatten_config(config: dict[str, Any]) -> dict[str, Any]:
                     nested = _canonical_key(nested_key)
                     if nested == "skip":
                         flattened["skip_video"] = nested_value
+                    elif nested in {"duration_ratio", "max_duration_ratio"}:
+                        flattened["max_video_duration_ratio"] = nested_value
+                    elif nested in {"duration_delta", "max_duration_delta"}:
+                        flattened["max_video_duration_delta"] = nested_value
                     else:
                         flattened[nested] = nested_value
             elif canonical == "images":
@@ -274,6 +283,24 @@ def parse_args(argv: list[str] | None = None) -> Config:
         default=None,
         help="Use fingerprint blocking when there are more image candidates than this.",
     )
+    parser.add_argument(
+        "--max-video-duration-ratio",
+        type=float,
+        default=None,
+        help=(
+            "Reject a video candidate pair before content comparison when the longer file is "
+            f"more than this many times the shorter file's duration. Default {DEFAULT_MAX_DURATION_RATIO}."
+        ),
+    )
+    parser.add_argument(
+        "--max-video-duration-delta",
+        type=float,
+        default=None,
+        help=(
+            "Reject a video candidate pair before content comparison when durations differ by more "
+            f"than this many seconds. Default {DEFAULT_MAX_DURATION_DELTA:.0f}."
+        ),
+    )
     parser.add_argument("--inspect-cache", action="store_true", default=None, help="Print cache statistics as JSON and exit.")
     parser.add_argument("--ffmpeg", default=None, help="ffmpeg executable path/name.")
     parser.add_argument("--ffprobe", default=None, help="ffprobe executable path/name.")
@@ -307,6 +334,20 @@ def parse_args(argv: list[str] | None = None) -> Config:
     if merged["log_level"] not in {"DEBUG", "INFO", "WARNING", "ERROR"}:
         raise SystemExit("log_level must be one of: DEBUG, INFO, WARNING, ERROR")
 
+    try:
+        max_video_duration_ratio = float(merged["max_video_duration_ratio"])
+    except (TypeError, ValueError) as exc:
+        raise SystemExit("max_video_duration_ratio must be a finite number greater than 1") from exc
+    if not math.isfinite(max_video_duration_ratio) or max_video_duration_ratio <= 1.0:
+        raise SystemExit("max_video_duration_ratio must be a finite number greater than 1")
+
+    try:
+        max_video_duration_delta = float(merged["max_video_duration_delta"])
+    except (TypeError, ValueError) as exc:
+        raise SystemExit("max_video_duration_delta must be a finite number >= 0") from exc
+    if not math.isfinite(max_video_duration_delta) or max_video_duration_delta < 0.0:
+        raise SystemExit("max_video_duration_delta must be a finite number >= 0")
+
     return Config(
         folders=[Path(folder) for folder in folders or []],
         output=Path(str(merged["output"])),
@@ -332,6 +373,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
         refresh_names=bool(merged["refresh_names"]),
         max_video_candidates_per_bucket=max(2, int(merged["max_video_candidates_per_bucket"])),
         max_image_candidates=max(2, int(merged["max_image_candidates"])),
+        max_video_duration_ratio=max_video_duration_ratio,
+        max_video_duration_delta=max_video_duration_delta,
         inspect_cache=bool(merged["inspect_cache"]),
         ffmpeg=str(merged["ffmpeg"]),
         ffprobe=str(merged["ffprobe"]),

@@ -33,7 +33,12 @@ from .scanner import (
     scan_folders,
 )
 from .video_fingerprint import PIL_AVAILABLE as VIDEO_PIL_AVAILABLE
-from .video_fingerprint import check_video_tools, find_video_matches
+from .video_fingerprint import (
+    DEFAULT_MAX_DURATION_DELTA,
+    DEFAULT_MAX_DURATION_RATIO,
+    check_video_tools,
+    find_video_matches,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -84,6 +89,8 @@ class ScanConfiguration(Protocol):
     refresh_names: bool
     max_video_candidates_per_bucket: int
     max_image_candidates: int
+    max_video_duration_ratio: float
+    max_video_duration_delta: float
     ffmpeg: str
     ffprobe: str
 
@@ -114,6 +121,8 @@ class ScanOptions:
     refresh_names: bool = False
     max_video_candidates_per_bucket: int = 250
     max_image_candidates: int = 250
+    max_video_duration_ratio: float = DEFAULT_MAX_DURATION_RATIO
+    max_video_duration_delta: float = DEFAULT_MAX_DURATION_DELTA
     ffmpeg: str = "ffmpeg"
     ffprobe: str = "ffprobe"
 
@@ -275,6 +284,8 @@ class ScanService:
                             ffprobe=ffprobe,
                             workers=config.workers,
                             max_candidates_per_bucket=config.max_video_candidates_per_bucket,
+                            max_duration_ratio=config.max_video_duration_ratio,
+                            max_duration_delta=config.max_video_duration_delta,
                         )
             LOGGER.info("Found %d video matches", len(video_matches))
 

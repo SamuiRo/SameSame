@@ -25,6 +25,8 @@ PIL_AVAILABLE = Image is not None
 LOGGER = logging.getLogger(__name__)
 SAMPLE_COUNT = 15
 SAMPLE_POINTS = tuple((index + 1) / (SAMPLE_COUNT + 1) for index in range(SAMPLE_COUNT))
+MINIMUM_FRAME_COVERAGE = 0.5
+FRAME_RETRY_NUDGE = 0.5
 DEFAULT_MAX_DURATION_RATIO = 1.5
 DEFAULT_MAX_DURATION_DELTA = 15 * 60.0
 ALIGNMENT_RECHECK_FLOOR = 65.0
@@ -140,8 +142,14 @@ def fingerprint_video(
         timestamp = max(0.0, start_offset + span * fraction)
         frame = _extract_frame(path, timestamp, ffmpeg)
         if frame is None:
-            return None
+            # One retry with a nudged timestamp: the original position may have
+            # landed on a corrupt frame or a transient decode failure.
+            frame = _extract_frame(path, timestamp + FRAME_RETRY_NUDGE, ffmpeg)
+        if frame is None:
+            continue
         hashes.append(phash(frame))
+    if len(hashes) < math.ceil(SAMPLE_COUNT * MINIMUM_FRAME_COVERAGE):
+        return None
     return hashes
 
 
@@ -322,6 +330,13 @@ def find_video_matches(
                     record.fingerprint_version = VIDEO_FINGERPRINT_VERSION
                     cache.upsert_file(record)
         cache.conn.commit()
+        excluded = sum(1 for record in missing_fingerprint if not record.fingerprint)
+        if excluded:
+            LOGGER.warning(
+                "%d of %d videos could not be fingerprinted (too few readable frames) and were excluded from video matching",
+                excluded,
+                len(missing_fingerprint),
+            )
 
     buckets: dict[int, list[FileRecord]] = defaultdict(list)
     for record in records:
@@ -358,10 +373,11 @@ def find_video_matches(
             ):
                 continue
             similarity = ordered_sequence_similarity(left.fingerprint, right.fingerprint)
-            if (
-                ALIGNMENT_RECHECK_FLOOR <= similarity < threshold
-                and 0.05 < delta <= ALIGNMENT_RECHECK_MAX_DELTA
-            ):
+            # Recheck whenever the raw score clears the noise floor, independent of
+            # `threshold`: gating on `< threshold` made this unreachable for any
+            # threshold <= ALIGNMENT_RECHECK_FLOOR, which is exactly the range users
+            # fall back to when a real duplicate is missed (F-25).
+            if ALIGNMENT_RECHECK_FLOOR <= similarity and 0.05 < delta <= ALIGNMENT_RECHECK_MAX_DELTA:
                 similarity = video_similarity(left, right, ffmpeg, aligned_fingerprints)
             if threshold <= similarity:
                 matches.append(VideoMatch(pair[0], pair[1], round(similarity, 2), round(delta, 3)))

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-VIDEO_FINGERPRINT_VERSION = 2
+VIDEO_FINGERPRINT_VERSION = 3
 
 
 @dataclass(slots=True)

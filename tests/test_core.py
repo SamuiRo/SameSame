@@ -28,7 +28,9 @@ from dedupe.name_normalizer import (
 from dedupe.report import report_to_dict, write_html_report, write_json_report
 from dedupe.scanner import scan_folders
 from dedupe.video_fingerprint import (
+    SAMPLE_COUNT,
     find_video_matches,
+    fingerprint_video,
     ordered_sequence_similarity,
     video_durations_compatible,
 )
@@ -46,10 +48,31 @@ class CoreTests(unittest.TestCase):
             ["--folders", ".", "--audio-threshold", "nan"],
             ["--folders", ".", "--workers", "0"],
             ["--folders", ".", "--workers", "65"],
+            ["--folders", ".", "--max-video-duration-ratio", "1"],
+            ["--folders", ".", "--max-video-duration-ratio", "nan"],
+            ["--folders", ".", "--max-video-duration-delta", "-1"],
         )
         for arguments in invalid_arguments:
             with self.subTest(arguments=arguments), self.assertRaises(SystemExit):
                 parse_args(arguments)
+
+    def test_cli_exposes_video_duration_gate_overrides(self) -> None:
+        # F-29: these were previously accepted by find_video_matches but
+        # unreachable from the CLI/config.
+        config = parse_args(["--folders", ".", "--max-video-duration-ratio", "2.5", "--max-video-duration-delta", "120"])
+        self.assertEqual(config.max_video_duration_ratio, 2.5)
+        self.assertEqual(config.max_video_duration_delta, 120.0)
+
+    def test_config_file_video_section_maps_duration_gate_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "samesame.json"
+            config_path.write_text(
+                json.dumps({"folders": ["."], "video": {"duration_ratio": 1.8, "duration_delta": 300}}),
+                encoding="utf-8",
+            )
+            config = parse_args(["--config", str(config_path)])
+            self.assertEqual(config.max_video_duration_ratio, 1.8)
+            self.assertEqual(config.max_video_duration_delta, 300.0)
 
     def test_fallback_normalize_removes_common_noise(self) -> None:
         result = fallback_normalize("[Group] Show_Name.01.1080p.x264.SUB")
@@ -410,6 +433,92 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(len(matches), 1)
             self.assertEqual(matches[0].similarity, 100.0)
             self.assertEqual(matches[0].duration_delta, 1.0)
+
+    def test_alignment_recheck_still_fires_at_a_low_threshold(self) -> None:
+        # Regression for F-25: ALIGNMENT_RECHECK_FLOOR (65) combined with a
+        # `< threshold` upper bound made the recheck unreachable whenever
+        # threshold <= 65 - exactly the range users fall back to after a real
+        # duplicate goes missing. Raw similarity here is ~75% (>= the floor);
+        # with threshold=50 the buggy guard `65 <= 75 < 50` was always False.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            records = [
+                FileRecord(base / "short.mp4", base, 100, 1, "short", duration=60.0, fingerprint=[0] * 5),
+                FileRecord(
+                    base / "extended.mkv",
+                    base,
+                    200,
+                    1,
+                    "extended",
+                    duration=61.0,
+                    fingerprint=[(1 << 16) - 1] * 5,
+                ),
+            ]
+            with Cache(base / "cache.sqlite3") as cache:
+                cache.upsert_files(records)
+                with patch("dedupe.video_fingerprint.fingerprint_video", return_value=[0] * 5):
+                    matches = find_video_matches(
+                        records,
+                        cache,
+                        threshold=50,
+                        ffmpeg="unused",
+                        ffprobe="unused",
+                        workers=1,
+                    )
+
+            self.assertEqual(len(matches), 1)
+            self.assertEqual(matches[0].similarity, 100.0)
+
+    def test_video_fingerprint_tolerates_one_missing_frame(self) -> None:
+        # F-26: one failed sample (index 0 -> timestamp 6.0s for a 96s file, and
+        # its retry at 6.5s) must not discard the other 14 good frames.
+        from PIL import Image
+
+        good_frame = Image.new("L", (4, 4), 128)
+
+        def fake_extract(path: Path, timestamp: float, ffmpeg: str) -> Image.Image | None:
+            return None if timestamp in (6.0, 6.5) else good_frame
+
+        with patch("dedupe.video_fingerprint._extract_frame", side_effect=fake_extract):
+            fingerprint = fingerprint_video(Path("video.mkv"), 96.0, "ffmpeg")
+
+        self.assertIsNotNone(fingerprint)
+        self.assertEqual(len(fingerprint), SAMPLE_COUNT - 1)
+
+    def test_video_fingerprint_retries_a_failed_frame_once(self) -> None:
+        from PIL import Image
+
+        good_frame = Image.new("L", (4, 4), 128)
+
+        def fake_extract(path: Path, timestamp: float, ffmpeg: str) -> Image.Image | None:
+            return None if timestamp == 6.0 else good_frame  # only the first attempt fails
+
+        with patch("dedupe.video_fingerprint._extract_frame", side_effect=fake_extract):
+            fingerprint = fingerprint_video(Path("video.mkv"), 96.0, "ffmpeg")
+
+        self.assertIsNotNone(fingerprint)
+        self.assertEqual(len(fingerprint), SAMPLE_COUNT)
+
+    def test_video_fingerprint_gives_up_below_minimum_coverage(self) -> None:
+        with patch("dedupe.video_fingerprint._extract_frame", return_value=None):
+            fingerprint = fingerprint_video(Path("video.mkv"), 96.0, "ffmpeg")
+
+        self.assertIsNone(fingerprint)
+
+    def test_video_matching_logs_a_summary_when_files_are_excluded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            records = [FileRecord(base / "broken.mp4", base, 100, 1, "broken", duration=60.0)]
+            with Cache(base / "cache.sqlite3") as cache:
+                cache.upsert_files(records)
+                with patch("dedupe.video_fingerprint.fingerprint_video", return_value=None):
+                    with self.assertLogs("dedupe.video_fingerprint", level="WARNING") as captured:
+                        matches = find_video_matches(
+                            records, cache, threshold=90, ffmpeg="unused", ffprobe="unused", workers=1
+                        )
+
+            self.assertEqual(matches, [])
+            self.assertTrue(any("excluded from video matching" in message for message in captured.output))
 
     def test_large_video_bucket_blocking_keeps_near_duplicate_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
