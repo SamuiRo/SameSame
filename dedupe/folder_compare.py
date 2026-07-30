@@ -5,6 +5,9 @@ from itertools import combinations
 from .models import (
     AudioMatch,
     ClusterAssignment,
+    ClusterEvidence,
+    ContentCluster,
+    DedupeReport,
     ExactDuplicateGroup,
     FileRecord,
     FolderPair,
@@ -15,15 +18,18 @@ from .models import (
 from .progress import check_cancelled
 
 
-def build_cluster_assignments(
-    records: list[FileRecord],
+def build_content_clusters(
     exact_groups: list[ExactDuplicateGroup],
     video_matches: list[VideoMatch],
-    normalized: dict[str, NormalizedName],
     image_matches: list[ImageMatch] | None = None,
     audio_matches: list[AudioMatch] | None = None,
-) -> dict[str, ClusterAssignment]:
-    assignments: dict[str, ClusterAssignment] = {}
+) -> list[ContentCluster]:
+    """Union-find over exact groups plus video/image/audio matches.
+
+    Pure function over match lists only (no records/names needed), so callers
+    that only have a DedupeReport's raw evidence lists - not the scan's
+    FileRecords - can still recompute the same transitive clusters.
+    """
     parent: dict[str, str] = {}
     size: dict[str, int] = {}
 
@@ -65,8 +71,12 @@ def build_cluster_assignments(
     content_groups: dict[str, list[str]] = {}
     for path in parent:
         content_groups.setdefault(find(path), []).append(path)
+
+    content_clusters: list[ContentCluster] = []
     for paths in content_groups.values():
         check_cancelled()
+        if len(paths) < 2:
+            continue
         path_set = set(paths)
         component_video_matches = [
             match for match in video_matches if match.left in path_set and match.right in path_set
@@ -101,8 +111,64 @@ def build_cluster_assignments(
             level = "exact"
             confidence = 100.0
         cluster_id = f"{level}:{min(paths)}"
-        for path in paths:
-            assignments[path] = ClusterAssignment(cluster_id=cluster_id, level=level, confidence=confidence)
+        evidence = (
+            [
+                ClusterEvidence(left=match.left, right=match.right, similarity=match.similarity, level="video")
+                for match in component_video_matches
+            ]
+            + [
+                ClusterEvidence(left=match.left, right=match.right, similarity=match.similarity, level="image")
+                for match in component_image_matches
+            ]
+            + [
+                ClusterEvidence(left=match.left, right=match.right, similarity=match.similarity, level="audio")
+                for match in component_audio_matches
+            ]
+        )
+        content_clusters.append(
+            ContentCluster(
+                cluster_id=cluster_id,
+                level=level,
+                confidence=confidence,
+                paths=sorted(paths),
+                evidence=evidence,
+            )
+        )
+
+    content_clusters.sort(key=lambda cluster: cluster.cluster_id)
+    return content_clusters
+
+
+def resolve_content_clusters(report: DedupeReport) -> list[ContentCluster]:
+    """Return report.content_clusters, recomputing it if a caller built the
+    report without going through ScanService (e.g. tests, ad-hoc scripts)."""
+    if report.content_clusters:
+        return report.content_clusters
+    if not (report.exact_duplicates or report.video_matches or report.image_matches or report.audio_matches):
+        return []
+    return build_content_clusters(
+        report.exact_duplicates,
+        report.video_matches,
+        image_matches=report.image_matches,
+        audio_matches=report.audio_matches,
+    )
+
+
+def build_cluster_assignments(
+    records: list[FileRecord],
+    exact_groups: list[ExactDuplicateGroup],
+    video_matches: list[VideoMatch],
+    normalized: dict[str, NormalizedName],
+    image_matches: list[ImageMatch] | None = None,
+    audio_matches: list[AudioMatch] | None = None,
+) -> tuple[dict[str, ClusterAssignment], list[ContentCluster]]:
+    content_clusters = build_content_clusters(exact_groups, video_matches, image_matches, audio_matches)
+    assignments: dict[str, ClusterAssignment] = {}
+    for cluster in content_clusters:
+        for path in cluster.paths:
+            assignments[path] = ClusterAssignment(
+                cluster_id=cluster.cluster_id, level=cluster.level, confidence=cluster.confidence
+            )
 
     for record in records:
         check_cancelled()
@@ -115,7 +181,7 @@ def build_cluster_assignments(
             assignments[record.path_key] = ClusterAssignment(cluster_id=cluster_id, level="name", confidence=70.0)
         else:
             assignments[record.path_key] = ClusterAssignment(cluster_id=f"path:{record.path_key}", level="path", confidence=0.0)
-    return assignments
+    return assignments, content_clusters
 
 
 def compare_folders(

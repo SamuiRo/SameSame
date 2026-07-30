@@ -1065,22 +1065,46 @@ F-06's pre-existing preview-handle flakiness in
 during verification, unrelated to these changes and unchanged by them; it
 remains tracked under Stage E.
 
-### Stage B — Result grouping (~4 days) · highest value
+### Stage B — Result grouping (~4 days) · highest value · done 2026-07-31
 
 Turns N(N−1)/2 pairwise cases into one case per real duplicate set. This is the
 reported pain point and it unlocks batch cleanup for similar matches.
 
-| # | Work | Complexity |
-| --- | --- | ---: |
-| F-23a | Add `ContentCluster` to `DedupeReport`; populate from the existing union-find | 2/5 |
-| F-23b | One `ReviewItem` per cluster with the full path list and a per-pair evidence matrix | 3/5 |
-| F-23c | Lift the exact-only restriction on keeper-based batch cleanup to any content-backed cluster | 2/5 |
-| F-23d | Cluster-level `_group_id` so one decision covers the whole set | 1/5 |
-| F-23e | Cluster sections in the HTML and JSON reports | 2/5 |
+| # | Work | Complexity | Status |
+| --- | --- | ---: | --- |
+| F-23a | Add `ContentCluster` to `DedupeReport`; populate from the existing union-find | 2/5 | Done |
+| F-23b | One `ReviewItem` per cluster with the full path list and a per-pair evidence matrix | 3/5 | Done |
+| F-23c | Lift the exact-only restriction on keeper-based batch cleanup to any content-backed cluster | 2/5 | Done |
+| F-23d | Cluster-level `_group_id` so one decision covers the whole set | 1/5 | Done (free consequence of F-23b) |
+| F-23e | Cluster sections in the HTML and JSON reports | 2/5 | Done |
 
 Acceptance: three copies of one episode in three folders produce **one** review
 case listing three files, with a keeper selector and a working batch action; a
 decision recorded once is visible for the whole cluster.
+
+**Implementation notes.**
+`folder_compare.py` gained `build_content_clusters()` (pure function over
+match/group lists, no records/names needed) and `resolve_content_clusters()`
+(prefers `report.content_clusters`, recomputes on the fly if a caller built a
+`DedupeReport` without going through `ScanService` — tests, scripts, older
+reports). `build_cluster_assignments()` now calls `build_content_clusters()`
+internally instead of duplicating the union-find, and returns
+`(assignments, content_clusters)`. `build_review_items()` in
+`gui/result_items.py` emits one `ReviewItem` per cluster (category = cluster
+level, including a new `"content"` category for clusters connected by more
+than one evidence type) with an evidence string built from the cluster's
+per-pair matches. `_group_id` in `main_window.py` needed no code change — it
+already hashes category + sorted paths, so one `ReviewItem` per cluster makes
+it cluster-scoped automatically. The exact-only restriction on
+"Quarantine other copies…" / batch checked-quarantine was lifted to all
+content-backed categories in `main_window.py` and `preview.py`. `report.py`'s
+HTML export now renders one `<details>` block per cluster (plus a new "Змішані
+докази" section for mixed-evidence clusters); `report_to_dict()` populates
+`content_clusters` via the same fallback when the caller didn't.
+Acceptance covered by
+`tests/test_gui.py::GuiSmokeTests::test_similar_video_chain_is_one_review_case_with_working_batch_cleanup`
+and `tests/test_core.py::CoreTests::test_html_and_json_reports_group_chained_matches_into_one_cluster`.
+Full suite: 99 passed, 4 subtests, `ruff check .` clean.
 
 ### Stage C — Detection quality (~7 days) · needs measurement, not guessing
 

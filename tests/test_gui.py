@@ -24,12 +24,15 @@ PYSIDE_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 
 class ResultItemTests(unittest.TestCase):
     def test_all_report_categories_become_review_items(self) -> None:
+        # "k"/"l" are matched by both video and audio evidence, so they form a
+        # mixed-evidence ("content") cluster distinct from the pure video and
+        # audio clusters below (F-23).
         report = DedupeReport(
-            scanned_files=7,
+            scanned_files=9,
             exact_duplicates=[ExactDuplicateGroup("hash", ["a", "b"], 10)],
-            video_matches=[VideoMatch("c", "d", 91.0, 0.5)],
+            video_matches=[VideoMatch("c", "d", 91.0, 0.5), VideoMatch("k", "l", 92.0, 0.1)],
             image_matches=[ImageMatch("e", "f", 95.0)],
-            audio_matches=[AudioMatch("g", "h", 97.0, 0.2)],
+            audio_matches=[AudioMatch("g", "h", 97.0, 0.2), AudioMatch("k", "l", 96.0, 0.1)],
             folder_pairs=[FolderPair("left", "right", 80.0, 80.0, 90.0, [], [], [])],
             name_hints=[NameHint("name:key", 100.0, ["i", "j"], "Title")],
         )
@@ -38,7 +41,7 @@ class ResultItemTests(unittest.TestCase):
         counts = category_counts(items)
 
         self.assertEqual({item.category for item in items}, set(CATEGORY_LABELS) - {"all"})
-        self.assertEqual(counts["all"], 6)
+        self.assertEqual(counts["all"], 7)
         self.assertTrue(all(counts[category] == 1 for category in CATEGORY_LABELS if category != "all"))
 
 
@@ -584,6 +587,97 @@ class GuiSmokeTests(unittest.TestCase):
                 self.assertEqual(len(FileActionService(journal_path, quarantine_root).recent_operations()), 3)
             finally:
                 dialog.close()
+                window.close()
+                self.application.processEvents()
+
+    def test_similar_video_chain_is_one_review_case_with_working_batch_cleanup(self) -> None:
+        """Stage B acceptance test (F-23): three copies of one episode linked by a
+        chained A~B, B~C video match must produce ONE review case listing all
+        three files, with a working keeper-based batch action, and a decision
+        recorded once must cover the whole cluster - not three separate pairwise
+        cases each needing its own decision."""
+        from PySide6.QtCore import QEventLoop, QTimer, Qt
+
+        from dedupe.actions import FileAction, FileActionService
+        from dedupe.gui.main_window import MainWindow
+        from dedupe.metadata import basic_media_metadata
+        from dedupe.models import FileRecord
+        from dedupe.service import ScanResult
+
+        def wait_for_action(window: MainWindow) -> None:
+            event_loop = QEventLoop()
+            poll = QTimer()
+            poll.timeout.connect(lambda: event_loop.quit() if window._action_thread is None else None)
+            timeout = QTimer()
+            timeout.setSingleShot(True)
+            timeout.timeout.connect(event_loop.quit)
+            poll.start(10)
+            timeout.start(10_000)
+            event_loop.exec()
+            poll.stop()
+            self.assertTrue(timeout.isActive(), "GUI file action timed out")
+            timeout.stop()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            episode_a = root / "episode-a.mkv"
+            episode_b = root / "episode-b.mkv"
+            episode_c = root / "episode-c.mkv"
+            for path in (episode_a, episode_b, episode_c):
+                path.write_bytes(b"same-episode-different-intro")
+            records = []
+            for path in (episode_a, episode_b, episode_c):
+                stat = path.stat()
+                records.append(FileRecord(path, root, stat.st_size, stat.st_mtime, path.stem))
+            report = DedupeReport(
+                3,
+                [],
+                [VideoMatch(str(episode_a), str(episode_b), 91.0, 0.2), VideoMatch(str(episode_b), str(episode_c), 89.0, 0.3)],
+                [],
+                [],
+                [],
+                [],
+            )
+            result = ScanResult(report, records, {record.path_key: basic_media_metadata(record) for record in records})
+            journal_path = root / "operations.sqlite3"
+            quarantine_root = root / "quarantine"
+            window = MainWindow()
+            window._journal_path = lambda: journal_path  # type: ignore[method-assign]
+            window.quarantine_path.setText(str(quarantine_root))
+            window._scan_completed(result)
+            self.application.processEvents()
+
+            try:
+                self.assertEqual(len(window._items), 1)
+                item = window._items[0]
+                self.assertEqual(item.category, "video")
+                self.assertEqual(set(item.paths), {str(episode_a), str(episode_b), str(episode_c)})
+
+                window.result_list.setCurrentRow(0)
+                self.application.processEvents()
+                self.assertEqual(window.comparison.batch_file_list.count(), 3)
+                for index in range(window.comparison.batch_file_list.count()):
+                    checkbox = window.comparison.batch_file_list.item(index)
+                    if checkbox.data(Qt.ItemDataRole.UserRole) != str(episode_a):
+                        checkbox.setCheckState(Qt.CheckState.Checked)
+                self.assertTrue(window.comparison.batch_quarantine_checked_button.isEnabled())
+
+                window._confirm_action = lambda *_args, **_kwargs: True  # type: ignore[method-assign]
+                window._request_batch_action((str(episode_b), str(episode_c)), FileAction.QUARANTINE)
+                wait_for_action(window)
+
+                self.assertTrue(episode_a.exists())
+                self.assertFalse(episode_b.exists())
+                self.assertFalse(episode_c.exists())
+
+                operations = FileActionService(journal_path, quarantine_root).recent_operations()
+                group_ids = {operation.group_id for operation in operations}
+                self.assertEqual(group_ids, {window._group_id(item)})
+
+                window.result_list.setCurrentRow(0)
+                self.application.processEvents()
+                self.assertIsNotNone(window._review_decisions.get(window._group_id(item)))
+            finally:
                 window.close()
                 self.application.processEvents()
 

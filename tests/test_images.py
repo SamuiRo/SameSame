@@ -143,7 +143,7 @@ class ImageFingerprintTests(unittest.TestCase):
                 record.raw_name: NormalizedName(record.raw_name, record.raw_name)
                 for record in records
             }
-            assignments = build_cluster_assignments(
+            assignments, _clusters = build_cluster_assignments(
                 records,
                 exact_groups,
                 [],

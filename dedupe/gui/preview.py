@@ -476,14 +476,14 @@ class ComparisonWidget(QWidget):
     def _update_action_controls(self, *_args: object) -> None:
         has_item = self._item is not None and self._actions_enabled
         selected_path = Path(self._selected_path()) if self._selected_path() else None
-        content_backed = bool(self._item and self._item.category in {"exact", "video", "image", "audio"})
+        content_backed = bool(self._item and self._item.category in {"exact", "video", "image", "audio", "content"})
         can_mutate = bool(content_backed and selected_path and selected_path.is_file())
         self.keep_button.setEnabled(has_item)
         self.ignore_button.setEnabled(has_item)
         self.quarantine_button.setEnabled(can_mutate)
         self.recycle_button.setEnabled(can_mutate)
         self.batch_quarantine_button.setEnabled(
-            bool(self._item and self._item.category == "exact" and len(self._item.paths) > 1 and can_mutate)
+            bool(self._item and content_backed and len(self._item.paths) > 1 and can_mutate)
         )
         self.transcode_button.setEnabled(
             bool(

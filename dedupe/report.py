@@ -6,11 +6,15 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from .models import DedupeReport
+from .folder_compare import resolve_content_clusters
+from .models import ContentCluster, DedupeReport, ExactDuplicateGroup
 
 
 def report_to_dict(report: DedupeReport) -> dict[str, Any]:
-    return asdict(report)
+    payload = asdict(report)
+    if not report.content_clusters:
+        payload["content_clusters"] = [asdict(cluster) for cluster in resolve_content_clusters(report)]
+    return payload
 
 
 def write_json_report(report: DedupeReport, path: Path) -> None:
@@ -24,51 +28,46 @@ def _path_list(paths: list[str]) -> str:
     return "<ul>" + "".join(f"<li><code>{html.escape(path)}</code></li>" for path in paths) + "</ul>"
 
 
+def _cluster_summary(cluster: ContentCluster, exact_by_paths: dict[frozenset[str], ExactDuplicateGroup]) -> str:
+    if cluster.level == "exact":
+        group = exact_by_paths.get(frozenset(cluster.paths))
+        size_text = f"{group.size:,} bytes" if group is not None else "byte-identical"
+        return f"{len(cluster.paths)} files · {size_text}"
+    evidence = "; ".join(f"{pair.level} {pair.similarity:.2f}%" for pair in cluster.evidence)
+    summary = f"{len(cluster.paths)} files · {cluster.confidence:.2f}% min confidence"
+    return f"{summary} · {evidence}" if evidence else summary
+
+
+def _cluster_items(
+    clusters: list[ContentCluster],
+    level: str,
+    exact_by_paths: dict[frozenset[str], ExactDuplicateGroup],
+) -> list[str]:
+    items = []
+    for cluster in clusters:
+        if cluster.level != level:
+            continue
+        open_attr = " open" if level == "exact" else ""
+        items.append(
+            f"""
+            <details{open_attr}>
+              <summary>{html.escape(_cluster_summary(cluster, exact_by_paths))}</summary>
+              {_path_list(cluster.paths)}
+            </details>
+            """
+        )
+    return items
+
+
 def write_html_report(report: DedupeReport, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    exact_items = []
-    for group in report.exact_duplicates:
-        exact_items.append(
-            f"""
-            <details open>
-              <summary>{len(group.paths)} files · {group.similarity:.2f}% · {group.size:,} bytes</summary>
-              {_path_list(group.paths)}
-            </details>
-            """
-        )
-
-    video_items = []
-    for match in report.video_matches:
-        video_items.append(
-            f"""
-            <details>
-              <summary>{match.similarity:.2f}% · Δ {match.duration_delta:.3f}s</summary>
-              {_path_list([match.left, match.right])}
-            </details>
-            """
-        )
-
-    image_items = []
-    for match in report.image_matches:
-        image_items.append(
-            f"""
-            <details>
-              <summary>{match.similarity:.2f}%</summary>
-              {_path_list([match.left, match.right])}
-            </details>
-            """
-        )
-
-    audio_items = []
-    for match in report.audio_matches:
-        audio_items.append(
-            f"""
-            <details>
-              <summary>{match.similarity:.2f}% · Δ {match.duration_delta:.3f}s</summary>
-              {_path_list([match.left, match.right])}
-            </details>
-            """
-        )
+    clusters = resolve_content_clusters(report)
+    exact_by_paths = {frozenset(group.paths): group for group in report.exact_duplicates}
+    exact_items = _cluster_items(clusters, "exact", exact_by_paths)
+    video_items = _cluster_items(clusters, "video", exact_by_paths)
+    image_items = _cluster_items(clusters, "image", exact_by_paths)
+    audio_items = _cluster_items(clusters, "audio", exact_by_paths)
+    content_items = _cluster_items(clusters, "content", exact_by_paths)
 
     folder_items = []
     for pair in report.folder_pairs:
@@ -212,10 +211,11 @@ def write_html_report(report: DedupeReport, path: Path) -> None:
     <h1>Duplicate Media Report</h1>
     <p class="muted">Scanned {report.scanned_files} files. Exact, video, image, and audio matches are content-backed; name hints and name-assisted folder scores are lower confidence.</p>
     <div class="stats">
-      <div class="stat"><strong>{len(report.exact_duplicates)}</strong>Exact groups</div>
-      <div class="stat"><strong>{len(report.video_matches)}</strong>Video matches</div>
-      <div class="stat"><strong>{len(report.image_matches)}</strong>Image matches</div>
-      <div class="stat"><strong>{len(report.audio_matches)}</strong>Audio matches</div>
+      <div class="stat"><strong>{len(exact_items)}</strong>Exact groups</div>
+      <div class="stat"><strong>{len(video_items)}</strong>Video clusters</div>
+      <div class="stat"><strong>{len(image_items)}</strong>Image clusters</div>
+      <div class="stat"><strong>{len(audio_items)}</strong>Audio clusters</div>
+      <div class="stat"><strong>{len(content_items)}</strong>Mixed-evidence clusters</div>
       <div class="stat"><strong>{len(report.folder_pairs)}</strong>Folder pairs</div>
       <div class="stat"><strong>{len(report.name_hints)}</strong>Name hints</div>
     </div>
@@ -229,6 +229,8 @@ def write_html_report(report: DedupeReport, path: Path) -> None:
     {''.join(image_items) or '<p class="muted">No similar images found above threshold.</p>'}
     <h2>Схожі аудіозаписи</h2>
     {''.join(audio_items) or '<p class="muted">No similar audio found above threshold.</p>'}
+    <h2>Змішані докази</h2>
+    {''.join(content_items) or '<p class="muted">No mixed-evidence clusters found.</p>'}
     <h2>Пари тек</h2>
     {''.join(folder_items) or '<p class="muted">No folder pairs found above threshold.</p>'}
     <h2>Підказки за назвою</h2>

@@ -613,6 +613,7 @@ class MainWindow(QMainWindow):
             "video",
             "image",
             "audio",
+            "content",
         }:
             QMessageBox.warning(self, "Content evidence required", "File actions are disabled for name and folder hints.")
             return
@@ -629,7 +630,11 @@ class MainWindow(QMainWindow):
         ):
             return
         item = self._current_review_item()
-        if item is None or item.category != "exact" or not isinstance(paths_value, tuple):
+        if (
+            item is None
+            or item.category not in {"exact", "video", "image", "audio", "content"}
+            or not isinstance(paths_value, tuple)
+        ):
             return
         records = [
             record
@@ -665,7 +670,7 @@ class MainWindow(QMainWindow):
         item = self._current_review_item()
         if (
             item is None
-            or item.category not in {"exact", "video", "image", "audio"}
+            or item.category not in {"exact", "video", "image", "audio", "content"}
             or not isinstance(paths_value, tuple)
             or not isinstance(action_value, FileAction)
             or action_value not in {FileAction.QUARANTINE, FileAction.RECYCLE}

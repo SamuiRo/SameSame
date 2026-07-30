@@ -381,7 +381,7 @@ class ScanService:
                 total=len(records),
                 message="Building content clusters",
             ):
-                assignments = build_cluster_assignments(
+                assignments, content_clusters = build_cluster_assignments(
                     records,
                     exact_groups,
                     video_matches,
@@ -401,6 +401,7 @@ class ScanService:
             folder_pairs=folder_pairs,
             name_hints=name_hints,
             warnings=warnings,
+            content_clusters=content_clusters,
         )
         result = ScanResult(
             report=report,

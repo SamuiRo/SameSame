@@ -99,6 +99,23 @@ class ClusterAssignment:
 
 
 @dataclass(slots=True)
+class ClusterEvidence:
+    left: str
+    right: str
+    similarity: float
+    level: str
+
+
+@dataclass(slots=True)
+class ContentCluster:
+    cluster_id: str
+    level: str
+    confidence: float
+    paths: list[str]
+    evidence: list[ClusterEvidence] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class FolderPair:
     left: str
     right: str
@@ -120,3 +137,4 @@ class DedupeReport:
     folder_pairs: list[FolderPair]
     name_hints: list[NameHint]
     warnings: list[str] = field(default_factory=list)
+    content_clusters: list[ContentCluster] = field(default_factory=list)

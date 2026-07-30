@@ -14,7 +14,7 @@ from dedupe.cache import Cache
 from dedupe.cli import parse_args
 from dedupe.exact_hash import find_exact_duplicates
 from dedupe.folder_compare import build_cluster_assignments, compare_folders
-from dedupe.models import ExactDuplicateGroup, FileRecord, NormalizedName
+from dedupe.models import DedupeReport, ExactDuplicateGroup, FileRecord, NormalizedName, VideoMatch
 from dedupe.name_normalizer import (
     PROMPT_HASH,
     _coerce_normalized_results,
@@ -25,6 +25,7 @@ from dedupe.name_normalizer import (
     find_name_hints,
     normalize_names,
 )
+from dedupe.report import report_to_dict, write_html_report, write_json_report
 from dedupe.scanner import scan_folders
 from dedupe.video_fingerprint import (
     find_video_matches,
@@ -136,6 +137,45 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(by_raw["Cowboy.Bebop.E01.1998.DUB"].source, "claude")
         self.assertEqual(by_raw["Cowboy.Bebop.E01.1998.DUB"].core_title, "Cowboy Bebop")
         self.assertEqual(by_raw["Trigun.E02.1998"].source, "fallback")
+
+    def test_html_and_json_reports_group_chained_matches_into_one_cluster(self) -> None:
+        # A~B and B~C should render as ONE 3-file cluster, not two separate
+        # pairwise cases (F-23).
+        report = DedupeReport(
+            scanned_files=3,
+            exact_duplicates=[],
+            video_matches=[
+                VideoMatch("left/a.mkv", "mid/b.mkv", 90.0, 0.1),
+                VideoMatch("mid/b.mkv", "right/c.mkv", 88.0, 0.2),
+            ],
+            image_matches=[],
+            audio_matches=[],
+            folder_pairs=[],
+            name_hints=[],
+        )
+        payload = report_to_dict(report)
+        self.assertEqual(len(payload["content_clusters"]), 1)
+        self.assertEqual(
+            sorted(payload["content_clusters"][0]["paths"]), sorted(["left/a.mkv", "mid/b.mkv", "right/c.mkv"])
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            html_path = base / "report.html"
+            json_path = base / "report.json"
+            write_html_report(report, html_path)
+            write_json_report(report, json_path)
+
+            html_text = html_path.read_text(encoding="utf-8")
+            self.assertEqual(html_text.count("<details"), 1)
+            for path in ("left/a.mkv", "mid/b.mkv", "right/c.mkv"):
+                self.assertIn(path, html_text)
+
+            data = json.loads(json_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(data["content_clusters"]), 1)
+            self.assertEqual(
+                sorted(data["content_clusters"][0]["paths"]), sorted(["left/a.mkv", "mid/b.mkv", "right/c.mkv"])
+            )
 
     def test_config_file_values_can_be_overridden_from_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -303,7 +343,7 @@ class CoreTests(unittest.TestCase):
                 self.assertTrue(all(record.full_hash_algo for record in records if record.size == len(b"same content")))
 
                 normalized = {record.raw_name: fallback_normalize(record.raw_name) for record in records}
-                assignments = build_cluster_assignments(records, exact, [], normalized)
+                assignments, _clusters = build_cluster_assignments(records, exact, [], normalized)
                 folder_pairs = compare_folders(records, assignments, threshold=50)
                 self.assertEqual(len(folder_pairs), 1)
                 self.assertEqual(folder_pairs[0].similarity, 50.0)
@@ -428,7 +468,7 @@ class CoreTests(unittest.TestCase):
             )
         ]
         normalized = {record.raw_name: NormalizedName(record.raw_name, record.raw_name) for record in records}
-        assignments = build_cluster_assignments(records, exact, [], normalized)
+        assignments, _clusters = build_cluster_assignments(records, exact, [], normalized)
         folder_pairs = compare_folders(records, assignments, threshold=0)
 
         self.assertEqual(len(folder_pairs), 1)
