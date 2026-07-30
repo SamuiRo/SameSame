@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -10,6 +9,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageEnhance
 
+from dedupe import process
 from dedupe.audio_fingerprint import audio_similarity, fingerprint_audio
 from dedupe.image_fingerprint import fingerprint_image, image_similarity
 from dedupe.models import FileRecord
@@ -38,7 +38,7 @@ def _record(path: Path) -> FileRecord:
 
 
 def _run_ffmpeg(ffmpeg: str, *arguments: str) -> None:
-    subprocess.run(
+    process.run(
         [ffmpeg, "-y", "-v", "error", *arguments],
         capture_output=True,
         check=True,

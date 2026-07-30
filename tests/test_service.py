@@ -65,6 +65,38 @@ class ScanServiceTests(unittest.TestCase):
         terminal_progress.assert_not_called()
         self.assertEqual([event.current for event in events], [1, 2])
 
+    def test_cancelling_mid_backlog_does_not_wait_for_queued_work(self) -> None:
+        # F-02: `with ThreadPoolExecutor(...) as executor:` calls
+        # shutdown(wait=True) on exit no matter how the block exits, so a
+        # ScanCancelled raised while iterating results used to wait for every
+        # already-submitted job (audit measured 4.01s for 40 jobs / 2 workers
+        # at 0.2s each). cancellable_executor must return almost immediately
+        # instead, only waiting on jobs that were already running.
+        import time
+        from concurrent.futures import as_completed
+
+        from dedupe.progress import cancellable_executor
+
+        def slow_job(index: int) -> int:
+            time.sleep(0.2)
+            return index
+
+        cancellation = CancellationToken()
+        start = time.monotonic()
+        with progress_scope(
+            stage=ScanStage.SCANNING, callback=None, cancellation=cancellation, show_terminal=False
+        ):
+            with self.assertRaises(ScanCancelled):
+                with cancellable_executor(2) as executor:
+                    futures = {executor.submit(slow_job, index): index for index in range(40)}
+                    for count, future in enumerate(tqdm(as_completed(futures), total=len(futures)), start=1):
+                        future.result()
+                        if count == 3:
+                            cancellation.cancel()
+        elapsed = time.monotonic() - start
+
+        self.assertLess(elapsed, 1.5)  # would be ~4s under the old shutdown(wait=True) behavior
+
     def test_cancellation_emits_event_and_preserves_completed_scan_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

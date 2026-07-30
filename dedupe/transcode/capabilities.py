@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 
+from .. import process
 from ..video_fingerprint import resolve_binary
 from .models import EncoderCapability
 from .presets import TranscodePreset
@@ -55,7 +56,7 @@ def check_encoder_capability(
         "-",
     ]
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        completed = process.run(command, capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.SubprocessError) as exc:
         return EncoderCapability(preset.encoder, listed=True, initialized=False, message=str(exc))
     if completed.returncode == 0:

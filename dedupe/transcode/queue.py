@@ -209,7 +209,8 @@ class TranscodeQueue:
                     input_info=input_info,
                     input_modified_at=input_modified_at,
                 )
-            output_size = plan.temporary_path.stat().st_size
+            output_stat = plan.temporary_path.stat()
+            output_size = output_stat.st_size
             output_sha256 = _sha256(plan.temporary_path)
             _commit_output(plan.temporary_path, plan.output_path)
             return TranscodeResult(
@@ -229,6 +230,7 @@ class TranscodeQueue:
                 output_sha256=output_sha256,
                 input_modified_at=input_modified_at,
                 input_sha256=input_sha256,
+                output_modified_at=output_stat.st_mtime,
             )
         except (OSError, PlanError, ProbeError, ValueError) as exc:
             if plan is not None and not self.keep_temporary_on_failure:

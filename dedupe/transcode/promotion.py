@@ -52,23 +52,31 @@ def promote_transcode(
     if target != source and target.exists() and target != encoded:
         return PromotionResult(False, source, encoded, target, f"Replacement target already exists: {target}")
 
+    # The transcode queue already hashed and double-verified both files at
+    # this exact (size, mtime) identity moments earlier; re-hashing here only
+    # adds value if the file's stat identity has actually changed since then,
+    # so trust the recorded digest instead of reading the whole file again
+    # (F-15). The post-move re-hash below still runs unconditionally, since
+    # that one verifies the move itself rather than re-confirming old state.
     source_stat = source.stat()
     if (
         result.input_sha256 is None
         or result.input_modified_at is None
         or source_stat.st_size != result.input_size
         or abs(source_stat.st_mtime - result.input_modified_at) > 0.000001
-        or _sha256(source) != result.input_sha256
     ):
         return PromotionResult(False, source, encoded, target, "Source changed after transcoding")
 
-    encoded_size = encoded.stat().st_size
-    if result.output_sha256 is None:
-        return PromotionResult(False, source, encoded, target, "Validated output identity is unavailable")
-    encoded_hash = _sha256(encoded)
-    if encoded_size != result.output_size or encoded_hash != result.output_sha256:
+    encoded_stat = encoded.stat()
+    encoded_size = encoded_stat.st_size
+    if (
+        result.output_sha256 is None
+        or result.output_modified_at is None
+        or encoded_size != result.output_size
+        or abs(encoded_stat.st_mtime - result.output_modified_at) > 0.000001
+    ):
         return PromotionResult(False, source, encoded, target, "Encoded output changed after validation")
-    source_stat = source.stat()
+    encoded_hash = result.output_sha256
     root = (collection_root or source.parent).resolve()
     record = FileRecord(source, root, source_stat.st_size, source_stat.st_mtime, source.stem)
     action_service = FileActionService(journal_path, quarantine_root)

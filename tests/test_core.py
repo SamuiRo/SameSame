@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
@@ -160,6 +162,90 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(by_raw["Cowboy.Bebop.E01.1998.DUB"].source, "claude")
         self.assertEqual(by_raw["Cowboy.Bebop.E01.1998.DUB"].core_title, "Cowboy Bebop")
         self.assertEqual(by_raw["Trigun.E02.1998"].source, "fallback")
+
+    def test_process_run_suppresses_console_window_and_closes_stdin(self) -> None:
+        # F-05/F-09: every ffmpeg/ffprobe call site now goes through
+        # dedupe.process so none of them flash a console window under a
+        # windowed launcher, and none can block on an inherited stdin.
+        from dedupe import process as process_module
+
+        with patch("dedupe.process.subprocess.run") as mock_run:
+            mock_run.return_value = "ok"
+            result = process_module.run(["echo", "hi"], capture_output=True)
+
+        self.assertEqual(result, "ok")
+        _, kwargs = mock_run.call_args
+        self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
+        if sys.platform == "win32":
+            self.assertTrue(kwargs["creationflags"] & subprocess.CREATE_NO_WINDOW)
+
+    def test_process_run_does_not_override_an_explicit_stdin(self) -> None:
+        from dedupe import process as process_module
+
+        with patch("dedupe.process.subprocess.run") as mock_run:
+            process_module.run(["echo", "hi"], stdin=subprocess.PIPE)
+
+        _, kwargs = mock_run.call_args
+        self.assertEqual(kwargs["stdin"], subprocess.PIPE)
+
+    def test_db_connect_enables_wal_and_busy_timeout(self) -> None:
+        from dedupe.db import connect
+
+        with tempfile.TemporaryDirectory() as tmp:
+            connection = connect(Path(tmp) / "test.sqlite3")
+            try:
+                journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+                busy_timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
+                synchronous = connection.execute("PRAGMA synchronous").fetchone()[0]
+            finally:
+                connection.close()
+
+        self.assertEqual(str(journal_mode).lower(), "wal")
+        self.assertEqual(busy_timeout, 5000)
+        self.assertEqual(synchronous, 1)  # NORMAL
+
+    def test_db_connect_lets_a_concurrent_writer_wait_instead_of_locking(self) -> None:
+        # F-11: operations.sqlite3 is written from the GUI thread (journal
+        # dialog) and a background consolidation worker thread. Without
+        # busy_timeout, the second writer used to fail immediately with
+        # "database is locked" instead of waiting for the first to finish.
+        import threading
+        import time
+
+        from dedupe.db import connect
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.sqlite3"
+            setup = connect(path)
+            setup.execute("CREATE TABLE t (v INTEGER)")
+            setup.commit()
+            setup.close()
+
+            first = connect(path)
+            try:
+                first.execute("BEGIN IMMEDIATE")
+                first.execute("INSERT INTO t VALUES (1)")
+
+                results: list[str] = []
+
+                def write_from_second() -> None:
+                    second = connect(path)  # each connection is thread-affine
+                    try:
+                        second.execute("INSERT INTO t VALUES (2)")
+                        second.commit()
+                        results.append("done")
+                    finally:
+                        second.close()
+
+                thread = threading.Thread(target=write_from_second)
+                thread.start()
+                time.sleep(0.2)
+                first.commit()
+                thread.join(timeout=5)
+
+                self.assertEqual(results, ["done"])
+            finally:
+                first.close()
 
     def test_html_and_json_reports_group_chained_matches_into_one_cluster(self) -> None:
         # A~B and B~C should render as ONE 3-file cluster, not two separate

@@ -4,11 +4,12 @@ import logging
 import struct
 import subprocess
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 
+from . import process
 from .cache import Cache
 from .models import AudioMatch, FileRecord
-from .progress import check_cancelled, tqdm
+from .progress import cancellable_executor, check_cancelled, tqdm
 from .video_fingerprint import get_duration
 
 LOGGER = logging.getLogger(__name__)
@@ -18,14 +19,14 @@ MAX_ALIGNMENT_SHIFT = 8
 
 def check_chromaprint(ffmpeg: str) -> bool:
     try:
-        result = subprocess.run(
+        result = process.run(
             [ffmpeg, "-hide_banner", "-h", "muxer=chromaprint"],
             capture_output=True,
             check=False,
             timeout=15,
         )
         return result.returncode == 0 and b"Muxer chromaprint" in result.stdout
-    except subprocess.SubprocessError:
+    except (OSError, subprocess.SubprocessError):
         return False
 
 
@@ -45,11 +46,11 @@ def fingerprint_audio(record: FileRecord, ffmpeg: str) -> list[int] | None:
         "-",
     ]
     try:
-        result = subprocess.run(command, capture_output=True, check=True, timeout=180)
+        result = process.run(command, capture_output=True, check=True, timeout=180)
         if not result.stdout or len(result.stdout) % 4:
             return None
         return list(struct.unpack(f"<{len(result.stdout) // 4}I", result.stdout))
-    except subprocess.SubprocessError as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         LOGGER.warning("Cannot fingerprint audio %s: %s", record.path, exc)
         return None
 
@@ -98,7 +99,7 @@ def find_audio_matches(
 ) -> list[AudioMatch]:
     missing_duration = [record for record in records if record.duration is None]
     if missing_duration:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
+        with cancellable_executor(workers) as executor:
             futures = {executor.submit(_ensure_duration, record, ffprobe): record for record in missing_duration}
             for future in tqdm(as_completed(futures), total=len(futures), desc="Audio durations", unit="file"):
                 record = futures[future]
@@ -110,7 +111,7 @@ def find_audio_matches(
 
     missing_fingerprint = [record for record in records if record.audio_fingerprint is None]
     if missing_fingerprint:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
+        with cancellable_executor(workers) as executor:
             futures = {
                 executor.submit(_ensure_fingerprint, record, ffmpeg): record
                 for record in missing_fingerprint

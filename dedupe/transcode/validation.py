@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 
+from .. import process
 from ..video_fingerprint import resolve_binary
 from .models import TranscodePlan, ValidationResult
 from .probe import ProbeError, probe_media
@@ -44,7 +45,7 @@ def validate_output(
         errors.append(f"ffmpeg executable not found: {ffmpeg}")
     else:
         try:
-            decoded = subprocess.run(
+            decoded = process.run(
                 [
                     executable,
                     "-hide_banner",

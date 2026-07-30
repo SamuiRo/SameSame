@@ -7,13 +7,14 @@ import math
 import shutil
 import subprocess
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from functools import lru_cache
 from pathlib import Path
 
+from . import process
 from .cache import Cache
 from .models import VIDEO_FINGERPRINT_VERSION, FileRecord, VideoMatch
-from .progress import check_cancelled, tqdm
+from .progress import cancellable_executor, check_cancelled, tqdm
 
 try:
     from PIL import Image
@@ -56,10 +57,10 @@ def get_duration(path: Path, ffprobe: str) -> float | None:
         str(path),
     ]
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=30)
+        result = process.run(command, capture_output=True, text=True, check=True, timeout=30)
         value = json.loads(result.stdout).get("format", {}).get("duration")
         return float(value) if value is not None else None
-    except (subprocess.SubprocessError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError) as exc:
         LOGGER.warning("Cannot read video duration for %s: %s", path, exc)
         return None
 
@@ -84,7 +85,7 @@ def _extract_frame(path: Path, timestamp: float, ffmpeg: str) -> Image.Image | N
         "-",
     ]
     try:
-        result = subprocess.run(command, capture_output=True, check=True, timeout=60)
+        result = process.run(command, capture_output=True, check=True, timeout=60)
         if not result.stdout:
             return None
         image = Image.open(io.BytesIO(result.stdout))
@@ -308,7 +309,7 @@ def find_video_matches(
 ) -> list[VideoMatch]:
     missing_duration = [record for record in records if record.duration is None]
     if missing_duration:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
+        with cancellable_executor(workers) as executor:
             futures = {executor.submit(_ensure_duration, record, ffprobe): record for record in missing_duration}
             for future in tqdm(as_completed(futures), total=len(futures), desc="Video durations", unit="file"):
                 record = futures[future]
@@ -320,7 +321,7 @@ def find_video_matches(
 
     missing_fingerprint = [record for record in records if record.duration is not None and record.fingerprint is None]
     if missing_fingerprint:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
+        with cancellable_executor(workers) as executor:
             futures = {executor.submit(_ensure_fingerprint, record, ffmpeg): record for record in missing_fingerprint}
             for future in tqdm(as_completed(futures), total=len(futures), desc="Video fingerprints", unit="file"):
                 record = futures[future]

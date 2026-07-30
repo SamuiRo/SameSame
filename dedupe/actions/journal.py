@@ -4,6 +4,7 @@ import sqlite3
 import time
 from pathlib import Path
 
+from ..db import connect
 from .models import (
     ActionOutcome,
     FileAction,
@@ -18,7 +19,7 @@ class OperationJournal:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(path)
+        self.connection = connect(path)
         self.connection.row_factory = sqlite3.Row
         self._initialize()
 

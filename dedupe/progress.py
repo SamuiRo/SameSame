@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -45,6 +46,23 @@ def check_cancelled() -> None:
     context = _CONTEXT.get()
     if context is not None:
         context.cancellation.raise_if_cancelled()
+
+
+@contextmanager
+def cancellable_executor(max_workers: int) -> Iterator[ThreadPoolExecutor]:
+    """A ThreadPoolExecutor whose queued (not yet started) work is dropped on
+    cancellation instead of run to completion.
+
+    Plain `with ThreadPoolExecutor(...) as executor:` calls `shutdown(wait=True)`
+    on exit regardless of how the block exited, so a ScanCancelled raised while
+    iterating results still waits for the entire submitted backlog. This waits
+    only for already-running work.
+    """
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+    try:
+        yield executor
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def tqdm(iterable: Iterable[T], *args: object, **kwargs: object) -> Iterator[T]:

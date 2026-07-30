@@ -6,6 +6,7 @@ from collections.abc import Callable
 from queue import Empty, Queue
 from threading import Thread
 
+from .. import process
 from ..events import CancellationToken
 from .models import JobStatus, RunnerResult, TranscodePlan, TranscodeProgress
 
@@ -65,7 +66,7 @@ def run_transcode(
     plan.log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with plan.log_path.open("w", encoding="utf-8", errors="replace") as log_file:
-            process = subprocess.Popen(
+            ffmpeg_process = process.popen(
                 plan.command,
                 stdout=subprocess.PIPE,
                 stderr=log_file,
@@ -74,20 +75,20 @@ def run_transcode(
                 errors="replace",
                 bufsize=1,
             )
-            assert process.stdout is not None
+            assert ffmpeg_process.stdout is not None
             lines: Queue[str | None] = Queue()
-            reader = Thread(target=_read_lines, args=(process.stdout, lines), daemon=True)
+            reader = Thread(target=_read_lines, args=(ffmpeg_process.stdout, lines), daemon=True)
             reader.start()
             values: dict[str, str] = {}
             stream_finished = False
-            while process.poll() is None or not stream_finished:
-                if token.is_cancelled and process.poll() is None:
-                    process.terminate()
+            while ffmpeg_process.poll() is None or not stream_finished:
+                if token.is_cancelled and ffmpeg_process.poll() is None:
+                    ffmpeg_process.terminate()
                     try:
-                        process.wait(timeout=5)
+                        ffmpeg_process.wait(timeout=5)
                     except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait(timeout=5)
+                        ffmpeg_process.kill()
+                        ffmpeg_process.wait(timeout=5)
                 try:
                     line = lines.get(timeout=0.2)
                 except Empty:
@@ -102,9 +103,9 @@ def run_transcode(
                 if key == "progress" and progress_callback is not None:
                     progress_callback(_progress(plan, values))
                     values.clear()
-            return_code = process.wait()
+            return_code = ffmpeg_process.wait()
             reader.join(timeout=1)
-            process.stdout.close()
+            ffmpeg_process.stdout.close()
     except OSError as exc:
         return RunnerResult(
             status=JobStatus.FAILED,

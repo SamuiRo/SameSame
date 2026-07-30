@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .. import process
 from ..video_fingerprint import resolve_binary
 from .models import MediaInfo, StreamInfo
 
@@ -53,7 +54,7 @@ def probe_media(path: Path, ffprobe: str = "ffprobe") -> MediaInfo:
         str(resolved_path),
     ]
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, check=True, timeout=60)
+        completed = process.run(command, capture_output=True, text=True, check=True, timeout=60)
         payload = json.loads(completed.stdout)
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
         raise ProbeError(f"Cannot probe media file {resolved_path}: {exc}") from exc
@@ -93,7 +94,7 @@ def list_encoders(ffmpeg: str = "ffmpeg") -> set[str]:
     if not executable:
         raise ProbeError(f"ffmpeg executable not found: {ffmpeg}")
     try:
-        completed = subprocess.run(
+        completed = process.run(
             [executable, "-hide_banner", "-encoders"],
             capture_output=True,
             text=True,

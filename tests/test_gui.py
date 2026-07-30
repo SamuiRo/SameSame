@@ -590,6 +590,28 @@ class GuiSmokeTests(unittest.TestCase):
                 window.close()
                 self.application.processEvents()
 
+    def test_finishing_transcode_does_not_reenable_actions_while_consolidation_is_busy(self) -> None:
+        # F-07: _transcode_busy_changed used to re-enable comparison actions
+        # and the scan button without checking consolidation_tab.is_busy, so
+        # starting a consolidation batch and then finishing an unrelated
+        # transcode queue would silently re-enable destructive quarantine
+        # buttons while a journaled consolidation batch was still moving
+        # files.
+        from dedupe.gui.main_window import MainWindow
+
+        window = MainWindow()
+        try:
+            window.consolidation_tab._thread = object()  # simulate a busy consolidation batch
+            window._transcode_busy_changed(False)  # an unrelated transcode queue just finished
+
+            self.assertFalse(window.comparison._actions_enabled)
+            self.assertFalse(window.scan_button.isEnabled())
+            self.assertFalse(window.folder_list.isEnabled())
+        finally:
+            window.consolidation_tab._thread = None
+            window.close()
+            self.application.processEvents()
+
     def test_similar_video_chain_is_one_review_case_with_working_batch_cleanup(self) -> None:
         """Stage B acceptance test (F-23): three copies of one episode linked by a
         chained A~B, B~C video match must produce ONE review case listing all

@@ -12,6 +12,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Iterable
 
+from .db import connect
 from .name_normalizer import fallback_normalize
 
 HASH_CHUNK_SIZE = 4 * 1024 * 1024
@@ -483,7 +484,7 @@ class ConsolidationService:
 
     def _connect(self) -> sqlite3.Connection:
         self.journal_path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(self.journal_path)
+        connection = connect(self.journal_path)
         connection.row_factory = sqlite3.Row
         connection.execute(
             """

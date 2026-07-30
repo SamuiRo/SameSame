@@ -7,12 +7,12 @@ import json
 import hashlib
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from typing import Iterable
 
 from .cache import Cache
 from .models import FileRecord, NameHint, NormalizedName
-from .progress import check_cancelled, tqdm
+from .progress import cancellable_executor, check_cancelled, tqdm
 
 try:
     from rapidfuzz import fuzz
@@ -341,7 +341,7 @@ def normalize_names(
     if missing and selected_provider in {"anthropic", "lmstudio"}:
         batches = list(_chunks(missing, BATCH_SIZE))
         max_workers = 1 if selected_provider == "lmstudio" else workers
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with cancellable_executor(max_workers) as executor:
             if selected_provider == "anthropic":
                 futures = {executor.submit(_normalize_batch_with_claude, batch): batch for batch in batches}
             else:

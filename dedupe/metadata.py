@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import process
 from .models import FileRecord
 from .scanner import is_audio_path, is_image_path, is_video_path
 from .video_fingerprint import resolve_binary
@@ -206,7 +207,7 @@ def probe_media_metadata(record: FileRecord, ffprobe: str = "ffprobe") -> MediaM
         str(record.path),
     ]
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, check=True, timeout=30)
+        completed = process.run(command, capture_output=True, text=True, check=True, timeout=30)
         payload = json.loads(completed.stdout)
         raw_format = payload.get("format") if isinstance(payload.get("format"), dict) else {}
         raw_streams = payload.get("streams") if isinstance(payload.get("streams"), list) else []

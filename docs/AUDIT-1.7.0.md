@@ -1175,15 +1175,87 @@ on the corpus, and every threshold change is backed by FP/FN numbers.
 **Do the corpus first if only one thing from this stage is done.** Every other
 item is unverifiable without it.
 
-### Stage D — Responsiveness and I/O (~4 days)
+### Stage D — Responsiveness and I/O (~4 days) · done 2026-07-31
 
-| # | Work | Complexity |
-| --- | --- | ---: |
-| F-02 | Real cancellation: `cancel_futures=True` + pre-work token checks | 3/5 |
-| F-05 + F-09 | Shared `dedupe/process.py`: no console windows, uniform errors, `stdin=DEVNULL` | 2/5 |
-| F-15 | Reuse verified digests within a transcode/promotion workflow | 2/5 |
-| F-07 | Single `_update_enabled_state()` in `MainWindow` | 2/5 |
-| F-11 | WAL + `busy_timeout` for all three SQLite users | 2/5 |
+| # | Work | Complexity | Status |
+| --- | --- | ---: | --- |
+| F-02 | Real cancellation: `cancel_futures=True` + pre-work token checks | 3/5 | Done (cancel_futures only; see note) |
+| F-05 + F-09 | Shared `dedupe/process.py`: no console windows, uniform errors, `stdin=DEVNULL` | 2/5 | Done |
+| F-15 | Reuse verified digests within a transcode/promotion workflow | 2/5 | Done |
+| F-07 | Single `_update_enabled_state()` in `MainWindow` | 2/5 | Done |
+| F-11 | WAL + `busy_timeout` for all three SQLite users | 2/5 | Done |
+
+**Implementation notes.**
+
+F-02: added `cancellable_executor()` to `dedupe/progress.py` — a
+`ThreadPoolExecutor` wrapper whose `finally` calls
+`shutdown(wait=False, cancel_futures=True)` instead of the context manager's
+default `shutdown(wait=True)`, so a `ScanCancelled` raised while iterating
+`as_completed(futures)` drops the still-queued backlog instead of waiting for
+it. All 8 call sites (`exact_hash.py` ×2, `video_fingerprint.py` ×2,
+`image_fingerprint.py`, `audio_fingerprint.py` ×2, `name_normalizer.py`) now
+route through it. Measured: 40 jobs / 2 workers at 0.2s each went from ~4.0s
+to cancel down to ~0.5s
+(`tests/test_service.py::test_cancelling_mid_backlog_does_not_wait_for_queued_work`,
+which fails at ~4s against the old raw-`ThreadPoolExecutor` pattern). The
+audit's second half — "have the worker functions themselves check the token
+before starting work" — was **not** done: `check_cancelled()` reads a
+`ContextVar` that isn't propagated into `ThreadPoolExecutor` worker threads by
+default (unlike asyncio's `run_in_executor`), so this would need a
+`CancellationToken` threaded explicitly through every fingerprinting module's
+public signature (`find_exact_duplicates`, `find_video_matches`,
+`find_image_matches`, `find_audio_matches`, `normalize_names`) — a larger,
+separate API change deferred to avoid destabilizing five modules' public
+interfaces in one pass. `cancel_futures=True` already delivers the primary
+observed symptom (an unresponsive Cancel button); only already-running jobs
+(bounded by `workers`) now continue in the background after cancel returns.
+
+F-05+F-09: new `dedupe/process.py` (`run()`/`popen()`) sets
+`creationflags=CREATE_NO_WINDOW` on Windows and `stdin=subprocess.DEVNULL` by
+default; all 11 `subprocess.run`/`Popen` call sites (`video_fingerprint.py`,
+`audio_fingerprint.py`, `metadata.py`, `transcode/probe.py`,
+`transcode/capabilities.py`, `transcode/validation.py`, `transcode/runner.py`,
+`benchmark.py`) route through it. Fixed the two spots that caught only
+`SubprocessError`, not `OSError` (`video_fingerprint.get_duration`,
+`audio_fingerprint.check_chromaprint`/`fingerprint_audio`).
+
+F-15: `promote_transcode` no longer re-hashes the source or the encoded
+output before quarantining — it trusts `TranscodeResult.input_sha256`/
+`output_sha256` (already computed and double-verified by the queue moments
+earlier) whenever the file's `(size, mtime)` still matches what the queue
+recorded, added a new `output_modified_at` field to `TranscodeResult` to make
+that check possible for the output. The **post-move** re-hash of `promoted`
+stays unconditional, since it's verifying the move itself, not re-confirming
+old state — that's the safety-critical check and it was left untouched. Cuts
+the hash passes for a full encode→promote workflow from ~5 to ~3. Did not add
+inode to the identity tuple as the audit's fix text suggested:
+`Path.write_bytes()`-style in-place overwrites keep the same inode, so it
+would not have added protection for the same-size-tamper case the existing
+tests already exercise; the codebase's existing `FileIdentity` model
+elsewhere also uses only size+mtime, so this stays consistent with that.
+Regression: `test_promotion_does_not_rehash_unchanged_source_or_output`
+(asserts exactly 1 hash call, down from 3) plus the pre-existing tamper
+-detection tests still pass unmodified.
+
+F-07: replaced `_set_running`, `_action_finished`'s inline enable/disable
+block, `_transcode_busy_changed`, `_compression_busy_changed`, and
+`_consolidation_busy_changed` with one `_update_enabled_state()` that reads
+all five busy flags (scan/action/transcode/compression/consolidation) every
+time. Verified each widget updates its own `is_busy`/`is_loading` property
+before emitting `busy_changed`, so reading fresh state instead of trusting
+the signal's `bool` parameter is safe. Regression:
+`test_finishing_transcode_does_not_reenable_actions_while_consolidation_is_busy`
+reproduces the exact divergence the audit flagged (comparison actions
+re-enabled after a transcode queue finished, even with a consolidation batch
+still moving files) and fails against the old per-method logic.
+`main_window.py` net -28 lines.
+
+F-11: new `dedupe/db.py` with one `connect(path)` applying
+`PRAGMA journal_mode=WAL`, `PRAGMA synchronous=NORMAL`,
+`PRAGMA busy_timeout=5000`; used by `cache.py`, `actions/journal.py`, and
+`consolidation.py`'s `_connect()`.
+
+Full suite: 100 passed, 7 subtests, `ruff check .` clean.
 
 ### Stage E — Scale and hygiene (~4 days)
 

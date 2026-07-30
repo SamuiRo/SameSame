@@ -25,6 +25,7 @@ def completed_result(source: Path, output: Path) -> TranscodeResult:
         output_sha256=hashlib.sha256(output.read_bytes()).hexdigest(),
         input_modified_at=source.stat().st_mtime,
         input_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        output_modified_at=output.stat().st_mtime,
     )
 
 
@@ -53,6 +54,30 @@ class TranscodePromotionTests(unittest.TestCase):
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0].status, OperationStatus.COMPLETED)
             self.assertEqual(records[0].destination.read_bytes(), b"original-media")  # type: ignore[union-attr]
+
+    def test_promotion_does_not_rehash_unchanged_source_or_output(self) -> None:
+        # F-15: the queue already hashed and double-verified both files at
+        # this exact (size, mtime) identity; promotion should trust those
+        # recorded digests instead of reading both whole files again, and
+        # only hash the *promoted* file once to verify the move itself.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "episode.mkv"
+            output = root / "episode.encoded.mkv"
+            source.write_bytes(b"original-media")
+            output.write_bytes(b"validated-encoded-media")
+
+            with patch("dedupe.transcode.promotion._sha256") as mock_sha256:
+                mock_sha256.side_effect = lambda path: hashlib.sha256(Path(path).read_bytes()).hexdigest()
+                promoted = promote_transcode(
+                    completed_result(source, output),
+                    journal_path=root / "journal.sqlite3",
+                    quarantine_root=root / "quarantine",
+                    collection_root=root,
+                )
+
+            self.assertTrue(promoted.success, promoted.message)
+            self.assertEqual(mock_sha256.call_count, 1)  # only the post-move verification
 
     def test_non_mkv_target_conflict_fails_without_quarantining_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

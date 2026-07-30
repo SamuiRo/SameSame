@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from typing import Iterable
 
+from .db import connect
 from .models import VIDEO_FINGERPRINT_VERSION, FileRecord, NormalizedName
 
 
@@ -13,7 +14,7 @@ class Cache:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(path))
+        self.conn = connect(path)
         self.conn.row_factory = sqlite3.Row
         self.init_schema()
 

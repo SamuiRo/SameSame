@@ -3,12 +3,12 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from pathlib import Path
 
 from .cache import Cache
 from .models import ExactDuplicateGroup, FileRecord
-from .progress import tqdm
+from .progress import cancellable_executor, tqdm
 
 LOGGER = logging.getLogger(__name__)
 CHUNK_SIZE = 1024 * 1024
@@ -110,7 +110,7 @@ def find_exact_duplicates(records: list[FileRecord], cache: Cache, workers: int 
         if not record.partial_hash or record.partial_hash_algo != algo
     ]
     if partial_targets:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
+        with cancellable_executor(workers) as executor:
             futures = {executor.submit(_compute_partial, record, algo): record for record in partial_targets}
             for future in tqdm(as_completed(futures), total=len(futures), desc="Partial hashes", unit="file"):
                 record = futures[future]
@@ -137,7 +137,7 @@ def find_exact_duplicates(records: list[FileRecord], cache: Cache, workers: int 
         if not record.full_hash or record.full_hash_algo != algo
     ]
     if full_targets:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
+        with cancellable_executor(workers) as executor:
             futures = {executor.submit(_compute_full, record, algo): record for record in full_targets}
             for future in tqdm(as_completed(futures), total=len(futures), desc="Full hashes", unit="file"):
                 record = futures[future]

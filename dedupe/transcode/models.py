@@ -119,6 +119,7 @@ class TranscodeResult:
     output_sha256: str | None = None
     input_modified_at: float | None = None
     input_sha256: str | None = None
+    output_modified_at: float | None = None
 
     @property
     def saved_bytes(self) -> int:

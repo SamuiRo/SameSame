@@ -3,11 +3,11 @@ from __future__ import annotations
 import logging
 import math
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 
 from .cache import Cache
 from .models import FileRecord, ImageMatch
-from .progress import check_cancelled, tqdm
+from .progress import cancellable_executor, check_cancelled, tqdm
 from .video_fingerprint import hamming_similarity, phash
 
 try:
@@ -105,7 +105,7 @@ def find_image_matches(
 ) -> list[ImageMatch]:
     missing = [record for record in records if record.image_fingerprint is None]
     if missing:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
+        with cancellable_executor(workers) as executor:
             futures = {executor.submit(fingerprint_image, record): record for record in missing}
             for future in tqdm(as_completed(futures), total=len(futures), desc="Image fingerprints", unit="file"):
                 record = futures[future]

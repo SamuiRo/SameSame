@@ -79,7 +79,7 @@ class MainWindow(QMainWindow):
         self._scan_status_timer = QTimer(self)
         self._scan_status_timer.setInterval(1_000)
         self._scan_status_timer.timeout.connect(self._refresh_scan_status)
-        self._set_running(False)
+        self._update_enabled_state()
 
     def _build_ui(self) -> None:
         root_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -360,7 +360,7 @@ class MainWindow(QMainWindow):
         thread.finished.connect(thread.deleteLater)
         self._scan_thread = thread
         self._scan_worker = worker
-        self._set_running(True)
+        self._update_enabled_state()
         thread.start()
 
     def _cancel_scan(self) -> None:
@@ -478,29 +478,53 @@ class MainWindow(QMainWindow):
         self._scan_started_at = None
         self._scan_thread = None
         self._scan_worker = None
-        self._set_running(False)
+        self._update_enabled_state()
         self.status_label.setText(self._last_terminal_status)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100 if self._result is not None else 0)
         if self._close_when_finished:
             QTimer.singleShot(0, self.close)
 
-    def _set_running(self, running: bool) -> None:
+    def _update_enabled_state(self) -> None:
+        """Single source of truth for which controls are enabled.
+
+        Reads all five busy sources (scan, file action, transcode dialog,
+        compression queue, consolidation batch) so that every control's
+        enabled state is consistent no matter which busy source just
+        changed - previously five separate methods each re-derived this from
+        a different subset of the five flags and could disagree (F-07).
+        """
+        scanning = self._scan_thread is not None
+        action_busy = self._action_thread is not None
         transcode_busy = self._transcode_is_busy()
         compression_busy = self.compression_tab.is_loading
-        self.folder_list.setEnabled(not running)
-        self.add_folder_button.setEnabled(not running)
-        self.remove_folder_button.setEnabled(not running)
-        self.settings_group.setEnabled(not running)
-        self.scan_button.setEnabled(not running and not transcode_busy and not compression_busy)
-        self.cancel_button.setEnabled(running)
-        self.export_button.setEnabled(not running and self._result is not None)
-        self.open_report_button.setEnabled(not running and self._last_report_path is not None)
-        self.journal_button.setEnabled(not running and self._action_thread is None)
-        self.comparison.set_actions_enabled(not running and self._action_thread is None and not transcode_busy)
-        self.consolidation_tab.set_external_actions_enabled(
-            not running and self._action_thread is None and not transcode_busy and not compression_busy
+        consolidation_busy = self.consolidation_tab.is_busy
+        any_busy = scanning or action_busy or transcode_busy or compression_busy or consolidation_busy
+
+        self.folder_list.setEnabled(not any_busy)
+        self.add_folder_button.setEnabled(not any_busy)
+        self.remove_folder_button.setEnabled(not any_busy)
+        self.settings_group.setEnabled(not any_busy)
+        self.scan_button.setEnabled(not any_busy)
+        self.cancel_button.setEnabled(scanning)
+        self.export_button.setEnabled(not scanning and self._result is not None)
+        self.open_report_button.setEnabled(not scanning and self._last_report_path is not None)
+        self.journal_button.setEnabled(
+            not scanning and not action_busy and not transcode_busy and not consolidation_busy
         )
+        self.comparison.set_actions_enabled(
+            not scanning
+            and not action_busy
+            and not transcode_busy
+            and not compression_busy
+            and not consolidation_busy
+        )
+        self.consolidation_tab.set_external_actions_enabled(
+            not scanning and not action_busy and not transcode_busy and not compression_busy
+        )
+        self.compression_tab.setEnabled(not consolidation_busy)
+        self.category_filter.setEnabled(not action_busy)
+        self.result_list.setEnabled(not action_busy)
 
     def _update_category_filter(self, items: list[ReviewItem]) -> None:
         counts = category_counts(items)
@@ -830,18 +854,7 @@ class MainWindow(QMainWindow):
         self._action_worker = None
         if self._transcode_dialog is not None:
             self._transcode_dialog.set_external_actions_enabled(True)
-        self.scan_button.setEnabled(self._scan_thread is None and not self._transcode_is_busy())
-        self.journal_button.setEnabled(self._scan_thread is None)
-        self.comparison.set_actions_enabled(self._scan_thread is None and not self._transcode_is_busy())
-        self.consolidation_tab.set_external_actions_enabled(
-            self._scan_thread is None
-            and not self._transcode_is_busy()
-            and not self.compression_tab.is_loading
-        )
-        self.folder_list.setEnabled(self._scan_thread is None)
-        self.settings_group.setEnabled(self._scan_thread is None)
-        self.category_filter.setEnabled(True)
-        self.result_list.setEnabled(True)
+        self._update_enabled_state()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.status_label.setText("File action finished")
@@ -986,57 +999,16 @@ class MainWindow(QMainWindow):
         self._transcode_dialog = dialog
         dialog.show()
 
-    def _transcode_busy_changed(self, busy: bool) -> None:
-        self.scan_button.setEnabled(
-            not busy
-            and not self.compression_tab.is_loading
-            and self._scan_thread is None
-            and self._action_thread is None
-        )
-        self.journal_button.setEnabled(not busy and self._scan_thread is None and self._action_thread is None)
-        self.comparison.set_actions_enabled(not busy and self._scan_thread is None and self._action_thread is None)
-        self.consolidation_tab.set_external_actions_enabled(
-            not busy
-            and self._scan_thread is None
-            and self._action_thread is None
-            and not self.compression_tab.is_loading
-        )
+    def _transcode_busy_changed(self, _busy: bool) -> None:
+        self._update_enabled_state()
 
     def _compression_busy_changed(self, busy: bool) -> None:
-        self.scan_button.setEnabled(
-            not busy
-            and not self._transcode_is_busy()
-            and self._scan_thread is None
-            and self._action_thread is None
-        )
+        self._update_enabled_state()
         if not busy and self._close_when_finished:
             QTimer.singleShot(0, self.close)
-        self.consolidation_tab.set_external_actions_enabled(
-            not busy
-            and not self._transcode_is_busy()
-            and self._scan_thread is None
-            and self._action_thread is None
-        )
 
     def _consolidation_busy_changed(self, busy: bool) -> None:
-        self.folder_list.setEnabled(not busy and self._scan_thread is None)
-        self.add_folder_button.setEnabled(not busy and self._scan_thread is None)
-        self.remove_folder_button.setEnabled(not busy and self._scan_thread is None)
-        self.settings_group.setEnabled(not busy and self._scan_thread is None)
-        self.scan_button.setEnabled(
-            not busy
-            and self._scan_thread is None
-            and self._action_thread is None
-            and not self._transcode_is_busy()
-            and not self.compression_tab.is_loading
-        )
-        self.journal_button.setEnabled(
-            not busy and self._scan_thread is None and self._action_thread is None and not self._transcode_is_busy()
-        )
-        self.comparison.set_actions_enabled(
-            not busy and self._scan_thread is None and self._action_thread is None and not self._transcode_is_busy()
-        )
-        self.compression_tab.setEnabled(not busy)
+        self._update_enabled_state()
         if not busy and self._close_when_finished:
             QTimer.singleShot(0, self.close)
 
@@ -1053,7 +1025,7 @@ class MainWindow(QMainWindow):
         if self._transcode_dialog is not None:
             self.allow_unsafe_recycle.toggled.disconnect(self._transcode_dialog.set_allow_unsafe_recycle)
         self._transcode_dialog = None
-        self._set_running(self._scan_thread is not None)
+        self._update_enabled_state()
         if self._close_when_finished:
             QTimer.singleShot(0, self.close)
 
