@@ -3,6 +3,11 @@
 Audit date: 2026-06-28  
 Audited version: `1.6.6`
 
+> This document records the closed `1.6.6` safety review. The current
+> forward-looking audit of `1.7.0` — scalability, responsiveness, and
+> engineering hygiene findings plus a staged improvement plan — is in
+> [`docs/AUDIT-1.7.0.md`](AUDIT-1.7.0.md).
+
 ## Outcome
 
 The scanner, reports, cache, desktop review workflow, journaled file actions,

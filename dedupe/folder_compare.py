@@ -25,18 +25,27 @@ def build_cluster_assignments(
 ) -> dict[str, ClusterAssignment]:
     assignments: dict[str, ClusterAssignment] = {}
     parent: dict[str, str] = {}
+    size: dict[str, int] = {}
 
     def find(path: str) -> str:
         parent.setdefault(path, path)
-        if parent[path] != path:
-            parent[path] = find(parent[path])
-        return parent[path]
+        size.setdefault(path, 1)
+        root = path
+        while parent[root] != root:
+            root = parent[root]
+        while parent[path] != root:
+            parent[path], path = root, parent[path]
+        return root
 
     def union(left: str, right: str) -> None:
         left_root = find(left)
         right_root = find(right)
-        if left_root != right_root:
-            parent[right_root] = left_root
+        if left_root == right_root:
+            return
+        if size[left_root] < size[right_root]:
+            left_root, right_root = right_root, left_root
+        parent[right_root] = left_root
+        size[left_root] += size[right_root]
 
     for group in exact_groups:
         check_cancelled()

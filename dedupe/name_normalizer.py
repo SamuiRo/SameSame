@@ -184,23 +184,7 @@ def _normalize_batch_with_claude(batch: list[str]) -> list[NormalizedName]:
     for block in response.content:
         if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == "normalize_titles":
             results = block.input.get("results", [])
-            output: list[NormalizedName] = []
-            by_id = {idx: raw for idx, raw in enumerate(batch)}
-            for item in results:
-                raw = by_id.get(int(item["id"]))
-                if raw is None:
-                    continue
-                output.append(
-                    NormalizedName(
-                        raw_name=raw,
-                        core_title=str(item.get("core_title") or raw).strip(),
-                        year=item.get("year"),
-                        episode=item.get("episode"),
-                        flags=[str(flag).casefold() for flag in item.get("flags", [])],
-                        source="claude",
-                    )
-                )
-            return output
+            return _coerce_normalized_results(batch, results, source="claude")
     raise RuntimeError("Claude did not return normalize_titles tool output")
 
 
@@ -384,7 +368,8 @@ def normalize_names(
         normalized.update({item.raw_name: item for item in fallback_results})
 
     return {
-        record.path_key: normalized[inputs_by_path[record.path_key]]
+        record.path_key: normalized.get(inputs_by_path[record.path_key])
+        or fallback_normalize(inputs_by_path[record.path_key])
         for record in records
     }
 

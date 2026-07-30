@@ -66,6 +66,47 @@ class GuiSmokeTests(unittest.TestCase):
             window.close()
             self.application.processEvents()
 
+    def test_scan_progress_shows_stage_counts_activity_and_elapsed_time(self) -> None:
+        import time
+
+        from dedupe.events import ScanEvent, ScanEventType, ScanStage
+        from dedupe.gui.main_window import MainWindow
+
+        window = MainWindow()
+        try:
+            window._scan_started_at = time.monotonic() - 65
+            window._handle_event(
+                ScanEvent(
+                    ScanEventType.STAGE_STARTED,
+                    stage=ScanStage.VIDEO_MATCHING,
+                    message="Finding similar videos",
+                    current=0,
+                    total=10,
+                )
+            )
+            window._handle_event(
+                ScanEvent(
+                    ScanEventType.PROGRESS,
+                    stage=ScanStage.VIDEO_MATCHING,
+                    message="Video fingerprints",
+                    current=2,
+                    total=10,
+                    unit="file",
+                )
+            )
+
+            status = window.status_label.text()
+            self.assertIn("Step 3/7", status)
+            self.assertIn("Finding similar videos", status)
+            self.assertIn("Video fingerprints", status)
+            self.assertIn("2/10 files", status)
+            self.assertIn("elapsed 1m 05s", status)
+            self.assertEqual(window.progress_bar.value(), 2)
+            self.assertIn("2 / 10 files", window.progress_bar.text())
+        finally:
+            window.close()
+            self.application.processEvents()
+
     def test_folder_consolidation_tab_shows_folder_mapping_and_file_preview(self) -> None:
         from dedupe.gui.main_window import MainWindow
 

@@ -205,7 +205,9 @@ class FileActionTests(unittest.TestCase):
             source.write_bytes(b"content")
             recycle = Mock()
             recycle.side_effect = lambda path: Path(path).unlink()
-            service = FileActionService(base / "journal.sqlite3", base / "quarantine", recycle=recycle)
+            service = FileActionService(
+                base / "journal.sqlite3", base / "quarantine", recycle=recycle, allow_unsafe_recycle=True
+            )
             request = service.prepare(self._record(source, base), FileAction.RECYCLE)
 
             outcome = service.execute(request)

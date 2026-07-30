@@ -8,7 +8,7 @@ from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 from ..actions import FileAction, FileActionService
 from ..consolidation import ConsolidationPlan, ConsolidationService
 from ..events import CancellationToken, ScanCancelled, ScanEvent
-from ..metadata import MediaMetadata, probe_media_metadata
+from ..metadata import MediaMetadata, media_type_for_path, probe_media_metadata
 from ..models import FileRecord
 from ..service import ScanOptions, ScanService
 from ..transcode.capabilities import check_encoder_capability
@@ -68,7 +68,17 @@ class MetadataTask(QRunnable):
 
     @Slot()
     def run(self) -> None:
-        metadata: MediaMetadata = probe_media_metadata(self.record, self.ffprobe)
+        try:
+            metadata: MediaMetadata = probe_media_metadata(self.record, self.ffprobe)
+        except Exception as exc:  # noqa: BLE001 - never let a probe failure abort the Qt thread pool.
+            metadata = MediaMetadata(
+                path=self.record.path_key,
+                media_type=media_type_for_path(self.record.path),
+                size=self.record.size,
+                modified_at=self.record.mtime,
+                duration=self.record.duration,
+                error=str(exc),
+            )
         self.signals.completed.emit(self.record.path_key, metadata)
 
 

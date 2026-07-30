@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QStandardPaths, QThread, QTimer, Qt, QUrl
@@ -31,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..actions import ActionOutcome, FileAction, FileActionService, OperationStatus
-from ..events import ScanEvent, ScanEventType
+from ..events import ScanEvent, ScanEventType, ScanStage
 from ..models import FileRecord
 from ..name_normalizer import LMSTUDIO_MODEL, LMSTUDIO_URL
 from ..report import write_html_report, write_json_report
@@ -57,6 +58,7 @@ class MainWindow(QMainWindow):
         self._action_thread: QThread | None = None
         self._action_worker: ActionWorker | None = None
         self._result: ScanResult | None = None
+        self._records_by_path: dict[str, FileRecord] = {}
         self._items: list[ReviewItem] = []
         self._last_report_path: Path | None = None
         self._active_ffprobe = "ffprobe"
@@ -65,8 +67,18 @@ class MainWindow(QMainWindow):
         self._journal_dialog: JournalDialog | None = None
         self._transcode_dialog: TranscodeDialog | None = None
         self._review_decisions: dict[str, str] = {}
+        self._scan_started_at: float | None = None
+        self._scan_stage: ScanStage | None = None
+        self._scan_stage_message = "Scanning"
+        self._scan_activity = ""
+        self._scan_current: int | None = None
+        self._scan_total: int | None = None
+        self._scan_unit = "item"
 
         self._build_ui()
+        self._scan_status_timer = QTimer(self)
+        self._scan_status_timer.setInterval(1_000)
+        self._scan_status_timer.timeout.connect(self._refresh_scan_status)
         self._set_running(False)
 
     def _build_ui(self) -> None:
@@ -312,6 +324,7 @@ class MainWindow(QMainWindow):
         options = self._scan_options()
         self._active_ffprobe = options.ffprobe
         self._result = None
+        self._records_by_path = {}
         self._items = []
         self._last_report_path = None
         self._review_decisions = {}
@@ -321,6 +334,17 @@ class MainWindow(QMainWindow):
         self._update_category_filter([])
         self._append_log("Starting read-only scan")
         self._last_terminal_status = "Scanning"
+        self._scan_started_at = time.monotonic()
+        self._scan_stage = None
+        self._scan_stage_message = "Preparing scan"
+        self._scan_activity = ""
+        self._scan_current = None
+        self._scan_total = None
+        self._scan_unit = "item"
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setFormat("Preparing…")
+        self._refresh_scan_status()
+        self._scan_status_timer.start()
 
         thread = QThread(self)
         worker = ScanWorker(options)
@@ -350,34 +374,84 @@ class MainWindow(QMainWindow):
     def _handle_event(self, event: ScanEvent) -> None:
         if event.event_type == ScanEventType.STAGE_STARTED:
             stage = event.stage.value.replace("_", " ").title() if event.stage else "Scan"
-            self.status_label.setText(stage)
+            self._scan_stage = event.stage
+            self._scan_stage_message = event.message or stage
+            self._scan_activity = ""
+            self._scan_current = event.current
+            self._scan_total = event.total
+            self._scan_unit = event.unit or "file"
             self._append_log(event.message or stage)
             if event.total is None:
                 self.progress_bar.setRange(0, 0)
+                self.progress_bar.setFormat("Working…")
             else:
                 self.progress_bar.setRange(0, max(1, event.total))
                 self.progress_bar.setValue(0)
+                self._set_scan_progress_format(self._scan_unit)
+            self._refresh_scan_status()
         elif event.event_type == ScanEventType.PROGRESS:
+            self._scan_stage = event.stage or self._scan_stage
+            self._scan_activity = event.message
+            self._scan_current = event.current
+            self._scan_total = event.total
+            self._scan_unit = event.unit or "item"
             if event.total is None:
                 self.progress_bar.setRange(0, 0)
+                if event.current is not None:
+                    self.progress_bar.setFormat(f"{event.current} {self._unit_label(self._scan_unit, event.current)}")
             else:
                 self.progress_bar.setRange(0, max(1, event.total))
                 self.progress_bar.setValue(event.current or 0)
-            if event.message:
-                self.status_label.setText(event.message)
+                self._set_scan_progress_format(self._scan_unit)
+            self._refresh_scan_status()
         elif event.event_type == ScanEventType.STAGE_COMPLETED and event.total is not None:
             self.progress_bar.setRange(0, max(1, event.total))
             self.progress_bar.setValue(event.total)
+            self._scan_current = event.total
+            self._scan_total = event.total
+            self._set_scan_progress_format(self._scan_unit)
+            self._refresh_scan_status()
         elif event.event_type == ScanEventType.WARNING:
             self._append_log(f"WARNING: {event.message}")
         elif event.event_type == ScanEventType.FAILED:
             self._append_log(f"ERROR: {event.message}")
+
+    @staticmethod
+    def _unit_label(unit: str, count: int) -> str:
+        labels = {"file": ("file", "files"), "name": ("name", "names"), "batch": ("batch", "batches")}
+        singular, plural = labels.get(unit, (unit, f"{unit}s"))
+        return singular if count == 1 else plural
+
+    def _set_scan_progress_format(self, unit: str) -> None:
+        label = self._unit_label(unit, 2)
+        self.progress_bar.setFormat(f"%v / %m {label}  ·  %p%")
+
+    def _refresh_scan_status(self) -> None:
+        parts: list[str] = []
+        if self._scan_stage is not None:
+            stages = list(ScanStage)
+            parts.append(f"Step {stages.index(self._scan_stage) + 1}/{len(stages)}")
+        parts.append(self._scan_stage_message)
+        if self._scan_activity and self._scan_activity != self._scan_stage_message:
+            parts.append(self._scan_activity)
+        if self._scan_current is not None:
+            count = str(self._scan_current)
+            if self._scan_total is not None:
+                count += f"/{self._scan_total}"
+            parts.append(f"{count} {self._unit_label(self._scan_unit, self._scan_current)}")
+        if self._scan_started_at is not None:
+            elapsed = max(0, int(time.monotonic() - self._scan_started_at))
+            minutes, seconds = divmod(elapsed, 60)
+            elapsed_text = f"{minutes}m {seconds:02d}s" if minutes else f"{seconds}s"
+            parts.append(f"elapsed {elapsed_text}")
+        self.status_label.setText("  ·  ".join(parts))
 
     def _scan_completed(self, result: object) -> None:
         if not isinstance(result, ScanResult):
             self._scan_failed("Scanner returned an unexpected result")
             return
         self._result = result
+        self._records_by_path = {record.path_key: record for record in result.records}
         self._items = build_review_items(result.report)
         self._load_review_decisions()
         self.comparison.configure(result, self._active_ffprobe)
@@ -400,6 +474,8 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Scan failed", message)
 
     def _thread_finished(self) -> None:
+        self._scan_status_timer.stop()
+        self._scan_started_at = None
         self._scan_thread = None
         self._scan_worker = None
         self._set_running(False)
@@ -503,10 +579,9 @@ class MainWindow(QMainWindow):
         return f"{item.category}:{hashlib.sha256(payload).hexdigest()[:16]}"
 
     def _record_for_path(self, path_text: str, *, allow_directory: bool = False) -> FileRecord | None:
-        if self._result is not None:
-            for record in self._result.records:
-                if record.path_key == path_text:
-                    return record
+        record = self._records_by_path.get(path_text)
+        if record is not None:
+            return record
         path = Path(path_text)
         if allow_directory and path.exists():
             stat = path.stat()
@@ -898,6 +973,7 @@ class MainWindow(QMainWindow):
             allow_unsafe_recycle=self.allow_unsafe_recycle.isChecked(),
             parent=self,
         )
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.busy_changed.connect(self._transcode_busy_changed)
         dialog.journal_changed.connect(self._transcode_journal_changed)
         self.allow_unsafe_recycle.toggled.connect(dialog.set_allow_unsafe_recycle)
@@ -969,6 +1045,8 @@ class MainWindow(QMainWindow):
             self._journal_dialog.refresh()
 
     def _transcode_closed(self, _result: int) -> None:
+        if self._transcode_dialog is not None:
+            self.allow_unsafe_recycle.toggled.disconnect(self._transcode_dialog.set_allow_unsafe_recycle)
         self._transcode_dialog = None
         self._set_running(self._scan_thread is not None)
         if self._close_when_finished:

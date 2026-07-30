@@ -6,9 +6,12 @@ The GUI is launched with `samesame-gui` and contains three main tabs:
 
 ## Shared status area
 
-The bottom status bar shows the current operation and progress. The **Scan log
-and warnings** dock records scan stages, warnings, completed file actions, and
-transcode-related journal events.
+The bottom status bar shows the current scan step, active fingerprint/hash
+operation, completed and total item counts, percentage, and elapsed time. The
+elapsed timer continues to update while a slow first item is being processed,
+so an active scan remains visibly alive. The **Scan log and warnings** dock
+records scan stages, warnings, completed file actions, and transcode-related
+journal events.
 
 Controls that could conflict with a running scan, file move, promotion, or
 transcode are disabled until that operation finishes safely.

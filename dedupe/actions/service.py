@@ -37,7 +37,7 @@ class FileActionService:
         self.journal_path = journal_path
         self.quarantine_root = quarantine_root
         self._recycle = recycle
-        self.allow_unsafe_recycle = allow_unsafe_recycle or recycle is not None
+        self.allow_unsafe_recycle = allow_unsafe_recycle
 
     def prepare(
         self,

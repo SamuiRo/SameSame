@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import tempfile
 import tomllib
@@ -18,6 +19,7 @@ from dedupe.name_normalizer import (
     PROMPT_HASH,
     _coerce_normalized_results,
     _extract_json_object,
+    _normalize_batch_with_claude,
     contextual_name,
     fallback_normalize,
     find_name_hints,
@@ -100,6 +102,40 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(results[0].core_title, "Cowboy Bebop")
         self.assertEqual(results[0].source, "lmstudio")
         self.assertEqual(results[0].year, 1998)
+
+    def test_claude_batch_backfills_ids_the_model_omitted(self) -> None:
+        class FakeBlock:
+            type = "tool_use"
+            name = "normalize_titles"
+            # Only id 0 is returned; id 1 is silently dropped, as a truncated
+            # tool call can do in practice (F-03).
+            input = {
+                "results": [
+                    {"id": 0, "core_title": "Cowboy Bebop", "year": 1998, "episode": 1, "flags": ["dub"]},
+                ]
+            }
+
+        class FakeResponse:
+            content = [FakeBlock()]
+
+        class FakeMessages:
+            def create(self, **kwargs: object) -> FakeResponse:
+                return FakeResponse()
+
+        class FakeAnthropic:
+            def __init__(self, api_key: str) -> None:
+                self.messages = FakeMessages()
+
+        batch = ["Cowboy.Bebop.E01.1998.DUB", "Trigun.E02.1998"]
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+            with patch("anthropic.Anthropic", FakeAnthropic):
+                results = _normalize_batch_with_claude(batch)
+
+        by_raw = {item.raw_name: item for item in results}
+        self.assertEqual(set(by_raw), set(batch))
+        self.assertEqual(by_raw["Cowboy.Bebop.E01.1998.DUB"].source, "claude")
+        self.assertEqual(by_raw["Cowboy.Bebop.E01.1998.DUB"].core_title, "Cowboy Bebop")
+        self.assertEqual(by_raw["Trigun.E02.1998"].source, "fallback")
 
     def test_config_file_values_can_be_overridden_from_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

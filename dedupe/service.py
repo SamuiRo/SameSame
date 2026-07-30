@@ -273,7 +273,7 @@ class ScanService:
                             threshold=config.video_threshold,
                             ffmpeg=ffmpeg,
                             ffprobe=ffprobe,
-                            workers=min(config.workers, 4),
+                            workers=config.workers,
                             max_candidates_per_bucket=config.max_video_candidates_per_bucket,
                         )
             LOGGER.info("Found %d video matches", len(video_matches))
@@ -337,7 +337,7 @@ class ScanService:
                             threshold=config.audio_threshold,
                             ffmpeg=ffmpeg,
                             ffprobe=ffprobe,
-                            workers=min(config.workers, 4),
+                            workers=config.workers,
                         )
             LOGGER.info("Found %d audio matches", len(audio_matches))
 

@@ -60,6 +60,7 @@ def recycle_transcode_source(
     quarantine_root: Path,
     collection_root: Path | None = None,
     recycle: Callable[[str], None] | None = None,
+    allow_unsafe_recycle: bool = False,
 ) -> ActionOutcome:
     return cleanup_transcode_source(
         result,
@@ -68,5 +69,5 @@ def recycle_transcode_source(
         quarantine_root=quarantine_root,
         collection_root=collection_root,
         recycle=recycle,
-        allow_unsafe_recycle=recycle is not None,
+        allow_unsafe_recycle=allow_unsafe_recycle,
     )

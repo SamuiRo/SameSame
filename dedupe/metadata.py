@@ -165,7 +165,7 @@ def _probe_image(record: FileRecord) -> MediaMetadata:
                 container=source.format,
                 streams=[stream],
             )
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, Image.DecompressionBombError) as exc:
         return MediaMetadata(
             path=basic.path,
             media_type=basic.media_type,

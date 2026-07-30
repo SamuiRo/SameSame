@@ -302,6 +302,7 @@ class QueueTests(unittest.TestCase):
                 quarantine_root=root / "quarantine",
                 collection_root=root,
                 recycle=lambda path: Path(path).unlink(),
+                allow_unsafe_recycle=True,
             )
             self.assertEqual(outcome.status, OperationStatus.COMPLETED)
             self.assertFalse(source.exists())
