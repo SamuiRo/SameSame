@@ -401,6 +401,19 @@ class ScanService:
                     audio_matches=audio_matches,
                 )
                 folder_pairs = compare_folders(records, assignments, threshold=config.folder_threshold)
+                root_keys = {record.root_key for record in records}
+                if len(root_keys) > 1:
+                    # Directory-level pairs (above) are the primary signal - they
+                    # catch e.g. two differently-named season folders directly.
+                    # The coarser collection-root comparison is kept as an
+                    # additional roll-up rather than the only view (F-16).
+                    folder_pairs = folder_pairs + compare_folders(
+                        records,
+                        assignments,
+                        threshold=config.folder_threshold,
+                        key=lambda record: record.root_key,
+                        scope="root",
+                    )
             LOGGER.info("Found %d folder pairs", len(folder_pairs))
 
         report = DedupeReport(

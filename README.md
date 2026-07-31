@@ -90,8 +90,11 @@ To compare several collection roots:
 samesame --folders "D:\Anime\Collection A" "E:\Anime\Collection B" --name-provider none
 ```
 
-One root finds duplicates anywhere below that root. Several roots additionally
-produce folder-pair similarity. Every supplied root is scanned recursively.
+One root finds duplicates anywhere below that root, including folder-pair
+similarity between subfolders under it (for example, two differently-named
+copies of the same season). Several roots additionally produce a coarser
+roll-up comparing the roots themselves. Every supplied root is scanned
+recursively.
 
 By default the command writes these files in the current directory:
 
@@ -152,7 +155,8 @@ Use the report sections in this order:
 2. **Video, image, and audio matches** are content-backed, but should still be
    compared before changing files because alternate editions may contain
    different tracks, subtitles, credits, or metadata.
-3. **Folder matches** summarize overlap between supplied collection roots.
+3. **Folder matches** summarize overlap between subfolders (and, with several
+   collection roots supplied, between the roots themselves).
 4. **Name hints** are review leads only. Similar names or episode numbers do
    not prove identical content.
 

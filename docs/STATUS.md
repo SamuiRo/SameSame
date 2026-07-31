@@ -6,13 +6,14 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.7.5`. Stages A through E of the `1.7.0`
+The current package version is `1.7.6`. Stages A through E of the `1.7.0`
 forward-looking audit are implemented — see `docs/AUDIT-1.7.0.md` for the
 full findings, fixes, and regression coverage. Notably: similar-match results
 are now grouped into transitive clusters instead of pairs (F-23), scans and
 folder consolidation batches actually stop when cancelled instead of
 finishing a queued backlog (F-02, F-12), and `anthropic` is an optional `ai`
-extra rather than a hard dependency (F-19).
+extra rather than a hard dependency (F-19). From Stage F: folder comparison
+now runs per-directory instead of only between collection roots (F-16).
 
 A real, user-confirmed labelled corpus now exists at
 `docs/threshold-real-manifest.json` (14 video pairs from
@@ -54,6 +55,10 @@ Implemented:
   per-pair evidence matrix) instead of one case per pairwise match, and used
   for both folder Jaccard scoring and keeper-based batch cleanup;
 - corrected folder Jaccard scoring that includes unmatched files in the union;
+- per-directory folder comparison (comparing each file's containing folder,
+  not only the collection root), with the collection-root comparison kept as
+  an additional roll-up when several roots are scanned, and a shared-cluster
+  prefilter so unrelated directories are never generated as a candidate pair;
 - HTML and JSON reports with exact, video, image, audio, mixed-evidence,
   folder, and name sections, grouped by cluster;
 - optional Anthropic, LM Studio, or local heuristic title normalization
@@ -132,9 +137,11 @@ quarantine-first action.
 
 ## Supported Behavior
 
-- One input root: finds duplicates within that tree.
-- Multiple input roots: finds duplicates within and across all trees and also
-  calculates folder-pair similarity.
+- One input root: finds duplicates within that tree, including folder-pair
+  similarity between subfolders under it.
+- Multiple input roots: finds duplicates within and across all trees, and
+  additionally calculates a coarser folder-pair similarity between the roots
+  themselves.
 - Traversal is recursive through all nested subfolders.
 - Default scanning covers common video, image, and audio formats.
 - Python callers can run scans without terminal output through

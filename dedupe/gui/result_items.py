@@ -79,7 +79,7 @@ def build_review_items(report: DedupeReport) -> list[ReviewItem]:
         items.append(
             ReviewItem(
                 category="folder",
-                title=f"Folder pair {index} · {pair.content_similarity:.2f}% content",
+                title=f"Folder pair {index} ({pair.scope}) · {pair.content_similarity:.2f}% content",
                 paths=(pair.left, pair.right),
                 evidence=f"Name-assisted similarity {pair.name_assisted_similarity:.2f}%",
                 confidence=pair.content_similarity,

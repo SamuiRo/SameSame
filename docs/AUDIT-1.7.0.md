@@ -1453,12 +1453,50 @@ clean, `mypy dedupe` at the documented 37-error baseline.
 
 ### Stage F — Product (~6 days)
 
-| # | Work | Complexity |
-| --- | --- | ---: |
-| F-16 | Per-directory folder comparison instead of root-only (**confirmed wanted**) | 3/5 |
-| F-18 | `QSettings` persistence for scan settings and window state | 2/5 |
-| F-20 | One-language HTML report with search and filters | 2/5 |
-| F-30 + F-31 | Descriptor and sampling investigation on the Stage C corpus | 4/5 |
+| # | Work | Complexity | Status |
+| --- | --- | ---: | --- |
+| F-16 | Per-directory folder comparison instead of root-only (**confirmed wanted**) | 3/5 | Done 2026-07-31 |
+| F-18 | `QSettings` persistence for scan settings and window state | 2/5 | |
+| F-20 | One-language HTML report with search and filters | 2/5 | |
+| F-30 + F-31 | Descriptor and sampling investigation on the Stage C corpus | 4/5 | |
+
+**F-16 implementation notes.** `compare_folders` (`folder_compare.py`) now
+groups records by `record.path.parent` (each file's immediate containing
+directory) rather than `record.root_key`. A single scanned root - the common
+case, per the bug report - therefore compares every pair of subfolders under
+it instead of producing zero pairs, since there was previously only ever one
+distinct root to compare against itself. The old root-only comparison is kept
+as an explicit `key=lambda record: record.root_key, scope="root"` call in
+`service.py`, run in addition to (not instead of) the directory-level
+comparison whenever more than one collection root was scanned - the
+"additional roll-up" the audit's fix text asked for, rather than a
+replacement. `FolderPair` gained a `scope: "directory" | "root"` field,
+surfaced in the HTML report summary line and the GUI review-item title, so
+the two granularities aren't shown as indistinguishable entries.
+
+Comparing every directory pair is quadratic in directory count, which the
+audit flagged as a needed cap. `_candidate_folder_pairs` builds an inverted
+index (cluster id -> folders containing it) and only considers directory
+pairs that already share at least one exact/video/image/audio/name cluster,
+instead of `itertools.combinations` over every folder. Directories with
+nothing in common are never generated as a candidate - not filtered out
+afterward by the threshold - which also changes a corner case: a `threshold`
+of `0` used to mean "show every folder pair, including 0%-overlap ones";
+it now means "show every folder pair that has *any* shared cluster, down to
+0% content but nonzero name overlap." Zero-overlap pairs were pure noise at
+scale and are exactly what the cap needed to remove.
+
+Regression: `test_folder_comparison_finds_subfolders_under_a_single_root`
+(the core bug - one root, two duplicate subfolders, previously 0 pairs),
+`test_folder_comparison_root_rollup_still_available` (the explicit root-scope
+key still works and labels itself `"root"`), and
+`test_folder_comparison_skips_directories_with_no_shared_cluster` (a third,
+unrelated directory is never generated as a candidate even at `threshold=0`,
+all in `tests/test_core.py`). Verified end-to-end against the real
+`S:/Daedalus/Kiroku/TestLib` corpus: 0 folder pairs before (root-only, one
+root scanned) -> 77 directory-scope pairs after. Full suite: 123 passed, 7
+subtests, `ruff check`/`ruff format --check` clean, `mypy dedupe` unchanged
+at the documented 37-error baseline.
 
 ### Where NumPy fits (approved)
 

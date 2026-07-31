@@ -86,7 +86,7 @@ def write_html_report(report: DedupeReport, path: Path) -> None:
         folder_items.append(
             f"""
             <details>
-              <summary>content {pair.content_similarity:.2f}% · name-assisted {pair.name_assisted_similarity:.2f}% · <code>{html.escape(pair.left)}</code> ↔ <code>{html.escape(pair.right)}</code></summary>
+              <summary>[{html.escape(pair.scope)}] content {pair.content_similarity:.2f}% · name-assisted {pair.name_assisted_similarity:.2f}% · <code>{html.escape(pair.left)}</code> ↔ <code>{html.escape(pair.right)}</code></summary>
               <h3>Matches</h3>{matched or '<p class="muted">None</p>'}
               <div class="columns">
                 <div><h3>Left only</h3>{_path_list(pair.left_only)}</div>

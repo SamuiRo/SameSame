@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from itertools import combinations
 
 from .models import (
@@ -185,14 +186,48 @@ def build_cluster_assignments(
     return assignments, content_clusters
 
 
+def _candidate_folder_pairs(folder_sets: dict[str, set[str]]) -> list[tuple[str, str]]:
+    """Folder pairs that share at least one cluster id.
+
+    Comparing every directory pair is quadratic in directory count, and in a
+    real library almost all of them share nothing. Build an inverted index
+    (cluster id -> folders containing it) instead, so only folders that
+    already have something in common become candidates (F-16).
+    """
+    cluster_to_folders: dict[str, set[str]] = {}
+    for folder, cluster_ids in folder_sets.items():
+        for cluster_id in cluster_ids:
+            cluster_to_folders.setdefault(cluster_id, set()).add(folder)
+
+    candidates: set[tuple[str, str]] = set()
+    for folders in cluster_to_folders.values():
+        if len(folders) < 2:
+            continue
+        candidates.update(combinations(sorted(folders), 2))
+    return sorted(candidates)
+
+
 def compare_folders(
     records: list[FileRecord],
     assignments: dict[str, ClusterAssignment],
     threshold: float,
+    *,
+    key: Callable[[FileRecord], str] | None = None,
+    scope: str = "directory",
 ) -> list[FolderPair]:
+    """Compare folders pairwise for shared content/name clusters.
+
+    `key` selects what counts as a "folder" for a given record; it defaults to
+    the record's immediate containing directory, so e.g. two differently-named
+    copies of the same season folder are compared directly instead of only
+    the collection roots they happen to live under (F-16). Pass
+    `key=lambda record: record.root_key` for the coarser collection-root
+    roll-up the tool used to compute exclusively.
+    """
+    key_fn = key or (lambda record: str(record.path.parent))
     by_folder: dict[str, list[FileRecord]] = {}
     for record in records:
-        by_folder.setdefault(record.root_key, []).append(record)
+        by_folder.setdefault(key_fn(record), []).append(record)
 
     folder_sets: dict[str, set[str]] = {}
     content_folder_sets: dict[str, set[str]] = {}
@@ -217,7 +252,7 @@ def compare_folders(
         content_folder_sets[folder] = content_ids
 
     pairs: list[FolderPair] = []
-    for left, right in combinations(sorted(folder_sets), 2):
+    for left, right in _candidate_folder_pairs(folder_sets):
         check_cancelled()
         left_set = folder_sets[left]
         right_set = folder_sets[right]
@@ -265,6 +300,7 @@ def compare_folders(
                 matched=matched,
                 left_only=left_only,
                 right_only=right_only,
+                scope=scope,
             )
         )
     pairs.sort(key=lambda item: (-item.content_similarity, -item.name_assisted_similarity, item.left, item.right))

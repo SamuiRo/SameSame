@@ -230,7 +230,7 @@ $env:LMSTUDIO_MODEL = "qwen2.5-7b-instruct"
 | `video_threshold` | `85` | Minimum sequence-aligned video fingerprint similarity percent; finite `0`–`100`. |
 | `image_threshold` | `90` | Minimum perceptual image similarity percent; finite `0`–`100`. |
 | `audio_threshold` | `94` | Minimum Chromaprint audio similarity percent; finite `0`–`100`. |
-| `folder_threshold` | `50` | Minimum folder Jaccard similarity percent; finite `0`–`100`. |
+| `folder_threshold` | `50` | Minimum folder Jaccard similarity percent; finite `0`–`100`. Applies to both the directory-level comparison (default) and the collection-root roll-up (F-16). |
 | `name_threshold` | `92` | Minimum fuzzy name hint similarity percent; finite `0`–`100`. |
 | `name_provider` | `auto` | `auto`, `anthropic`, `lmstudio`, or `none`. |
 | `lmstudio_url` | `http://localhost:1234/v1` | LM Studio API base URL. |

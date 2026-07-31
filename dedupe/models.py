@@ -125,6 +125,7 @@ class FolderPair:
     matched: list[dict[str, Any]]
     left_only: list[str]
     right_only: list[str]
+    scope: str = "directory"
 
 
 @dataclass(slots=True)

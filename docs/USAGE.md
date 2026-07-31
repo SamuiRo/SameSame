@@ -240,6 +240,18 @@ clusters as shared, while all canonical items remain in the union so unmatched
 files lower the score. `name_assisted_similarity` also allows name-based clusters
 to count as shared. Both are Jaccard similarity: intersection divided by union.
 
+Folder comparison runs at two granularities, distinguished by each pair's
+`scope`. `directory` (the default) compares each file's immediate containing
+folder against every other, so two differently-named copies of the same show
+or season are compared directly even under a single scanned root — this is
+the common "is this folder a duplicate of that folder" question. `root`
+appears only when several collection roots were supplied, and additionally
+compares the roots themselves as a coarser roll-up. Directories that share no
+exact/video/image/audio/name cluster with any other directory are never
+reported as a pair (not just filtered to a low score), which keeps the
+comparison bounded on a large library instead of growing with the square of
+the folder count.
+
 Name hints are intentionally low confidence. They are useful for sorting and
 review, but should not be treated as deletion proof unless confirmed by exact
 hashes, video fingerprints, image fingerprints, or audio fingerprints.

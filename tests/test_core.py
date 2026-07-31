@@ -525,6 +525,75 @@ class CoreTests(unittest.TestCase):
                 self.assertEqual(folder_pairs[0].content_similarity, 50.0)
                 self.assertEqual(folder_pairs[0].name_assisted_similarity, 50.0)
 
+    def test_folder_comparison_finds_subfolders_under_a_single_root(self) -> None:
+        # F-16: folders used to be keyed by the collection root, so scanning
+        # one root - the common case - always produced zero folder pairs no
+        # matter how many duplicate subfolders existed underneath it. The
+        # default key is now each file's containing directory.
+        root = Path("collection").resolve()
+        season = root / "Show" / "Season 1"
+        season_copy = root / "Show" / "Season 1 (copy)"
+        records = [
+            FileRecord(season / "ep01.mp4", root, 1, 0, "ep01"),
+            FileRecord(season_copy / "ep01.mp4", root, 1, 0, "ep01"),
+        ]
+        exact = [ExactDuplicateGroup("hash", [str(season / "ep01.mp4"), str(season_copy / "ep01.mp4")], 1)]
+        normalized = {record.raw_name: NormalizedName(record.raw_name, record.raw_name) for record in records}
+        assignments, _clusters = build_cluster_assignments(records, exact, [], normalized)
+
+        folder_pairs = compare_folders(records, assignments, threshold=0)
+
+        self.assertEqual(len(folder_pairs), 1)
+        self.assertEqual(folder_pairs[0].scope, "directory")
+        self.assertEqual({folder_pairs[0].left, folder_pairs[0].right}, {str(season), str(season_copy)})
+        self.assertEqual(folder_pairs[0].content_similarity, 100.0)
+
+    def test_folder_comparison_root_rollup_still_available(self) -> None:
+        # F-16: the old collection-root comparison is kept, opt-in, as a
+        # coarser roll-up alongside the new directory-level default.
+        left_root = Path("left").resolve()
+        right_root = Path("right").resolve()
+        records = [
+            FileRecord(left_root / "ep01.mp4", left_root, 1, 0, "ep01"),
+            FileRecord(right_root / "ep01.mp4", right_root, 1, 0, "ep01"),
+        ]
+        exact = [ExactDuplicateGroup("hash", [str(left_root / "ep01.mp4"), str(right_root / "ep01.mp4")], 1)]
+        normalized = {record.raw_name: NormalizedName(record.raw_name, record.raw_name) for record in records}
+        assignments, _clusters = build_cluster_assignments(records, exact, [], normalized)
+
+        root_pairs = compare_folders(
+            records, assignments, threshold=0, key=lambda record: record.root_key, scope="root"
+        )
+
+        self.assertEqual(len(root_pairs), 1)
+        self.assertEqual(root_pairs[0].scope, "root")
+        self.assertEqual({root_pairs[0].left, root_pairs[0].right}, {str(left_root), str(right_root)})
+
+    def test_folder_comparison_skips_directories_with_no_shared_cluster(self) -> None:
+        # F-16: comparing every directory pair is quadratic in directory
+        # count, so unrelated directories must never become a candidate pair
+        # - not just be filtered out after the fact by the threshold.
+        root = Path("collection").resolve()
+        matched_a = root / "A"
+        matched_b = root / "A copy"
+        unrelated = root / "Unrelated"
+        records = [
+            FileRecord(matched_a / "ep01.mp4", root, 1, 0, "ep01"),
+            FileRecord(matched_b / "ep01.mp4", root, 1, 0, "ep01"),
+            FileRecord(unrelated / "other.mp4", root, 2, 0, "other"),
+        ]
+        exact = [ExactDuplicateGroup("hash", [str(matched_a / "ep01.mp4"), str(matched_b / "ep01.mp4")], 1)]
+        normalized = {record.raw_name: NormalizedName(record.raw_name, record.raw_name) for record in records}
+        assignments, _clusters = build_cluster_assignments(records, exact, [], normalized)
+
+        # threshold=0 would let a genuine 0%-overlap pair through if one were
+        # ever generated, so this only passes if the prefilter itself never
+        # produces "Unrelated" as a candidate.
+        folder_pairs = compare_folders(records, assignments, threshold=0)
+
+        self.assertEqual(len(folder_pairs), 1)
+        self.assertEqual({folder_pairs[0].left, folder_pairs[0].right}, {str(matched_a), str(matched_b)})
+
     def test_video_match_keeps_identical_fingerprints_for_different_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
