@@ -50,9 +50,27 @@ class GuiSmokeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtCore import QCoreApplication
         from PySide6.QtWidgets import QApplication
 
         cls.application = QApplication.instance() or QApplication([])
+        QCoreApplication.setOrganizationName("SameSame")
+        QCoreApplication.setApplicationName("SameSame")
+
+    def setUp(self) -> None:
+        from PySide6.QtCore import QSettings
+
+        # F-18's QSettings persistence must not touch the real machine
+        # registry/config from a test run, and must not leak between test
+        # methods either (MainWindow() is constructed many times below) -
+        # redirect every QSettings() constructed with no explicit path to a
+        # fresh throwaway ini file per test.
+        self._settings_dir = tempfile.TemporaryDirectory()
+        QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, self._settings_dir.name)
+        QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+
+    def tearDown(self) -> None:
+        self._settings_dir.cleanup()
 
     def test_main_window_constructs_with_all_filters(self) -> None:
         from dedupe.gui.main_window import MainWindow
@@ -68,6 +86,41 @@ class GuiSmokeTests(unittest.TestCase):
         finally:
             window.close()
             self.application.processEvents()
+
+    def test_scan_settings_persist_across_windows_except_the_unsafe_recycle_flag(self) -> None:
+        # F-18: collection roots, thresholds, worker count, ffmpeg/ffprobe
+        # paths, and skip flags survive a close/reopen. allow_unsafe_recycle
+        # must NOT survive it - it always starts unchecked, on purpose.
+        from dedupe.gui.main_window import MainWindow
+
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = str(Path(tmp).resolve())
+            first = MainWindow()
+            try:
+                first.folder_list.addItem(folder)
+                first.workers.setValue(9)
+                first.video_threshold.setValue(77.0)
+                first.skip_audio.setChecked(True)
+                first.ffmpeg_path.setText("C:/tools/ffmpeg.exe")
+                first.allow_unsafe_recycle.setChecked(True)
+            finally:
+                first.close()
+                self.application.processEvents()
+
+            second = MainWindow()
+            try:
+                self.assertEqual(
+                    [second.folder_list.item(i).text() for i in range(second.folder_list.count())],
+                    [folder],
+                )
+                self.assertEqual(second.workers.value(), 9)
+                self.assertEqual(second.video_threshold.value(), 77.0)
+                self.assertTrue(second.skip_audio.isChecked())
+                self.assertEqual(second.ffmpeg_path.text(), "C:/tools/ffmpeg.exe")
+                self.assertFalse(second.allow_unsafe_recycle.isChecked())
+            finally:
+                second.close()
+                self.application.processEvents()
 
     def test_scan_progress_shows_stage_counts_activity_and_elapsed_time(self) -> None:
         import time

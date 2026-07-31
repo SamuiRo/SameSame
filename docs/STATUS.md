@@ -6,14 +6,16 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.7.6`. Stages A through E of the `1.7.0`
+The current package version is `1.7.7`. Stages A through E of the `1.7.0`
 forward-looking audit are implemented — see `docs/AUDIT-1.7.0.md` for the
 full findings, fixes, and regression coverage. Notably: similar-match results
 are now grouped into transitive clusters instead of pairs (F-23), scans and
 folder consolidation batches actually stop when cancelled instead of
 finishing a queued backlog (F-02, F-12), and `anthropic` is an optional `ai`
 extra rather than a hard dependency (F-19). From Stage F: folder comparison
-now runs per-directory instead of only between collection roots (F-16).
+now runs per-directory instead of only between collection roots (F-16), and
+the desktop GUI now remembers scan settings and window state between
+launches via `QSettings` (F-18).
 
 A real, user-confirmed labelled corpus now exists at
 `docs/threshold-real-manifest.json` (14 video pairs from
@@ -82,6 +84,10 @@ Implemented:
   subtitle tracks, chapters, and attachments.
 - optional PySide6 desktop shell exposed through `samesame-gui`;
 - multiple-root selection and scan settings with a background worker;
+- `QSettings`-backed persistence of collection roots, thresholds, worker
+  count, ffmpeg/ffprobe paths, quarantine path, skip flags, window geometry,
+  and splitter sizes across launches; the unsafe-recycle opt-in is
+  deliberately excluded and always starts unchecked;
 - responsive progress, warning logs, and cooperative cancel control;
 - filters for all seven report categories (including mixed-evidence clusters);
 - side-by-side image/video/audio preview with synchronized video seeking;

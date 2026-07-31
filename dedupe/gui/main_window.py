@@ -4,7 +4,7 @@ import hashlib
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QStandardPaths, QThread, QTimer, Qt, QUrl
+from PySide6.QtCore import QSettings, QStandardPaths, QThread, QTimer, Qt, QUrl
 from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -76,25 +76,26 @@ class MainWindow(QMainWindow):
         self._scan_unit = "item"
 
         self._build_ui()
+        self._restore_settings()
         self._scan_status_timer = QTimer(self)
         self._scan_status_timer.setInterval(1_000)
         self._scan_status_timer.timeout.connect(self._refresh_scan_status)
         self._update_enabled_state()
 
     def _build_ui(self) -> None:
-        root_splitter = QSplitter(Qt.Orientation.Horizontal)
-        root_splitter.addWidget(self._build_scan_panel())
-        root_splitter.addWidget(self._build_results_panel())
+        self.root_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.root_splitter.addWidget(self._build_scan_panel())
+        self.root_splitter.addWidget(self._build_results_panel())
         self.comparison = ComparisonWidget(self)
         self.comparison.action_requested.connect(self._request_action)
         self.comparison.batch_quarantine_requested.connect(self._request_batch_quarantine)
         self.comparison.batch_action_requested.connect(self._request_batch_action)
         self.comparison.transcode_requested.connect(self._open_transcode)
-        root_splitter.addWidget(self.comparison)
-        root_splitter.setStretchFactor(0, 0)
-        root_splitter.setStretchFactor(1, 0)
-        root_splitter.setStretchFactor(2, 1)
-        root_splitter.setSizes([280, 360, 860])
+        self.root_splitter.addWidget(self.comparison)
+        self.root_splitter.setStretchFactor(0, 0)
+        self.root_splitter.setStretchFactor(1, 0)
+        self.root_splitter.setStretchFactor(2, 1)
+        self.root_splitter.setSizes([280, 360, 860])
         self.compression_tab = CompressionTab(self)
         self.compression_tab.queue_requested.connect(self._open_compression_queue)
         self.compression_tab.busy_changed.connect(self._compression_busy_changed)
@@ -103,7 +104,7 @@ class MainWindow(QMainWindow):
         self.consolidation_tab.log_message.connect(self._append_log)
         self.consolidation_tab.journal_changed.connect(self._consolidation_journal_changed)
         tabs = QTabWidget()
-        tabs.addTab(root_splitter, "Duplicate review")
+        tabs.addTab(self.root_splitter, "Duplicate review")
         tabs.addTab(self.compression_tab, "Video compression")
         tabs.addTab(self.consolidation_tab, "Folder consolidation")
         self.setCentralWidget(tabs)
@@ -314,6 +315,74 @@ class MainWindow(QMainWindow):
             ffmpeg=self.ffmpeg_path.text().strip() or "ffmpeg",
             ffprobe=self.ffprobe_path.text().strip() or "ffprobe",
         )
+
+    def _save_settings(self) -> None:
+        settings = QSettings()
+        settings.beginGroup("scan")
+        settings.setValue("folders", [self.folder_list.item(i).text() for i in range(self.folder_list.count())])
+        settings.setValue("name_provider", self.name_provider.currentData())
+        settings.setValue("lmstudio_url", self.lmstudio_url.text())
+        settings.setValue("lmstudio_model", self.lmstudio_model.text())
+        settings.setValue("workers", self.workers.value())
+        settings.setValue("video_threshold", self.video_threshold.value())
+        settings.setValue("image_threshold", self.image_threshold.value())
+        settings.setValue("audio_threshold", self.audio_threshold.value())
+        settings.setValue("name_threshold", self.name_threshold.value())
+        settings.setValue("folder_threshold", self.folder_threshold.value())
+        settings.setValue("skip_video", self.skip_video.isChecked())
+        settings.setValue("skip_images", self.skip_images.isChecked())
+        settings.setValue("skip_audio", self.skip_audio.isChecked())
+        settings.setValue("ffmpeg_path", self.ffmpeg_path.text())
+        settings.setValue("ffprobe_path", self.ffprobe_path.text())
+        settings.setValue("quarantine_path", self.quarantine_path.text())
+        settings.endGroup()
+        # allow_unsafe_recycle is deliberately never persisted here - it must
+        # reset to the safe (unchecked) state on every launch (F-18).
+        settings.beginGroup("window")
+        settings.setValue("geometry", self.saveGeometry())
+        settings.setValue("state", self.saveState())
+        settings.setValue("splitter_sizes", self.root_splitter.sizes())
+        settings.endGroup()
+
+    def _restore_settings(self) -> None:
+        settings = QSettings()
+        settings.beginGroup("scan")
+        folders = settings.value("folders", [])
+        if isinstance(folders, str):
+            folders = [folders] if folders else []
+        for folder in folders:
+            self.folder_list.addItem(str(folder))
+        provider_index = self.name_provider.findData(settings.value("name_provider", "none", type=str))
+        if provider_index >= 0:
+            self.name_provider.setCurrentIndex(provider_index)
+        self.lmstudio_url.setText(settings.value("lmstudio_url", LMSTUDIO_URL, type=str))
+        self.lmstudio_model.setText(settings.value("lmstudio_model", LMSTUDIO_MODEL, type=str))
+        self.workers.setValue(settings.value("workers", self.workers.value(), type=int))
+        self.video_threshold.setValue(settings.value("video_threshold", self.video_threshold.value(), type=float))
+        self.image_threshold.setValue(settings.value("image_threshold", self.image_threshold.value(), type=float))
+        self.audio_threshold.setValue(settings.value("audio_threshold", self.audio_threshold.value(), type=float))
+        self.name_threshold.setValue(settings.value("name_threshold", self.name_threshold.value(), type=float))
+        self.folder_threshold.setValue(settings.value("folder_threshold", self.folder_threshold.value(), type=float))
+        self.skip_video.setChecked(settings.value("skip_video", False, type=bool))
+        self.skip_images.setChecked(settings.value("skip_images", False, type=bool))
+        self.skip_audio.setChecked(settings.value("skip_audio", False, type=bool))
+        self.ffmpeg_path.setText(settings.value("ffmpeg_path", "ffmpeg", type=str))
+        self.ffprobe_path.setText(settings.value("ffprobe_path", "ffprobe", type=str))
+        self.quarantine_path.setText(settings.value("quarantine_path", str(self._default_quarantine_path()), type=str))
+        settings.endGroup()
+        # allow_unsafe_recycle has no stored value to restore - it always
+        # starts unchecked (F-18).
+        settings.beginGroup("window")
+        geometry = settings.value("geometry")
+        if geometry:
+            self.restoreGeometry(geometry)
+        state = settings.value("state")
+        if state:
+            self.restoreState(state)
+        sizes = settings.value("splitter_sizes")
+        if sizes:
+            self.root_splitter.setSizes([int(size) for size in sizes])
+        settings.endGroup()
 
     def _start_scan(self) -> None:
         if self._scan_thread is not None or self._transcode_is_busy() or self.consolidation_tab.is_busy:
@@ -1061,4 +1130,5 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         self.comparison.stop()
+        self._save_settings()
         event.accept()

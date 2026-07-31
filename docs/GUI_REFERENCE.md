@@ -1,8 +1,14 @@
 # Desktop Interface Reference
 
-This page documents the SameSame `1.7.5` desktop interface button by button.
+This page documents the SameSame `1.7.7` desktop interface button by button.
 The GUI is launched with `samesame-gui` and contains three main tabs:
 **Duplicate review**, **Video compression**, and **Folder consolidation**.
+
+Collection roots, thresholds, worker count, ffmpeg/ffprobe paths, the
+quarantine path, skip flags, window geometry, and pane sizes are remembered
+between launches. The **Allow OS Recycle Bin** opt-in is the one exception:
+it is never persisted and always starts unchecked, so an unsafe setting from
+a previous session can never carry over silently.
 
 ## Shared status area
 

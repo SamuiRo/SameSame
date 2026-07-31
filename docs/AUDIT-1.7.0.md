@@ -1456,7 +1456,7 @@ clean, `mypy dedupe` at the documented 37-error baseline.
 | # | Work | Complexity | Status |
 | --- | --- | ---: | --- |
 | F-16 | Per-directory folder comparison instead of root-only (**confirmed wanted**) | 3/5 | Done 2026-07-31 |
-| F-18 | `QSettings` persistence for scan settings and window state | 2/5 | |
+| F-18 | `QSettings` persistence for scan settings and window state | 2/5 | Done 2026-07-31 |
 | F-20 | One-language HTML report with search and filters | 2/5 | |
 | F-30 + F-31 | Descriptor and sampling investigation on the Stage C corpus | 4/5 | |
 
@@ -1497,6 +1497,47 @@ all in `tests/test_core.py`). Verified end-to-end against the real
 root scanned) -> 77 directory-scope pairs after. Full suite: 123 passed, 7
 subtests, `ruff check`/`ruff format --check` clean, `mypy dedupe` unchanged
 at the documented 37-error baseline.
+
+**F-18 implementation notes.** `MainWindow` gained `_save_settings()`
+(called from `closeEvent`, right before `event.accept()` - i.e. only once
+the window is actually closing, not on every postponed-close busy check) and
+`_restore_settings()` (called from `__init__`, right after `_build_ui()`).
+Both use a plain `QSettings()` - no explicit path - relying on the
+organization/application name `app.py` already sets via
+`QCoreApplication.setOrganizationName`/`setApplicationName`. Persisted:
+collection roots, name provider + LM Studio URL/model, worker count, all five
+similarity thresholds, the three skip flags, ffmpeg/ffprobe paths, the
+quarantine path, window geometry/dock state (`saveGeometry`/`saveState`), and
+the root splitter's pane sizes (`root_splitter` was previously a local
+variable in `_build_ui`; promoted to `self.root_splitter` so `closeEvent` and
+`_restore_settings` can reach it). `allow_unsafe_recycle` is explicitly never
+written or read - it has no stored value, so it starts unchecked on every
+launch by construction, matching the audit's requirement, rather than
+depending on remembering to reset it.
+
+Testing `QSettings` safely required care: with no redirection, `QSettings()`
+writes to the real Windows registry under `HKCU\Software\SameSame\SameSame`,
+which a test run must never touch, and - separately - `GuiSmokeTests`
+constructs `MainWindow()` around a dozen times across different test methods,
+so a single shared settings store would leak state between unrelated tests
+(one test's collection roots showing up in another test's fresh window).
+`tests/test_gui.py`'s `GuiSmokeTests.setUp`/`tearDown` now redirect every
+`QSettings()` call to a fresh `tempfile.TemporaryDirectory()` INI file via
+`QSettings.setPath(IniFormat, UserScope, ...)` + `setDefaultFormat(IniFormat)`
+for the duration of each test method, and `setUpClass` sets the
+organization/application name once (mirroring `app.py`) so the redirected
+path resolves the same way production does.
+
+Regression:
+`test_scan_settings_persist_across_windows_except_the_unsafe_recycle_flag`
+(sets a folder, worker count, threshold, skip flag, and ffmpeg path on one
+`MainWindow`, closes it, opens a second one, and asserts all of those
+survived while `allow_unsafe_recycle` did not). Also manually verified
+end-to-end outside the test harness (a real `QSettings` write/read round
+trip through two `MainWindow` instances) to confirm the INI file is actually
+produced and reloaded, not just internally consistent within the mocked test
+path. Full suite: 124 passed, 7 subtests, `ruff check`/`ruff format --check`
+clean, `mypy dedupe` unchanged at the documented 37-error baseline.
 
 ### Where NumPy fits (approved)
 
