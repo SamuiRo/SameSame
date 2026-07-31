@@ -1,10 +1,20 @@
 # Project Status and Roadmap
 
-Last updated: 2026-06-28
+Last updated: 2026-07-31
 
 This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
+
+The current package version is `1.7.5`. Stages A through E of the `1.7.0`
+forward-looking audit are implemented — see `docs/AUDIT-1.7.0.md` for the
+full findings, fixes, and regression coverage. Notably: similar-match results
+are now grouped into transitive clusters instead of pairs (F-23), scans and
+folder consolidation batches actually stop when cancelled instead of
+finishing a queued backlog (F-02, F-12), and `anthropic` is an optional `ai`
+extra rather than a hard dependency (F-19). Stage C's detection-quality items
+that need a real labelled corpus (F-24 similarity rescaling, F-27 sampling
+grid, F-30 descriptor work) remain open — no such corpus exists yet.
 
 ## Current State
 
@@ -26,10 +36,14 @@ Implemented:
 - audio matching across codec, bitrate, container, and moderate volume changes;
 - separate cached video, image, and audio fingerprints in SQLite;
 - transitive content clusters combining exact relationships with video, image, or audio
-  similarity relationships;
+  similarity relationships, exposed as a single review case (with a
+  per-pair evidence matrix) instead of one case per pairwise match, and used
+  for both folder Jaccard scoring and keeper-based batch cleanup;
 - corrected folder Jaccard scoring that includes unmatched files in the union;
-- HTML and JSON reports with exact, video, image, audio, folder, and name sections;
-- optional Anthropic, LM Studio, or local heuristic title normalization;
+- HTML and JSON reports with exact, video, image, audio, mixed-evidence,
+  folder, and name sections, grouped by cluster;
+- optional Anthropic, LM Studio, or local heuristic title normalization
+  (Anthropic requires the `ai` extra: `pip install -e ".[ai]"`);
 - parent-folder context for generic names such as `01 - Episode 1`, preventing
   same-number episodes from unrelated seasons becoming identical name keys;
 - threshold-safe candidate blocking for large image candidate sets;
@@ -39,26 +53,32 @@ Implemented:
 - automatic migration of older cache databases with image/audio columns.
 - reusable `ScanService` orchestration independent of argparse and PySide6;
 - structured stage, item-progress, warning, completion, cancellation, and
-  failure events;
-- cooperative cancellation that retains already committed cache work;
+  failure events, throttled to at most ~10 progress events/second so a large
+  library does not flood the Qt event loop with one signal per file;
+- cooperative cancellation of every fingerprinting stage that drops the
+  queued backlog instead of waiting for it to finish (`cancel_futures=True`),
+  and retains already committed cache work;
 - `ScanResult` with scanned records and basic review metadata;
 - lazy read-only probing of container, codec, resolution, frame rate, audio and
   subtitle tracks, chapters, and attachments.
 - optional PySide6 desktop shell exposed through `samesame-gui`;
 - multiple-root selection and scan settings with a background worker;
 - responsive progress, warning logs, and cooperative cancel control;
-- filters for all six report categories;
+- filters for all seven report categories (including mixed-evidence clusters);
 - side-by-side image/video/audio preview with synchronized video seeking;
 - detailed per-file metadata, open-file/open-folder controls, and report export.
-- keep and ignore review states persisted by stable result-group IDs;
+- keep and ignore review states persisted by stable cluster-level result-group IDs;
 - SHA-256 preflight and immediate pre-action identity verification;
 - reversible quarantine with collection-relative paths and collision handling;
 - operating-system recycle-bin integration through optional `Send2Trash`;
-- persistent SQLite operation journal with requested/completed/failed states;
+- persistent SQLite operation journal (WAL mode, shared busy timeout) with
+  requested/completed/failed states;
 - journal-driven restore for completed quarantine operations;
-- exact-group batch quarantine that preserves the selected keeper;
+- cluster-level batch quarantine (any content-backed category, not just
+  exact groups) that preserves the selected keeper;
 - background file actions and explicit confirmation flows;
-- mutation controls restricted to exact/video/image/audio evidence.
+- mutation controls restricted to content-backed evidence (exact, video,
+  image, audio, or mixed).
 - independent source-preserving transcoding backend and `samesame-transcode` CLI;
 - four anime presets for libx265, AV1 NVENC, and HEVC NVENC;
 - FFmpeg encoder registration and hardware-initialization capability checks;
@@ -84,8 +104,9 @@ Implemented:
 - third desktop Folder consolidation tab with editable final title names,
   explicit source-folder to target-subfolder mappings, and exact per-file previews;
 - conflict-safe consolidation that never overwrites existing paths, rechecks
-  preview identity, SHA-256-verifies every move, rolls failed batches back, and
-  supports SHA-256-verified undo of the latest completed batch;
+  preview identity, SHA-256-verifies every move, rolls failed batches back,
+  can be cancelled between files (closing the window requests it too), and
+  supports SHA-256-verified undo of the latest completed or cancelled batch;
 - automatic cleanup of empty source folders only after a fully successful
   consolidation batch.
 
@@ -116,7 +137,12 @@ quarantine-first action.
 
 ## Verification Completed
 
-The available suite currently contains 95 unit/integration tests.
+The snapshot below is from the `1.7.0` release verification. For the fixes
+made since then (Stages A-E of the forward-looking audit), see the
+per-stage "Full suite: N passed" lines and regression-test names in
+`docs/AUDIT-1.7.0.md` — as of the last Stage E pass the suite contains 120
+tests plus 7 subtests, all passing, with `ruff check`/`ruff format --check`
+clean and a documented 37-error `mypy` baseline.
 
 - All 95 pass under both `unittest` and pytest in the project-local Python
   3.11.9 virtual environment with all runtime/dev dependencies installed.
@@ -148,7 +174,7 @@ The available suite currently contains 95 unit/integration tests.
 - Python compilation, JSON config parsing, cache migration, CLI startup, and
   `git diff --check` pass.
 - Package builds produce both the `samesame-1.7.0` source archive and
-  universal wheel.
+  universal wheel (current package version: `1.7.5`).
 - A recursive CLI test confirms that a resized/recompressed JPEG in a nested
   folder matches its PNG source and appears in HTML/JSON and folder clusters.
 - Candidate blocking was checked against generated passing pairs without
@@ -182,9 +208,6 @@ should discover them through the machine PATH. Verify:
 ffmpeg -version
 ffprobe -version
 ```
-
-The current long-running Codex process may retain the old PATH, so verification
-in this session uses the absolute executable paths.
 
 ## Important Known Limitations
 
@@ -220,16 +243,16 @@ Deferred matching and advanced encoding ideas remain in `docs/ROADMAP.md`.
 Ongoing matching work remains evidence-driven:
 
 - add representative labeled pairs, especially hard negatives and low-texture
-  video variants;
-- add video/audio candidate blocking only if real performance measurements
-  justify it;
+  video variants — a real labelled anime corpus is still needed before F-24
+  (similarity scale recalibration), F-27 (absolute-time sampling grid), or
+  F-30 (descriptor investigation) in `docs/AUDIT-1.7.0.md` can be attempted;
 - improve alternate-cut hints without weakening content-backed matching;
 - keep episode-in-compilation segment matching and crop/rotation-resistant
   image matching as separately scoped future features.
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.7.0`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.7.5`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:
@@ -244,15 +267,18 @@ Check the working tree before continuing and preserve any user changes that are
 present. Start deferred features only after the service, GUI/action, and full
 FFmpeg/transcode integration suites remain green.
 
-The latest cross-project findings, fixes, verification matrix, and residual
-risks are recorded in `docs/AUDIT.md`.
+The closed `1.6.6` safety review is recorded in `docs/AUDIT.md`. The current
+forward-looking `1.7.0` audit — findings, fixes, regression coverage, and
+residual/open items (Stage C's corpus-dependent detection-quality work) — is
+recorded in `docs/AUDIT-1.7.0.md`.
 
 ## Suggested Prompt for a New Chat
 
 ```text
 Read README.md, docs/USAGE.md, docs/CONFIG.md, docs/STATUS.md,
-docs/ROADMAP.md, and docs/ANIME_ENCODING_PRESETS.md.
+docs/AUDIT-1.7.0.md, docs/ROADMAP.md, and docs/ANIME_ENCODING_PRESETS.md.
 Inspect and preserve any existing working-tree changes. Verify the test suite,
-then choose one separately scoped deferred item from docs/ROADMAP.md while
+then choose one separately scoped deferred item from docs/AUDIT-1.7.0.md
+(Stage F, or Stage C once a real corpus exists) or docs/ROADMAP.md while
 keeping the existing source-protection rules intact.
 ```

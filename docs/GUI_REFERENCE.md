@@ -1,6 +1,6 @@
 # Desktop Interface Reference
 
-This page documents the SameSame `1.7.0` desktop interface button by button.
+This page documents the SameSame `1.7.5` desktop interface button by button.
 The GUI is launched with `samesame-gui` and contains three main tabs:
 **Duplicate review**, **Video compression**, and **Folder consolidation**.
 
@@ -52,11 +52,18 @@ The category list filters the current results:
 - **Similar videos**;
 - **Similar images**;
 - **Similar audio**;
+- **Mixed-evidence clusters** — a group of files connected by more than one
+  evidence type (for example, two videos linked by both frame and audio
+  similarity);
 - **Folder pairs**;
 - **Name hints**.
 
-Selecting a result loads its evidence and candidates into the comparison panel.
-Folder and name-only results are review hints and never enable file mutation.
+Each result is one transitive cluster of related files, not one pair: three
+copies of the same episode across three folders appear as a single result
+listing all three files, with per-pair similarity shown as evidence, rather
+than three separate pairwise cases. Selecting a result loads its evidence and
+candidates into the comparison panel. Folder and name-only results are review
+hints and never enable file mutation.
 
 ### Comparison and playback
 
@@ -84,7 +91,7 @@ where available.
 | **Ignore** | Records an ignored review decision only. |
 | **Quarantine…** | Revalidates the selected file and moves it to reversible SameSame Quarantine after confirmation. |
 | **Recycle…** | In default Safe mode, offers Quarantine instead. With the red unsafe opt-in enabled, calls the OS Recycle Bin after another confirmation. |
-| **Quarantine other copies…** | Exact groups only. Keeps the current target, SHA-256-compares every other copy to it, and quarantines matching copies. |
+| **Quarantine other copies…** | Any content-backed result (exact, video, image, audio, or mixed-evidence). Keeps the current target, SHA-256-compares every other copy in the cluster to it, and quarantines matching copies. |
 | **Transcode videos…** | Adds supported videos in the current result to the shared transcode queue. |
 
 Before a mutation, SameSame releases its own media previews, waits one UI event
@@ -213,9 +220,13 @@ SameSame never overwrites them.
 | Control | Purpose |
 | --- | --- |
 | **Consolidate selected files** | Shows the final folder and folder mappings again, then performs the confirmed journaled batch. |
+| **Cancel** | Requests cooperative cancellation, checked between files. Only available while a batch is executing, not while an undo is running. |
 | **Undo last consolidation** | SHA-256-verifies and restores the latest completed consolidation batch when original paths are free. |
 
 Every move rechecks the previewed size and modification time, calculates
 SHA-256, and verifies destination content. A failed batch attempts to restore
-all already moved files in reverse order. Empty source directories are removed
-only after the complete batch succeeds.
+all already moved files in reverse order. A cancelled batch is left exactly
+as undo-able as a completed one: every file moved so far is fully verified,
+and **Undo last consolidation** restores them. Closing the window while a
+batch is running requests cancellation the same way. Empty source
+directories are removed only after the complete batch succeeds.
