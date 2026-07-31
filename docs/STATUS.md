@@ -12,9 +12,23 @@ full findings, fixes, and regression coverage. Notably: similar-match results
 are now grouped into transitive clusters instead of pairs (F-23), scans and
 folder consolidation batches actually stop when cancelled instead of
 finishing a queued backlog (F-02, F-12), and `anthropic` is an optional `ai`
-extra rather than a hard dependency (F-19). Stage C's detection-quality items
-that need a real labelled corpus (F-24 similarity rescaling, F-27 sampling
-grid, F-30 descriptor work) remain open — no such corpus exists yet.
+extra rather than a hard dependency (F-19).
+
+A real, user-confirmed labelled corpus now exists at
+`docs/threshold-real-manifest.json` (14 video pairs from
+`S:/Daedalus/Kiroku/TestLib`), replacing the previous manifest whose paths no
+longer existed. Running the scan CLI against that library before any fix
+confirmed the audit's F-24/F-25/F-27 predictions directly: 0 video matches at
+the default threshold, because `find_video_matches` gated the F-25 alignment
+recheck behind a raw-score floor (65) that real duplicates in this corpus
+don't clear (measured as low as 53.1%). F-27 is now done as a 5-offset
+coarse sweep (see `docs/AUDIT-1.7.0.md`'s 2026-07-31 update for the full
+before/after numbers); the reachability floor was lowered to 40 rather than
+removed, since removing it entirely turned the recheck into an unconditional
+per-pair cost. Recall on the corpus improved from 0/8 to 6/8 at a safer
+threshold (57.4). F-24 (similarity rescaling) and F-30 (descriptor work)
+remain open: the corpus is real now, but at 14 pairs it is still small, and
+positives/negatives still overlap in the raw range even after F-27.
 
 ## Current State
 

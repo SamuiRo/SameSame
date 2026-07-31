@@ -29,8 +29,17 @@ MINIMUM_FRAME_COVERAGE = 0.5
 FRAME_RETRY_NUDGE = 0.5
 DEFAULT_MAX_DURATION_RATIO = 1.5
 DEFAULT_MAX_DURATION_DELTA = 15 * 60.0
-ALIGNMENT_RECHECK_FLOOR = 65.0
 ALIGNMENT_RECHECK_MAX_DELTA = 3 * 60.0
+ALIGNMENT_OFFSET_STEPS = 5
+# Cost circuit-breaker, not a correctness boundary: measured against a real
+# anime corpus, genuine duplicates (53.1+) and duration-coincidental
+# unrelated pairs (up to ~56) both clear the true noise floor (49.6-55.5,
+# see F-24's random-hash simulation), so no raw-score threshold in that range
+# can decide "is this worth an expensive re-fingerprint" - only the aligned
+# recheck itself can tell them apart. This floor sits comfortably below that
+# whole band; it exists only to skip pairs the cheap unaligned score already
+# shows are nowhere close (or, in tests, exactly 0).
+ALIGNMENT_RECHECK_FLOOR = 40.0
 
 
 def resolve_binary(name_or_path: str) -> str | None:
@@ -224,6 +233,12 @@ def _ensure_fingerprint(record: FileRecord, ffmpeg: str) -> tuple[str, list[int]
     return record.path_key, fingerprint_video(record.path, record.duration, ffmpeg)
 
 
+def _sweep_offsets(duration_delta: float, steps: int = ALIGNMENT_OFFSET_STEPS) -> tuple[float, ...]:
+    if steps <= 1 or duration_delta <= 0.0:
+        return (0.0,)
+    return tuple(duration_delta * index / (steps - 1) for index in range(steps))
+
+
 def _duration_aligned_similarity(
     left: FileRecord,
     right: FileRecord,
@@ -237,8 +252,12 @@ def _duration_aligned_similarity(
     if duration_delta <= 0.05:
         return ordered_sequence_similarity(left.fingerprint, right.fingerprint)
 
+    # Extra content is not always entirely at the start or entirely at the
+    # end (a trimmed intro plus a trimmed outro, for example) - a fixed pair
+    # of offsets misses that. Sweep a small, bounded number of offsets across
+    # the gap instead so a mid-timeline shift has a chance to align (F-27).
     best = 0.0
-    for start_offset in (0.0, duration_delta):
+    for start_offset in _sweep_offsets(duration_delta):
         key = (longer.path_key, round(shorter.duration, 3), round(start_offset, 3))
         if key not in cache:
             cache[key] = fingerprint_video(
@@ -343,10 +362,13 @@ def find_video_matches(
             pair = tuple(sorted((left.path_key, right.path_key)))
             delta = abs(left.duration - right.duration)  # type: ignore[operator]
             similarity = ordered_sequence_similarity(left.fingerprint, right.fingerprint)  # type: ignore[arg-type]
-            # Recheck whenever the raw score clears the noise floor, independent of
-            # `threshold`: gating on `< threshold` made this unreachable for any
-            # threshold <= ALIGNMENT_RECHECK_FLOOR, which is exactly the range users
-            # fall back to when a real duplicate is missed (F-25).
+            # Recheck whenever the raw score clears the (lowered) noise floor,
+            # independent of `threshold` (F-25). The floor used to be 65, which a
+            # real-anime corpus showed was well above where genuine duplicates
+            # actually land pre-alignment (measured min 53.1) - so it was
+            # rejecting real matches outright, not just filtering noise. It is
+            # now ALIGNMENT_RECHECK_FLOOR, set far below that whole band; see its
+            # definition for why no higher raw-score threshold would be safe.
             if ALIGNMENT_RECHECK_FLOOR <= similarity and 0.05 < delta <= ALIGNMENT_RECHECK_MAX_DELTA:
                 similarity = video_similarity(left, right, ffmpeg, aligned_fingerprints)
             if threshold <= similarity:

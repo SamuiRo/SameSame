@@ -1124,10 +1124,86 @@ where the similarity scale eventually lands - were done now.
 | F-26 | Tolerate partial fingerprints; retry once; report excluded files as a stage summary | 3/5 | Done |
 | F-25 | Make the alignment recheck reachable | 3/5 | Done (reachability fix only; see note) |
 | F-29 | Expose the duration ratio/delta gates | 2/5 | Done (gate values only; gated-pair reporting deferred) |
-| F-24 | Rescale similarity to a calibrated 0–100 confidence; bump the fingerprint version; re-derive defaults | 3/5 | **Deferred — needs real corpus** |
-| F-27 | Absolute-time sampling grid so different-length versions share a timeline | 3/5 | **Deferred — needs real corpus** |
-| F-30 | Descriptor/sampling investigation | 4/5 | **Deferred — needs real corpus** |
-| — | **Build a real labelled anime corpus** | 3/5 | **Still open — blocks the three items above** |
+| F-24 | Rescale similarity to a calibrated 0–100 confidence; bump the fingerprint version; re-derive defaults | 3/5 | **Deferred — corpus now exists (below), but positives/negatives still overlap raw; see note** |
+| F-27 | Coarse offset sweep in the alignment recheck (was: absolute-time sampling grid) | 3/5 | **Done — see 2026-07-31 update below** |
+| F-30 | Descriptor/sampling investigation | 4/5 | **Deferred — real corpus exists but is still small (14 pairs)** |
+| — | **Build a real labelled anime corpus** | 3/5 | **Done (partial) — see 2026-07-31 update** |
+
+### 2026-07-31 update — real corpus built, F-27 implemented and measured
+
+A real, user-confirmed 14-pair corpus now exists at `docs/threshold-real-manifest.json`,
+sourced from `S:/Daedalus/Kiroku/TestLib` (8 confirmed same-episode pairs across
+different subber/release groups, plus 6 confirmed negatives — including a
+deliberate "same episode number, different season" name trap). This replaces
+the previous manifest, which pointed at a `Lib/test` path that no longer
+exists; the earlier Amakano/Ane Chijo Max Heart/Ane Yome Quartet/Anata Dake
+Konbanwa/Kutsujoku entries were dropped rather than carried forward unverified.
+
+Running the full scan CLI against `TestLib` before any fix confirmed the
+audit's prediction directly: **0 video matches, 0 image matches** at the
+default 85% threshold, despite the library being built specifically with
+duplicates. The official benchmark (`tools/benchmark_thresholds.py`) against
+the new manifest confirmed why and reproduced a second, previously
+undocumented bug:
+
+`find_video_matches` only *attempted* the F-25 alignment recheck when the raw
+(unaligned) score already cleared `ALIGNMENT_RECHECK_FLOOR = 65`. Real
+same-episode pairs with a trimmed intro/outro measured as low as **53.1%
+raw** — below that floor — so the recheck F-25 made reachable in principle
+was still never actually invoked for most real duplicates. Meanwhile real
+"same number, different season" negatives measured up to **55.99% raw**, so
+positives and negatives occupy the same raw band pre-alignment; no raw-score
+floor in that range can tell them apart before alignment is attempted.
+
+**F-27 implemented as a coarse offset sweep** (not the originally-proposed
+absolute-time sampling grid, which revision 2 had already withdrawn as
+harmful — see the correction at the top of this document): the recheck used
+to try exactly two offsets (`0.0`, `duration_delta`), covering only "extra
+content entirely at the start" or "entirely at the end." It now sweeps
+`ALIGNMENT_OFFSET_STEPS = 5` evenly-spaced offsets across the gap
+(`_sweep_offsets` in `video_fingerprint.py`), so a trimmed intro *and* a
+trimmed outro on the same pair — the common real case, since different
+subber groups cut credits differently at both ends — has a chance to align.
+
+`ALIGNMENT_RECHECK_FLOOR` was lowered from 65 to **40** rather than removed:
+removing it entirely was tried first and correctness-wise it is right (every
+real positive and real negative clears 40), but it turned the recheck into an
+unconditional per-pair cost — a 100-file synthetic regression test that used
+to run in milliseconds took 78 minutes doing real ffmpeg decodes against
+files that don't exist on disk, because *every* duration-compatible pair,
+including deliberately unrelated ones, now attempted the expensive
+re-fingerprint. 40 is comfortably below the entire measured real-content band
+(49.6–55.5 noise floor from F-24's simulation, 53.1–56.35 raw on the real
+corpus) so it does not reject anything a real video pair would produce; it
+only short-circuits pairs the cheap unaligned score already shows are
+nowhere close (or exactly 0.0, the common case in mocked tests).
+
+Measured effect on the real corpus (`docs/threshold-real-results.json`,
+`video_similarity`, which is unaffected by the floor since the benchmark tool
+calls it directly):
+
+| | Before (2 fixed offsets) | After (5-offset sweep) |
+| --- | ---: | ---: |
+| Positives raw range | 53.1 – 73.25 | 55.59 – 73.94 |
+| Negatives raw range | 53.65 – 55.99 | 54.15 – 56.35 |
+| Positives boosted by recheck | 2 of 8 | 5 of 8 |
+| Best single threshold on this corpus | 54.79 (6 TP / 2 FN / 0 FP) | 57.4 (6 TP / 2 FN / 0 FP) |
+
+Recall at the best-fit threshold is unchanged (6/8) but the margin above the
+negative band is safer (57.4 vs. a negative max of 56.26, instead of 54.79
+sitting *below* one eligible negative at 54.58). Three positives
+(`aku-base-episode-1-same-release` 57.4, and two `baku-ane-ep1-*` pairs at
+~55.6) still land inside or just above the negative band even after the
+sweep — the offset sweep measurably helps but does not fully close the F-24
+overlap problem on its own. F-24's rescale and a larger corpus remain the
+next steps; this pass deliberately stayed scoped to the two reachability bugs
+the audit and the real data both pointed at, rather than guessing at a
+rescale formula from 14 pairs.
+
+Regression: full suite still 120 passed / 7 subtests, `ruff check` and
+`ruff format --check` clean. No fingerprint version bump — only the
+recheck's offset selection and its trigger floor changed; the stored
+per-file fingerprint format is untouched.
 
 **Implementation notes.**
 F-25: `video_fingerprint.py`'s recheck guard no longer gates on `similarity <
