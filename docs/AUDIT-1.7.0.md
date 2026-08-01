@@ -1457,7 +1457,7 @@ clean, `mypy dedupe` at the documented 37-error baseline.
 | --- | --- | ---: | --- |
 | F-16 | Per-directory folder comparison instead of root-only (**confirmed wanted**) | 3/5 | Done 2026-07-31 |
 | F-18 | `QSettings` persistence for scan settings and window state | 2/5 | Done 2026-07-31 |
-| F-20 | One-language HTML report with search and filters | 2/5 | |
+| F-20 | One-language HTML report with search and filters | 2/5 | Done 2026-07-31 |
 | F-30 + F-31 | Descriptor and sampling investigation on the Stage C corpus | 4/5 | |
 
 **F-16 implementation notes.** `compare_folders` (`folder_compare.py`) now
@@ -1538,6 +1538,52 @@ trip through two `MainWindow` instances) to confirm the INI file is actually
 produced and reloaded, not just internally consistent within the mocked test
 path. Full suite: 124 passed, 7 subtests, `ruff check`/`ruff format --check`
 clean, `mypy dedupe` unchanged at the documented 37-error baseline.
+
+**F-20 implementation notes.** `dedupe/report.py` had two problems: the seven
+section headings were Ukrainian (`<html lang="uk">`) inside an otherwise
+English product, and the whole document was one f-string with no way to find
+anything in a report for a large library. Both are fixed without adding any
+external dependency - the report stays a single self-contained HTML file.
+
+Headings translated to English (`<html lang="en">` now); a new `_section()`
+helper wraps each of the seven result kinds (exact/video/image/audio/mixed
+content/folder/name) in `<section data-section="...">`, with the items in a
+`.items` container and a live `<span class="count" data-count>` next to the
+heading. A sticky filter bar (`<input type="search">`) sits at the top of
+`<main>`; a ~25-line inline `<script>` (no external JS, matching the existing
+"pure CSS, no build step" style) does a case-insensitive substring match of
+`item.textContent` per top-level `<details>`, toggles `display: none` on
+non-matches, updates each section's count to `visible / total` while
+filtering, hides a section entirely only if it had items and none currently
+match (so legitimately-empty sections aren't hidden), and updates an overall
+"Showing X of Y results" line. Escaping is unchanged - `_section()` only
+concatenates already-escaped fragments produced by the existing per-item
+builders, so this doesn't reopen the injection question the audit already
+cleared.
+
+One real-corpus observation from manually verifying this in a browser against
+`S:/Daedalus/Kiroku/TestLib`'s folder-pairs section: a folder-pair `<details>`
+nests its full "Matches" evidence panel and its complete left-only/right-only
+path lists, so `textContent`-based search matches on *any* path mentioned
+anywhere inside a pair, not just the two folder names in the summary line. On
+a small library with heavy cross-matching (a side effect of the still-open
+F-24 noise-floor problem, not of this change) that can make a specific-looking
+query match nearly every pair. This was confirmed to be correct substring
+behavior, not a bug, by cross-checking with a second, more selective query
+(the video-only term "Mistic" correctly reduced the folder-pairs count to
+0/77 while leaving the one real video match at 1/1) - not something to "fix"
+by narrowing the search scope, since matching on the full evidence text is
+what makes "which pairs mention this file" actually answerable.
+
+Regression: `test_html_report_is_english_and_filterable` (asserts
+`lang="en"`, absence of every prior Ukrainian heading string, presence of the
+English replacements, the filter input's id, `data-section` attributes, and
+that each section's initial count span matches its supplied item count).
+`tests/test_audio_integration.py` and `tests/test_images.py` updates their
+prior assertions on the Ukrainian strings "Схожі аудіозаписи" /
+"Схожі зображення" to "Similar audio" / "Similar images". Full suite: 125
+passed, 7 subtests, `ruff check`/`ruff format --check` clean, `mypy dedupe`
+unchanged at the documented 37-error baseline.
 
 ### Where NumPy fits (approved)
 

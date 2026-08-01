@@ -59,6 +59,16 @@ def _cluster_items(
     return items
 
 
+def _section(section_id: str, heading: str, items: list[str], empty_message: str) -> str:
+    body = "".join(items) if items else f'<p class="muted">{html.escape(empty_message)}</p>'
+    return f"""
+    <section data-section="{section_id}">
+      <h2>{html.escape(heading)} <span class="count" data-count>{len(items)}</span></h2>
+      <div class="items">{body}</div>
+    </section>
+    """
+
+
 def write_html_report(report: DedupeReport, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     clusters = resolve_content_clusters(report)
@@ -115,8 +125,15 @@ def write_html_report(report: DedupeReport, path: Path) -> None:
     warnings = (
         _path_list(report.warnings) if report.warnings else '<p class="muted">No warnings captured in report.</p>'
     )
+    exact_section = _section("exact", "Exact duplicates", exact_items, "No exact duplicates found.")
+    video_section = _section("video", "Similar videos", video_items, "No similar videos found above threshold.")
+    image_section = _section("image", "Similar images", image_items, "No similar images found above threshold.")
+    audio_section = _section("audio", "Similar audio", audio_items, "No similar audio found above threshold.")
+    content_section = _section("content", "Mixed-evidence clusters", content_items, "No mixed-evidence clusters found.")
+    folder_section = _section("folder", "Folder pairs", folder_items, "No folder pairs found above threshold.")
+    name_section = _section("name", "Name hints", name_items, "No name-only hints found.")
     document = f"""<!doctype html>
-<html lang="uk">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -206,6 +223,32 @@ def write_html_report(report: DedupeReport, path: Path) -> None:
     .muted {{
       color: var(--muted);
     }}
+    .filter-bar {{
+      position: sticky;
+      top: 0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--bg);
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border);
+      z-index: 1;
+    }}
+    .filter-bar input {{
+      flex: 1;
+      max-width: 420px;
+      padding: 8px 10px;
+      font-size: 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel);
+      color: var(--text);
+    }}
+    .count {{
+      font-weight: 400;
+      color: var(--muted);
+      font-size: 15px;
+    }}
   </style>
 </head>
 <body>
@@ -223,23 +266,55 @@ def write_html_report(report: DedupeReport, path: Path) -> None:
     </div>
   </header>
   <main>
-    <h2>Точні дублікати файлів</h2>
-    {"".join(exact_items) or '<p class="muted">No exact duplicates found.</p>'}
-    <h2>Схожі відео</h2>
-    {"".join(video_items) or '<p class="muted">No similar videos found above threshold.</p>'}
-    <h2>Схожі зображення</h2>
-    {"".join(image_items) or '<p class="muted">No similar images found above threshold.</p>'}
-    <h2>Схожі аудіозаписи</h2>
-    {"".join(audio_items) or '<p class="muted">No similar audio found above threshold.</p>'}
-    <h2>Змішані докази</h2>
-    {"".join(content_items) or '<p class="muted">No mixed-evidence clusters found.</p>'}
-    <h2>Пари тек</h2>
-    {"".join(folder_items) or '<p class="muted">No folder pairs found above threshold.</p>'}
-    <h2>Підказки за назвою</h2>
-    {"".join(name_items) or '<p class="muted">No name-only hints found.</p>'}
+    <div class="filter-bar">
+      <input type="search" id="filter-input" placeholder="Filter by path, title, or percentage…" aria-label="Filter results">
+      <span class="muted" id="filter-hint"></span>
+    </div>
+    {exact_section}
+    {video_section}
+    {image_section}
+    {audio_section}
+    {content_section}
+    {folder_section}
+    {name_section}
     <h2>Warnings</h2>
     {warnings}
   </main>
+  <script>
+    (function () {{
+      var input = document.getElementById("filter-input");
+      var hint = document.getElementById("filter-hint");
+      var sections = document.querySelectorAll("section[data-section]");
+      function applyFilter() {{
+        var query = input.value.trim().toLowerCase();
+        var totalItems = 0;
+        var totalVisible = 0;
+        sections.forEach(function (section) {{
+          var items = section.querySelectorAll(".items > details");
+          var visible = 0;
+          items.forEach(function (item) {{
+            var match = !query || item.textContent.toLowerCase().indexOf(query) !== -1;
+            item.style.display = match ? "" : "none";
+            if (match) {{
+              visible += 1;
+            }}
+          }});
+          totalItems += items.length;
+          totalVisible += visible;
+          var countEl = section.querySelector("[data-count]");
+          if (countEl) {{
+            countEl.textContent = query ? visible + " / " + items.length : String(items.length);
+          }}
+          section.style.display = query && items.length > 0 && visible === 0 ? "none" : "";
+        }});
+        hint.textContent = query
+          ? "Showing " + totalVisible + " of " + totalItems + " results"
+          : "Showing all " + totalItems + " results";
+      }}
+      input.addEventListener("input", applyFilter);
+      applyFilter();
+    }})();
+  </script>
 </body>
 </html>
 """

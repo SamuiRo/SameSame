@@ -102,7 +102,7 @@ class AudioIntegrationTests(unittest.TestCase):
             self.assertIn({"source.wav", "copy.flac"}, matched_names)
             self.assertFalse(any("unrelated.wav" in pair for pair in matched_names))
             self.assertTrue(report["folder_pairs"][0]["matched"][0]["content_backed"])
-            self.assertIn("Схожі аудіозаписи", html_report.read_text(encoding="utf-8"))
+            self.assertIn("Similar audio", html_report.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

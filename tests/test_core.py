@@ -16,7 +16,7 @@ from dedupe.cache import Cache
 from dedupe.cli import parse_args
 from dedupe.exact_hash import find_exact_duplicates
 from dedupe.folder_compare import build_cluster_assignments, compare_folders
-from dedupe.models import DedupeReport, ExactDuplicateGroup, FileRecord, NormalizedName, VideoMatch
+from dedupe.models import DedupeReport, ExactDuplicateGroup, FileRecord, NameHint, NormalizedName, VideoMatch
 from dedupe.name_normalizer import (
     PROMPT_HASH,
     _coerce_normalized_results,
@@ -327,6 +327,47 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(
                 sorted(data["content_clusters"][0]["paths"]), sorted(["left/a.mkv", "mid/b.mkv", "right/c.mkv"])
             )
+
+    def test_html_report_is_english_and_filterable(self) -> None:
+        # F-20: one language throughout, plus a self-contained search/filter
+        # box with a live per-section result count.
+        report = DedupeReport(
+            scanned_files=2,
+            exact_duplicates=[ExactDuplicateGroup("hash", ["a.mkv", "b.mkv"], 10)],
+            video_matches=[],
+            image_matches=[],
+            audio_matches=[],
+            folder_pairs=[],
+            name_hints=[NameHint("name:key", 91.0, ["c.mkv", "d.mkv"], "Title")],
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            html_path = Path(tmp) / "report.html"
+            write_html_report(report, html_path)
+            html_text = html_path.read_text(encoding="utf-8")
+
+        self.assertIn('<html lang="en">', html_text)
+        for ukrainian_heading in (
+            "Точні дублікати файлів",
+            "Схожі відео",
+            "Схожі зображення",
+            "Схожі аудіозаписи",
+            "Змішані докази",
+            "Пари тек",
+            "Підказки за назвою",
+        ):
+            self.assertNotIn(ukrainian_heading, html_text)
+        for english_heading in ("Exact duplicates", "Similar videos", "Name hints"):
+            self.assertIn(english_heading, html_text)
+
+        self.assertIn('id="filter-input"', html_text)
+        self.assertIn('data-section="exact"', html_text)
+        self.assertIn('data-section="name"', html_text)
+        # One exact group and one name hint were supplied - each section's
+        # initial (unfiltered) count must reflect that.
+        self.assertIn('<h2>Exact duplicates <span class="count" data-count>1</span></h2>', html_text)
+        self.assertIn('<h2>Name hints <span class="count" data-count>1</span></h2>', html_text)
+        self.assertIn('<h2>Similar videos <span class="count" data-count>0</span></h2>', html_text)
 
     def test_config_file_values_can_be_overridden_from_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

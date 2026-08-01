@@ -194,7 +194,7 @@ class ImageFingerprintTests(unittest.TestCase):
             self.assertEqual(report["warnings"], [])
             self.assertTrue(report["folder_pairs"][0]["matched"][0]["content_backed"])
             self.assertEqual(report["folder_pairs"][0]["matched"][0]["level"], "image")
-            self.assertIn("Схожі зображення", html_report.read_text(encoding="utf-8"))
+            self.assertIn("Similar images", html_report.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

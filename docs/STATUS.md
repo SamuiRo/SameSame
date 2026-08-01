@@ -6,16 +6,18 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.7.7`. Stages A through E of the `1.7.0`
+The current package version is `1.7.8`. Stages A through E of the `1.7.0`
 forward-looking audit are implemented — see `docs/AUDIT-1.7.0.md` for the
 full findings, fixes, and regression coverage. Notably: similar-match results
 are now grouped into transitive clusters instead of pairs (F-23), scans and
 folder consolidation batches actually stop when cancelled instead of
 finishing a queued backlog (F-02, F-12), and `anthropic` is an optional `ai`
-extra rather than a hard dependency (F-19). From Stage F: folder comparison
-now runs per-directory instead of only between collection roots (F-16), and
-the desktop GUI now remembers scan settings and window state between
-launches via `QSettings` (F-18).
+extra rather than a hard dependency (F-19). Stage F is now complete except
+its corpus-dependent items: folder comparison runs per-directory instead of
+only between collection roots (F-16), the desktop GUI remembers scan settings
+and window state between launches via `QSettings` (F-18), and the HTML report
+is English-only with a live search/filter box instead of mixed-language and
+unsearchable (F-20).
 
 A real, user-confirmed labelled corpus now exists at
 `docs/threshold-real-manifest.json` (14 video pairs from
@@ -62,7 +64,8 @@ Implemented:
   an additional roll-up when several roots are scanned, and a shared-cluster
   prefilter so unrelated directories are never generated as a candidate pair;
 - HTML and JSON reports with exact, video, image, audio, mixed-evidence,
-  folder, and name sections, grouped by cluster;
+  folder, and name sections, grouped by cluster; the HTML report is
+  English-only with a live search/filter box and per-section result counts;
 - optional Anthropic, LM Studio, or local heuristic title normalization
   (Anthropic requires the `ai` extra: `pip install -e ".[ai]"`);
 - parent-folder context for generic names such as `01 - Episode 1`, preventing
