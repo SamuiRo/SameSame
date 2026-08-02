@@ -101,9 +101,10 @@ class ScanOptions:
     folders: list[Path]
     cache: Path = Path(".dedupe_cache.sqlite3")
     extensions: set[str] = field(default_factory=lambda: normalize_extensions(None))
-    video_threshold: float = 85.0
-    image_threshold: float = 90.0
-    audio_threshold: float = 94.0
+    # Calibrated scale (F-24) - see dedupe/cli.py's DEFAULT_CONFIG comment.
+    video_threshold: float = 15.0
+    image_threshold: float = 80.0
+    audio_threshold: float = 88.0
     folder_threshold: float = 50.0
     name_threshold: float = 92.0
     name_provider: str = "auto"

@@ -6,34 +6,50 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.7.8`. Stages A through E of the `1.7.0`
-forward-looking audit are implemented — see `docs/AUDIT-1.7.0.md` for the
-full findings, fixes, and regression coverage. Notably: similar-match results
-are now grouped into transitive clusters instead of pairs (F-23), scans and
-folder consolidation batches actually stop when cancelled instead of
-finishing a queued backlog (F-02, F-12), and `anthropic` is an optional `ai`
-extra rather than a hard dependency (F-19). Stage F is now complete except
-its corpus-dependent items: folder comparison runs per-directory instead of
-only between collection roots (F-16), the desktop GUI remembers scan settings
-and window state between launches via `QSettings` (F-18), and the HTML report
-is English-only with a live search/filter box instead of mixed-language and
-unsearchable (F-20).
+The current package version is `1.7.8`. Stages A through E, and Stage F
+except its corpus-dependent items, are implemented — see
+`docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
+Notably: similar-match results are grouped into transitive clusters instead
+of pairs (F-23), scans and folder consolidation batches actually stop when
+cancelled (F-02, F-12), `anthropic` is an optional `ai` extra (F-19), folder
+comparison runs per-directory (F-16), the desktop GUI remembers scan
+settings via `QSettings` (F-18), and the HTML report is English-only with a
+search/filter box (F-20).
 
-A real, user-confirmed labelled corpus now exists at
-`docs/threshold-real-manifest.json` (14 video pairs from
-`S:/Daedalus/Kiroku/TestLib`), replacing the previous manifest whose paths no
-longer existed. Running the scan CLI against that library before any fix
-confirmed the audit's F-24/F-25/F-27 predictions directly: 0 video matches at
-the default threshold, because `find_video_matches` gated the F-25 alignment
-recheck behind a raw-score floor (65) that real duplicates in this corpus
-don't clear (measured as low as 53.1%). F-27 is now done as a 5-offset
-coarse sweep (see `docs/AUDIT-1.7.0.md`'s 2026-07-31 update for the full
-before/after numbers); the reachability floor was lowered to 40 rather than
-removed, since removing it entirely turned the recheck into an unconditional
-per-pair cost. Recall on the corpus improved from 0/8 to 6/8 at a safer
-threshold (57.4). F-24 (similarity rescaling) and F-30 (descriptor work)
-remain open: the corpus is real now, but at 14 pairs it is still small, and
-positives/negatives still overlap in the raw range even after F-27.
+A real, user-confirmed labelled corpus exists at
+`docs/threshold-real-manifest.json` (76 video/image pairs across roughly 20
+titles from a local test library the user built specifically for this work,
+local/gitignored; titles are anonymized as "Title A", "Title B", etc. in
+`docs/AUDIT-1.7.0.md` and `docs/THRESHOLDS.md`; treat this as
+the stable baseline — the user has indicated they've likely exhausted what
+they can readily label). F-27 (alignment-recheck offset sweep) and **F-24
+(similarity rescale) are both now done** — see `docs/AUDIT-1.7.0.md`'s
+2026-07-31 and four 2026-08-01 updates for the full before/after numbers.
+
+**F-24 changed what threshold numbers mean.** Video/image/audio similarity
+is now a *calibrated* confidence (`0` = indistinguishable from unrelated
+content, `100` = identical) instead of a raw Hamming-based percentage with a
+~50% noise floor — see `docs/THRESHOLDS.md` for the full explanation and
+migration notes. Defaults changed accordingly: `video_threshold` `85` → `15`
+(evidence-derived from the real corpus), `image_threshold` `90` → `80`,
+`audio_threshold` `94` → `88` (both scale-preserving pending comparable real
+evidence for those media types). At the evidence-derived video threshold the
+corpus reaches **52/61 confirmed matches (85%) with 0 false positives**
+across all 15 confirmed negatives — a recall percentage that held stable as
+the corpus tripled in size during Stage C's corpus-building work, evidence
+it reflects the matcher's real behavior rather than sampling luck. The
+shipped default (`15.0`) trades 2 of those true positives for extra safety
+margin above the corpus's worst confirmed negative.
+
+The remaining 9 misses (7 muddy + 2 duration-gated) concentrate in a small,
+named set of titles/episodes — a **descriptor** ceiling (F-30, not yet
+implemented), not an alignment one: one episode of "Title P" has essentially no
+duration delta for F-27 to work with, yet still scores low, which rules out
+alignment as the cause for that pair specifically. As expected, F-24's
+rescale did not and structurally could not fix these — a monotonic rescale
+preserves rank order, so a confirmed match that already scored below a
+confirmed non-match still does after rescaling. F-30 remains open as a
+separately-scoped investigation into that named minority of titles.
 
 ## Current State
 
@@ -218,7 +234,7 @@ clean and a documented 37-error `mypy` baseline.
   hints, and the compilation pair is duration-gated.
 - A full 59-file real collection scan completes in about 20 seconds on the
   warmed cache, yielding 9 video matches and 7 contextual name hints without
-  merging the three similarly named `Aku no Onna Kanbu` seasons or the
+  merging three differently-numbered seasons of the same show or the
   compilation pair.
 
 ## Development Environment

@@ -25,9 +25,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "json_output": "report.json",
     "cache": ".dedupe_cache.sqlite3",
     "extensions": None,
-    "video_threshold": 85.0,
-    "image_threshold": 90.0,
-    "audio_threshold": 94.0,
+    # Calibrated scale (F-24): 0 = indistinguishable from unrelated content,
+    # 100 = identical. video_threshold is evidence-derived from a real,
+    # user-confirmed corpus (docs/AUDIT-1.7.0.md); image_threshold and
+    # audio_threshold preserve their pre-F-24 practical strictness
+    # (calibrate_similarity(90) / calibrate_similarity(94)) pending
+    # comparable real-corpus evidence for those media types.
+    "video_threshold": 15.0,
+    "image_threshold": 80.0,
+    "audio_threshold": 88.0,
     "folder_threshold": 50.0,
     "name_threshold": 92.0,
     "name_provider": "auto",
@@ -206,13 +212,22 @@ def parse_args(argv: list[str] | None = None) -> Config:
     parser.add_argument("--cache", type=Path, default=None, help="SQLite cache path.")
     parser.add_argument("--extensions", nargs="*", help="File extensions to include.")
     parser.add_argument(
-        "--video-threshold", type=float, default=None, help="Video fingerprint match threshold, percent."
+        "--video-threshold",
+        type=float,
+        default=None,
+        help="Video fingerprint match confidence, percent (0 = indistinguishable from unrelated, 100 = identical).",
     )
     parser.add_argument(
-        "--image-threshold", type=float, default=None, help="Image fingerprint match threshold, percent."
+        "--image-threshold",
+        type=float,
+        default=None,
+        help="Image fingerprint match confidence, percent (0 = indistinguishable from unrelated, 100 = identical).",
     )
     parser.add_argument(
-        "--audio-threshold", type=float, default=None, help="Audio fingerprint match threshold, percent."
+        "--audio-threshold",
+        type=float,
+        default=None,
+        help="Audio fingerprint match confidence, percent (0 = indistinguishable from unrelated, 100 = identical).",
     )
     parser.add_argument("--folder-threshold", type=float, default=None, help="Folder Jaccard threshold, percent.")
     parser.add_argument("--name-threshold", type=float, default=None, help="Fuzzy title hint threshold, percent.")

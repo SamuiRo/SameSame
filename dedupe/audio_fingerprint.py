@@ -10,7 +10,7 @@ from . import process
 from .cache import Cache
 from .models import AudioMatch, FileRecord
 from .progress import cancellable_executor, check_cancelled, tqdm
-from .video_fingerprint import get_duration
+from .video_fingerprint import calibrate_similarity, get_duration
 
 LOGGER = logging.getLogger(__name__)
 BITS_PER_VALUE = 32
@@ -70,7 +70,9 @@ def audio_similarity(left: list[int], right: list[int], max_shift: int = MAX_ALI
         distance = sum((left[left_start + index] ^ right[right_start + index]).bit_count() for index in range(overlap))
         similarity = 100.0 * (1.0 - distance / (overlap * BITS_PER_VALUE))
         best = max(best, similarity)
-    return max(0.0, best)
+    # Purely Hamming-based (unlike image's structure+color blend), so the
+    # whole result is calibrated in one place, unconditionally (F-24).
+    return calibrate_similarity(max(0.0, best))
 
 
 def _ensure_duration(record: FileRecord, ffprobe: str) -> tuple[str, float | None]:

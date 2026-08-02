@@ -8,7 +8,7 @@ from concurrent.futures import as_completed
 from .cache import Cache
 from .models import FileRecord, ImageMatch
 from .progress import cancellable_executor, check_cancelled, tqdm
-from .video_fingerprint import hamming_similarity, phash
+from .video_fingerprint import calibrate_similarity, decalibrate_similarity, hamming_similarity, phash
 
 try:
     from PIL import Image, ImageOps
@@ -45,7 +45,10 @@ def fingerprint_image(record: FileRecord) -> list[int] | None:
 def image_similarity(left: list[int], right: list[int]) -> float:
     if len(left) != 4 or len(right) != 4:
         return 0.0
-    structure_similarity = hamming_similarity([left[0]], [right[0]])
+    # Only the structure term is Hamming-based and has the ~50% noise floor;
+    # the color term is a direct RGB distance and is already meaningful on
+    # 0-100, so it is not calibrated (F-24).
+    structure_similarity = calibrate_similarity(hamming_similarity([left[0]], [right[0]]))
     color_distance = sum(abs(a - b) for a, b in zip(left[1:], right[1:]))
     color_similarity = 100.0 * (1.0 - color_distance / (3 * 255))
     return max(0.0, STRUCTURE_WEIGHT * structure_similarity + COLOR_WEIGHT * color_similarity)
@@ -71,8 +74,13 @@ def _candidate_pairs(
     if threshold > 100:
         return set()
 
+    # `threshold` is calibrated (F-24); the bit-distance math below needs the
+    # raw scale, since a Hamming distance has no notion of "noise floor" -
+    # only the reported/compared similarity does. Convert once, here, rather
+    # than changing `image_similarity`'s or the caller's contract.
     minimum_structure_similarity = max(0.0, (threshold - COLOR_WEIGHT * 100.0) / STRUCTURE_WEIGHT)
-    max_distance = math.floor(64 * (1.0 - minimum_structure_similarity / 100.0) + 1e-9)
+    minimum_structure_similarity_raw = decalibrate_similarity(min(100.0, minimum_structure_similarity))
+    max_distance = math.floor(64 * (1.0 - minimum_structure_similarity_raw / 100.0) + 1e-9)
     block_count = min(64, max_distance + 1)
     base_block_size, larger_blocks = divmod(64, block_count)
     block_sizes = [base_block_size + (1 if index < larger_blocks else 0) for index in range(block_count)]

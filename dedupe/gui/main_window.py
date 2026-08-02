@@ -162,9 +162,12 @@ class MainWindow(QMainWindow):
         self.workers.setRange(1, 32)
         self.workers.setValue(4)
         settings_layout.addRow("Workers", self.workers)
-        self.video_threshold = self._threshold_spin(85.0)
-        self.image_threshold = self._threshold_spin(90.0)
-        self.audio_threshold = self._threshold_spin(94.0)
+        # Calibrated scale (F-24): 0 = indistinguishable from unrelated
+        # content, 100 = identical. See dedupe/cli.py's DEFAULT_CONFIG for
+        # why video/image/audio defaults differ in how they were derived.
+        self.video_threshold = self._threshold_spin(15.0)
+        self.image_threshold = self._threshold_spin(80.0)
+        self.audio_threshold = self._threshold_spin(88.0)
         self.name_threshold = self._threshold_spin(92.0)
         self.folder_threshold = self._threshold_spin(50.0)
         settings_layout.addRow("Video threshold", self.video_threshold)

@@ -1111,6 +1111,16 @@ Full suite: 99 passed, 4 subtests, `ruff check .` clean.
 The order matters: recalibrate the scale before re-tuning anything, because every
 threshold in the project is expressed on the broken scale.
 
+> **Note on titles below.** The corpus-building work in this stage used a
+> real personal anime library. Every specific title name, pair id, and
+> filesystem path from that library has been replaced below with a generic
+> placeholder ("Title A", "Title B", …, `title-a-episode-1-same-release`,
+> etc.) that preserves the shape of each example — which pairs are
+> same-episode-different-release, which are same-numbered-different-season
+> traps, which are muddy after alignment, and so on — without naming the
+> actual titles. The letter assigned to a title is consistent within this
+> document and `docs/THRESHOLDS.md`, but is otherwise arbitrary.
+
 **Scope decision (2026-07-31).** No real anime/video duplicate corpus was
 available in this environment — only the 27 synthetic pairs in
 `docs/threshold-baseline.json`. Per the audit's own warning below ("every
@@ -1124,7 +1134,7 @@ where the similarity scale eventually lands - were done now.
 | F-26 | Tolerate partial fingerprints; retry once; report excluded files as a stage summary | 3/5 | Done |
 | F-25 | Make the alignment recheck reachable | 3/5 | Done (reachability fix only; see note) |
 | F-29 | Expose the duration ratio/delta gates | 2/5 | Done (gate values only; gated-pair reporting deferred) |
-| F-24 | Rescale similarity to a calibrated 0–100 confidence; bump the fingerprint version; re-derive defaults | 3/5 | **Deferred — corpus now exists (below), but positives/negatives still overlap raw; see note** |
+| F-24 | Rescale similarity to a calibrated 0–100 confidence; re-derive defaults | 3/5 | **Done 2026-08-01 (fingerprint version bump found unnecessary; see note)** |
 | F-27 | Coarse offset sweep in the alignment recheck (was: absolute-time sampling grid) | 3/5 | **Done — see 2026-07-31 update below** |
 | F-30 | Descriptor/sampling investigation | 4/5 | **Deferred — real corpus exists but is still small (14 pairs)** |
 | — | **Build a real labelled anime corpus** | 3/5 | **Done (partial) — see 2026-07-31 update** |
@@ -1132,14 +1142,17 @@ where the similarity scale eventually lands - were done now.
 ### 2026-07-31 update — real corpus built, F-27 implemented and measured
 
 A real, user-confirmed 14-pair corpus now exists at `docs/threshold-real-manifest.json`,
-sourced from `S:/Daedalus/Kiroku/TestLib` (8 confirmed same-episode pairs across
+sourced from a local test library the user built specifically for this work
+(real anime video files, titles anonymized as "Title A", "Title B", etc.
+throughout this document and `docs/THRESHOLDS.md` — see the note at the top
+of the Stage C section) (8 confirmed same-episode pairs across
 different subber/release groups, plus 6 confirmed negatives — including a
 deliberate "same episode number, different season" name trap). This replaces
-the previous manifest, which pointed at a `Lib/test` path that no longer
-exists; the earlier Amakano/Ane Chijo Max Heart/Ane Yome Quartet/Anata Dake
-Konbanwa/Kutsujoku entries were dropped rather than carried forward unverified.
+the previous manifest, which pointed at a stale local path that no longer
+exists; the earlier entries for titles no longer present were dropped rather
+than carried forward unverified.
 
-Running the full scan CLI against `TestLib` before any fix confirmed the
+Running the full scan CLI against that library before any fix confirmed the
 audit's prediction directly: **0 video matches, 0 image matches** at the
 default 85% threshold, despite the library being built specifically with
 duplicates. The official benchmark (`tools/benchmark_thresholds.py`) against
@@ -1192,7 +1205,7 @@ calls it directly):
 Recall at the best-fit threshold is unchanged (6/8) but the margin above the
 negative band is safer (57.4 vs. a negative max of 56.26, instead of 54.79
 sitting *below* one eligible negative at 54.58). Three positives
-(`aku-base-episode-1-same-release` 57.4, and two `baku-ane-ep1-*` pairs at
+(`title-a-episode-1-same-release` 57.4, and two `title-b-episode-1-*` pairs at
 ~55.6) still land inside or just above the negative band even after the
 sweep — the offset sweep measurably helps but does not fully close the F-24
 overlap problem on its own. F-24's rescale and a larger corpus remain the
@@ -1250,6 +1263,238 @@ on the corpus, and every threshold change is backed by FP/FN numbers.
 
 **Do the corpus first if only one thing from this stage is done.** Every other
 item is unverifiable without it.
+
+### Corpus update — 2026-08-01 (31 real pairs, 8 titles)
+
+The corpus (`docs/threshold-real-manifest.json`, local/gitignored) grew from
+14 to 31 pairs (22 positive, 9 negative) across 8 titles, still sourced from
+the same local test library and confirmed pair-by-pair by the user rather
+than inferred from filenames. Re-running `tools/benchmark_thresholds.py`
+against the grown corpus (`docs/threshold-real-results.json`) sharpens two
+conclusions from the F-27 work and adds a third:
+
+1. **The overlap is real, not a small-sample artifact.** With 31 pairs the
+   positive/negative bands still interleave: `title-d-episode-2-epname-vs-underscore`
+   (confirmed match) scores 54.90% - *below* `title-q-episode-1-vs-episode-2`
+   (confirmed non-match) at 55.36%, and below three other negatives. No
+   threshold separates all 31 pairs; the best fit
+   (`recommended.threshold` = 56.93) reaches 17/22 true positives with 0 false
+   positives, not 22/22.
+2. **The alignment recheck (F-27) works very well on some content and barely
+   moves others - same mechanism, different outcome depending on the video.**
+   `title-q-episode-1-sub-vs-dub` goes from 78.11% raw to 91.32% aligned;
+   `title-q-episode-2-sub-vs-dub` from 73.25% to 85.58%. `title-d-episode-1`,
+   `title-e-underscore-vs-sub`, and the `title-b`/`title-a` family barely move
+   (within a point or two of their raw score) even though they have comparable
+   duration deltas. This means the remaining ceiling is not primarily an
+   alignment/offset problem (F-27's territory) - it's a **descriptor**
+   problem: `phash` is evidently far more discriminative on some of this
+   content than on other parts of it, consistent with F-30's original
+   "low-texture anime" hypothesis, now with a same-corpus contrast (Title Q
+   vs. the low-texture titles) rather than a general assertion.
+3. **A rescale alone (F-24) cannot fix the `title-d` inversion.** F-24
+   proposes a monotonic rescale of the existing score; a monotonic transform
+   preserves rank order, so if a confirmed match ranks below a confirmed
+   non-match on the raw/aligned score today, it still will after any
+   monotonic rescale. F-24 would still be worth doing for the 26 of 31 pairs
+   that *are* correctly ordered (it changes what threshold value means, not
+   whether ordering is correct), but it will not, by itself, rescue the
+   inverted cases - only F-30 (a better or additional descriptor) can.
+
+Full pair-level table in `docs/threshold-real-results.json`. Not yet decided:
+whether to proceed with F-24 (rescale the 26 correctly-ordered pairs, accept
+the ~5 inversions as known misses) or go straight to F-30 (try to fix the
+inversions first, then rescale once the descriptor is better) - see
+"Remaining open decisions" below, updated accordingly.
+
+### Corpus update — 2026-08-01, second batch (51 real pairs, ~15 titles)
+
+The corpus grew again, from 31 to 51 pairs (39 positive, 12 negative),
+adding titles the user pair-by-pair confirmed as real (including a 4-file,
+3-release episode group for `Title I` and a 3-4-release cluster
+for `Title L`) and, separately, three more confirmed
+name-similarity traps (`Title B2` vs. the original `Title B` -
+confirmed genuinely different seasons despite messy, inconsistent naming;
+`Title S` vs. `Title S2` - confirmed
+unrelated titles sharing a naming convention; `Title J` vs. `Title J2`
+- confirmed a different, unrelated production despite the shared name).
+
+This batch changes the picture materially. At the same best-fit threshold
+approach, recall on the full corpus went from 17/22 (77%) to **33/39 (85%)**,
+still with **zero false positives** across all 12 negatives (`recommended`:
+threshold 56.93, 33 TP / 0 FP / 12 TN / 6 FN). More importantly, the new
+titles show *why*: `Title I`, `Title J2`, `Title K`,
+the whole `Title L` cluster, and `Title M` all
+separate cleanly, landing at 72-100% aligned similarity - several of them
+starting from a muddy 54-59% raw score and getting rescued dramatically by
+the F-27 offset sweep (e.g. `title-k-cross-language-match`: 54.58% raw ->
+92.08% aligned; `title-l-episode-2-base-vs-ova-sub`: 54.90% -> 90.60%). The
+alignment mechanism is doing exactly what it was built to do for the
+majority of real content.
+
+The 6 remaining false negatives are now concentrated almost entirely in the
+**same small set of titles already flagged in the first corpus update**:
+`title-d-*` (2 of them), `title-e-underscore-vs-sub`, and both
+`title-b-episode-1-*` pairs stay at 54.9-58.8% aligned - barely moved by the same
+mechanism that lifted everything else. The 6th,
+`title-n-episode-1`, is a different and separately interesting
+case: the user confirmed one release genuinely is episode 1 of Title N,
+but it is almost exactly 2x the duration of
+the other confirmed release of the same episode (ratio 2.00, delta 1701s) - past `DEFAULT_MAX_DURATION_RATIO`
+(1.5), so the duration gate correctly excludes it as ineligible before any
+content comparison runs. This is very likely the documented "episode inside
+a longer file" limitation (`docs/STATUS.md`'s "Video containment matching...
+is not implemented") surfacing in a real, confirmed pair rather than a
+hypothetical - the longer release plausibly contains more than one episode
+concatenated. Not a new bug; a real instance of a known, intentional
+limitation.
+
+**This narrows F-30's scope usefully.** With 15 titles now in the corpus,
+"low-texture anime hurts `phash`" is no longer a general worry about the
+whole matcher - it is 3-4 specific, identifiable titles behaving
+differently from the other ~11, which is a much more tractable thing to
+investigate (compare what's visually different about `title-d`/`title-e`/
+`title-b` versus e.g. `title-i`/`title-l`, which have similar
+duration/delta profiles but wildly different alignment outcomes).
+
+### Corpus update — 2026-08-01, third batch (76 real pairs, ~20 titles) · corpus-building concluded for now
+
+Grew once more, 51 -> 76 pairs (61 positive, 15 negative, roughly 20
+titles). The user indicated this is likely the last large batch they can
+readily label, so this update treats the corpus as stable for planning
+purposes rather than still-growing.
+
+Recall at the best-fit threshold held at **85% (52/61), still 0 false
+positives** across all 15 confirmed negatives - unchanged from the 51-pair
+round, which is itself informative: recall didn't degrade as 25 new pairs
+across ~7 new titles were added, suggesting 85% at zero false positives is a
+genuine property of the current matcher (with F-25/F-27's reachability
+fixes) rather than an artifact of a small or lucky sample.
+
+The 9 false negatives split into two distinct groups:
+
+- **7 "muddy" pairs that clear the duration gate but score too low**: the
+  same three titles flagged in the last two updates
+  (`title-d-*` x2, `title-e-underscore-vs-sub`, `title-b-episode-1-*` x2) plus
+  two new ones - `title-p-episode-2-01-vs-01sub` and `title-o-episode-2`.
+  The two new cases sharpen the diagnosis: both are a *specific episode*
+  within an otherwise well-behaved title (Title P's episode-1 pairs score
+  87-91%; Title O's episode-1/episode-3 score 92%/68%), and `title-p-episode-2` has a
+  duration delta of only 1.1 seconds - there is essentially no offset for
+  F-27's sweep to search, yet the raw score is still stuck at ~55%. That
+  rules out alignment as the cause for this specific pair: two versions of
+  the same episode, nearly identical length, and the *unaligned* frame
+  comparison itself is weak. Something about the sampled frames' visual
+  content (not their timing) is the problem, which is exactly F-30's
+  territory, not F-27's.
+- **2 duration-gated positives** (ineligible, not counted as ordinary false
+  negatives above): `title-n-episode-1` (ratio 2.00, already
+  discussed) and a new one, `title-o-episode-4` (ratio 1.51 - just over
+  the 1.5 gate limit). The Title O case is a cleaner example of a
+  near-miss than Title N's 2x case: it is barely outside the gate,
+  which is useful evidence for F-29's "report duration-gated pairs
+  separately, don't just drop them" recommendation - a slightly wider gate
+  or a "near miss, reported for review" bucket would have caught it without
+  reopening the compilation false-positive risk the gate exists to prevent.
+
+Full pair-level table in `docs/threshold-real-results.json`.
+`docs/threshold-real-manifest.json` is git-ignored (contains local absolute
+paths); this document is now the durable record of what the corpus contains
+and what it showed, in case the manifest file itself is ever lost or rebuilt.
+
+### F-24 implementation — 2026-08-01
+
+Implemented against the 76-pair corpus above rather than guessed, per the
+audit's own instruction for this item. Full detail in `docs/THRESHOLDS.md`
+("The similarity scale (F-24)" and "Current defaults and how they were
+chosen"); summarized here.
+
+`calibrate_similarity()`/`decalibrate_similarity()` (`video_fingerprint.py`)
+implement the audit's suggested `max(0, (raw - 50) / 50 * 100)` rescale and
+its inverse. Where calibration is applied turned out to need more care than
+"wrap the final number":
+
+- **Video**: `ordered_sequence_similarity`/`video_similarity` were
+  deliberately left returning the *raw* scale internally.
+  `find_video_matches`'s `ALIGNMENT_RECHECK_FLOOR` circuit-breaker (F-27)
+  depends on distinguishing a genuinely degenerate raw score (exactly `0.0`,
+  the common mocked-test case) from a merely muddy real one (raw 51-56 is
+  routine for confirmed real duplicates) - both collapse to the same clamped
+  `0` after calibration, which would have silently turned the floor into a
+  no-op and reopened the exact 78-minute test regression F-27 fixed. Instead,
+  `find_video_matches` decalibrates the incoming (calibrated) `threshold`
+  once at the top into `raw_threshold` for its internal raw-scale
+  comparisons, and calibrates only the final score right before constructing
+  each `VideoMatch`. `benchmark.py` calls `video_similarity` directly,
+  bypassing this boundary, so it calibrates its own reported value too, to
+  match what a real scan would show.
+- **Image**: `image_similarity` blends an 80%-weighted Hamming-based
+  structure term with a 20%-weighted RGB color term. Only the structure term
+  has the noise-floor problem the color term doesn't, so only it is
+  calibrated, *before* blending - calibrating the final blended value would
+  have incorrectly compressed the already-meaningful color contribution too.
+  This meant `_candidate_pairs`'s LSH candidate-blocking math (which derives
+  a raw Hamming bit-distance bound from `threshold`) needed its own explicit
+  decalibration step, local to that function, since it needs the raw scale
+  for bit-distance arithmetic while the public `threshold`/`image_similarity`
+  contract is calibrated.
+- **Audio**: `audio_similarity` is purely Hamming-based with no blend and no
+  internal floor logic depending on the raw scale, so it calibrates its
+  return value unconditionally - the simplest of the three.
+
+**Fingerprint version bump: not done, and not needed.** The audit suggested
+one to avoid mixing cached values across scales, but nothing about the
+stored fingerprint bytes (the phash/Chromaprint integer sequences) changed -
+only the comparison math on top of them did, and `Cache` never stores a
+computed similarity/match result, only per-file fingerprints. There is
+nothing stale to invalidate.
+
+**New defaults**, derived per media type based on how much real evidence
+exists for each (`video_threshold=15.0`, `image_threshold=80.0`,
+`audio_threshold=88.0` - see `docs/THRESHOLDS.md` for the full reasoning per
+value). Video's default trades 2 true positives for a larger safety margin
+above the corpus's worst confirmed negative than the exact evidence-optimal
+value would give (`15.0` vs. the corpus's own best-fit `13.86`).
+
+Regression: existing tests were **not** changed for this item — all 125
+already passed unmodified, because the fixtures they use are either
+extreme-value synthetic cases (identical or maximally-different
+fingerprints, which are fixed points of the calibration transform: `100`
+raw stays `100`, `<=50` raw clamps to `0`) or near-perfect synthetic
+image/audio matches scoring well above the new thresholds regardless of
+scale. The real stress test was re-running the benchmark tool against the
+76-pair real corpus (see the table in `docs/THRESHOLDS.md`), which produced
+the same 85%-recall-at-zero-false-positives picture as the raw-scale
+analysis, confirming the rescale preserved the matcher's actual behavior
+and only fixed how it's labeled. Full suite: 125 passed, 7 subtests,
+`ruff check`/`ruff format --check` clean, `mypy dedupe` unchanged at the
+documented 37-error baseline.
+
+**Unrelated fix found along the way**: re-running the real-corpus benchmark
+after the interruption below took 80+ minutes on a corpus that had
+previously completed in a few minutes, and was reproducible on retry.
+`benchmark.py`'s `_evaluate_pairs` called `video_similarity()` without
+sharing an `aligned_cache` across pairs, so every pair re-fingerprinted its
+"longer" file from scratch for the F-27 alignment recheck (up to 5 extra
+full re-fingerprints per pair) even when that same file had already been
+aligned for a different pair in the same manifest - common in this corpus,
+which has several 3-4-release groups for one episode.
+`find_video_matches` already shares one cache across its whole pair loop;
+`_evaluate_pairs` now does the same. Not a new problem (pre-dates F-24
+entirely - it got more painful here specifically because F-27 raised the
+offset count from 2 to 5 and the corpus grew to 76 pairs across the same
+session), but worth fixing since it directly blocked verifying this item.
+Verified via the fast mocked/synthetic test suite only (125 passed, ruff/
+mypy clean) - not re-run against the slow real corpus again immediately
+afterward, to avoid another long wait for a low-risk change; the next real
+benchmark run will validate it for free.
+
+**Interrupted mid-session**: the machine restarted (unrelated to this work)
+partway through the day's session, killing an in-progress full-library
+sanity scan (298 files) that was extra verification beyond the benchmark
+tool. All code and doc changes were already on disk and unaffected; nothing
+was lost, and re-running that particular scan was judged not worth the
+wait given the benchmark tool had already validated the change.
 
 ### Stage D — Responsiveness and I/O (~4 days) · done 2026-07-31
 
@@ -1493,7 +1738,7 @@ key still works and labels itself `"root"`), and
 `test_folder_comparison_skips_directories_with_no_shared_cluster` (a third,
 unrelated directory is never generated as a candidate even at `threshold=0`,
 all in `tests/test_core.py`). Verified end-to-end against the real
-`S:/Daedalus/Kiroku/TestLib` corpus: 0 folder pairs before (root-only, one
+local test library corpus (see the note at the top of Stage C): 0 folder pairs before (root-only, one
 root scanned) -> 77 directory-scope pairs after. Full suite: 123 passed, 7
 subtests, `ruff check`/`ruff format --check` clean, `mypy dedupe` unchanged
 at the documented 37-error baseline.
@@ -1562,7 +1807,7 @@ builders, so this doesn't reopen the injection question the audit already
 cleared.
 
 One real-corpus observation from manually verifying this in a browser against
-`S:/Daedalus/Kiroku/TestLib`'s folder-pairs section: a folder-pair `<details>`
+the local test library's folder-pairs section: a folder-pair `<details>`
 nests its full "Matches" evidence panel and its complete left-only/right-only
 path lists, so `textContent`-based search matches on *any* path mentioned
 anywhere inside a pair, not just the two folder names in the summary line. On
@@ -1570,7 +1815,7 @@ a small library with heavy cross-matching (a side effect of the still-open
 F-24 noise-floor problem, not of this change) that can make a specific-looking
 query match nearly every pair. This was confirmed to be correct substring
 behavior, not a bug, by cross-checking with a second, more selective query
-(the video-only term "Mistic" correctly reduced the folder-pairs count to
+(a video-only title fragment correctly reduced the folder-pairs count to
 0/77 while leaving the one real video match at 1/1) - not something to "fix"
 by narrowing the search scope, since matching on the full evidence text is
 what makes "which pairs mention this file" actually answerable.
@@ -1607,11 +1852,32 @@ fallback, so CLI-only installs stay light.
    matrix (recommended), closure only above a higher merge threshold, or closure
    with an "incomplete cluster" badge?
 2. **F-24 is a breaking change to every threshold value** in configs, docs, and
-   the baseline. Do it as one deliberate release with a migration note, or keep
-   the raw scale and only relabel it in the UI?
-3. **Corpus** — how many real anime pairs can be labelled, and can the missed
-   pairs from real use be captured as the first regression cases? Without those
-   exact files, Stage C is tuned blind.
+   the baseline. **Resolved 2026-08-01**: implemented as an actual rescale (not
+   a relabel), with a migration note in `docs/THRESHOLDS.md` and new defaults
+   for all three media types. See the "F-24 implementation" note above.
+3. **Corpus** — **concluded for now at 76 pairs, ~20 titles.**
+   (`docs/threshold-real-manifest.json`, three 2026-08-01 updates above), up
+   from 14 at the start of Stage C's corpus-building work. The user indicated
+   they've likely exhausted what they can readily label; treat 76 pairs as
+   the stable baseline for F-24/F-30 planning rather than expecting more
+   growth in the near term. More can always be added later the same way if
+   the muddy-title investigation (F-30) needs additional examples of a
+   specific failure pattern.
 4. **F-29** — raising the duration gate helps short content but risks
    re-introducing the episode-in-compilation false positives the gate was added
-   to prevent. Confirm against the corpus before changing the default.
+   to prevent. The corpus now has two real duration-gated positives to check
+   any change against: `title-n-episode-1` (ratio 2.00, likely a
+   genuine multi-episode file - the gate is probably right to exclude it) and
+   `title-o-episode-4` (ratio 1.51, barely over the 1.5 limit - a much
+   more sympathetic near-miss). Revisit once F-29's "report duration-gated
+   pairs separately" half (never implemented, see F-29's original write-up)
+   exists to distinguish the two cases instead of silently dropping both.
+5. **F-24 vs. F-30 sequencing** — **resolved 2026-08-01: F-24 shipped, F-30
+   remains a separately-scoped follow-up.** As predicted, the rescale did not
+   and could not fix the muddy titles' false negatives (a monotonic
+   transform preserves rank order) - they are documented as known misses in
+   `docs/THRESHOLDS.md` and `docs/AUDIT-1.7.0.md`'s corpus updates rather
+   than chased further here. F-30 remains open: investigate what's visually
+   different about `title-d`/`title-e`/`title-b`/one `title-p`
+   episode/one `title-o` episode versus the ~15 other, well-behaved
+   titles in the corpus.

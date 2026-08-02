@@ -33,7 +33,7 @@ transcode are disabled until that operation finishes safely.
 | **Name provider** | Selects local heuristics, automatic Anthropic fallback, Anthropic, or LM Studio title normalization. |
 | **LM Studio URL / model** | Configures the local OpenAI-compatible server when LM Studio is selected. |
 | **Workers** | Sets background worker threads for the scan. |
-| **Video / Image / Audio / Name / Folder threshold** | Sets the minimum similarity percentage for the corresponding evidence type. |
+| **Video / Image / Audio / Name / Folder threshold** | Sets the minimum match confidence for the corresponding evidence type. Video/image/audio use a calibrated scale where `0` means indistinguishable from unrelated content and `100` means identical (see `docs/THRESHOLDS.md`) - not a naive "percent similar," so their defaults (video `15`, image `80`, audio `88`) look very different from each other and from name/folder's plain percentage scales. |
 | **Skip video fingerprints** | Skips FFmpeg video sampling. Exact hashes and other enabled media stages still run. |
 | **Skip image fingerprints** | Skips perceptual image matching. |
 | **Skip audio fingerprints** | Skips FFmpeg Chromaprint audio matching. |

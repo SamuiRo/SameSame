@@ -123,7 +123,7 @@ The example writes its reports under `reports/` and its cache under `.cache/`.
 Config values can be overridden for one run:
 
 ```powershell
-samesame --config samesame.json --video-threshold 88 --log-level DEBUG
+samesame --config samesame.json --video-threshold 20 --log-level DEBUG
 ```
 
 Configuration precedence is: built-in defaults, config file, then CLI flags.

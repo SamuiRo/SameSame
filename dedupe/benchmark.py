@@ -15,6 +15,7 @@ from dedupe.image_fingerprint import fingerprint_image, image_similarity
 from dedupe.models import FileRecord
 from dedupe.thresholds import LabeledScore, summarize_scores
 from dedupe.video_fingerprint import (
+    calibrate_similarity,
     check_video_tools,
     fingerprint_video,
     get_duration,
@@ -204,6 +205,14 @@ def _evaluate_pairs(pairs: list[PairSpec], ffmpeg: str, ffprobe: str) -> dict[st
     video_cache: dict[Path, FileRecord] = {}
     audio_cache: dict[Path, list[int]] = {}
     audio_duration_cache: dict[Path, float] = {}
+    # Shared across every pair, not just within one - video_similarity()'s
+    # alignment recheck (F-27) re-fingerprints the longer file at up to 5
+    # offsets, and a manifest with several releases of the same episode
+    # (a common shape for a real corpus) reuses the same "longer" file across
+    # many pairs. Without this, each pair paid for its own recheck from
+    # scratch; find_video_matches already shares one cache across its whole
+    # pair loop the same way.
+    aligned_cache: dict[tuple[str, float, float], list[int] | None] = {}
     results: dict[str, list[LabeledScore]] = {"image": [], "video": [], "audio": []}
 
     for pair in pairs:
@@ -230,7 +239,11 @@ def _evaluate_pairs(pairs: list[PairSpec], ffmpeg: str, ffprobe: str) -> dict[st
                         raise RuntimeError(f"Cannot fingerprint video: {path}")
                     video_cache[path] = record
             duration_delta = abs((video_cache[pair.left].duration or 0.0) - (video_cache[pair.right].duration or 0.0))
-            raw_similarity = video_similarity(video_cache[pair.left], video_cache[pair.right], ffmpeg)
+            # video_similarity() stays on the raw scale (see calibrate_similarity's
+            # docstring); this bypasses find_video_matches's own calibration
+            # boundary, so it is applied here too, to match what a real scan
+            # would report (F-24).
+            raw_similarity = video_similarity(video_cache[pair.left], video_cache[pair.right], ffmpeg, aligned_cache)
             if not video_durations_compatible(
                 video_cache[pair.left].duration or 0.0,
                 video_cache[pair.right].duration or 0.0,
@@ -239,7 +252,7 @@ def _evaluate_pairs(pairs: list[PairSpec], ffmpeg: str, ffprobe: str) -> dict[st
                 eligible = False
                 note = f"duration delta {duration_delta:.3f}s exceeds matcher ratio/delta limits"
             else:
-                similarity = raw_similarity
+                similarity = calibrate_similarity(raw_similarity)
         elif pair.media_type == "audio":
             for path in (pair.left, pair.right):
                 if path not in audio_cache:
@@ -281,9 +294,10 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=Path("threshold-benchmark.json"))
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--ffprobe", default="ffprobe")
-    parser.add_argument("--image-threshold", type=float, default=90.0)
-    parser.add_argument("--video-threshold", type=float, default=85.0)
-    parser.add_argument("--audio-threshold", type=float, default=94.0)
+    # Calibrated scale (F-24) - see dedupe/cli.py's DEFAULT_CONFIG comment.
+    parser.add_argument("--image-threshold", type=float, default=80.0)
+    parser.add_argument("--video-threshold", type=float, default=15.0)
+    parser.add_argument("--audio-threshold", type=float, default=88.0)
     args = parser.parse_args()
 
     ffmpeg, ffprobe = check_video_tools(args.ffmpeg, args.ffprobe)

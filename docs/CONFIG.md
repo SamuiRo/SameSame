@@ -47,9 +47,9 @@ python dedupe.py --config samesame.json
   "json_output": "reports/samesame.json",
   "cache": ".cache/samesame.sqlite3",
   "extensions": [".mkv", ".mp4", ".jpg", ".jpeg", ".png", ".webp", ".mp3", ".flac"],
-  "video_threshold": 85,
-  "image_threshold": 90,
-  "audio_threshold": 94,
+  "video_threshold": 15,
+  "image_threshold": 80,
+  "audio_threshold": 88,
   "folder_threshold": 50,
   "name_threshold": 92,
   "name_provider": "none",
@@ -88,9 +88,9 @@ For readability, these nested sections are also supported:
     "path": ".cache/samesame.sqlite3"
   },
   "matching": {
-    "video": 85,
-    "image": 90,
-    "audio": 94,
+    "video": 15,
+    "image": 80,
+    "audio": 88,
     "folder": 50,
     "name": 92
   },
@@ -112,7 +112,7 @@ For readability, these nested sections are also supported:
   },
   "audio": {
     "skip": false,
-    "threshold": 94
+    "threshold": 88
   },
   "extensions": [".mkv", ".mp4", ".avi", ".jpg", ".jpeg", ".png", ".webp", ".mp3", ".flac"],
   "workers": 4,
@@ -227,9 +227,9 @@ $env:LMSTUDIO_MODEL = "qwen2.5-7b-instruct"
 | `json_output` | `report.json` | Machine-readable JSON report path. |
 | `cache` | `.dedupe_cache.sqlite3` | SQLite cache path. |
 | `extensions` | common video, image, and audio extensions | File extensions to scan; a custom list replaces the defaults. |
-| `video_threshold` | `85` | Minimum sequence-aligned video fingerprint similarity percent; finite `0`–`100`. |
-| `image_threshold` | `90` | Minimum perceptual image similarity percent; finite `0`–`100`. |
-| `audio_threshold` | `94` | Minimum Chromaprint audio similarity percent; finite `0`–`100`. |
+| `video_threshold` | `15` | Minimum sequence-aligned video fingerprint match confidence; finite `0`–`100`. Calibrated scale: `0` = indistinguishable from unrelated content, `100` = identical (F-24) — not a naive "percent similar." See `docs/THRESHOLDS.md`. |
+| `image_threshold` | `80` | Minimum perceptual image match confidence; finite `0`–`100`. Same calibrated scale as `video_threshold`. |
+| `audio_threshold` | `88` | Minimum Chromaprint audio match confidence; finite `0`–`100`. Same calibrated scale as `video_threshold`. |
 | `folder_threshold` | `50` | Minimum folder Jaccard similarity percent; finite `0`–`100`. Applies to both the directory-level comparison (default) and the collection-root roll-up (F-16). |
 | `name_threshold` | `92` | Minimum fuzzy name hint similarity percent; finite `0`–`100`. |
 | `name_provider` | `auto` | `auto`, `anthropic`, `lmstudio`, or `none`. |

@@ -167,6 +167,43 @@ def hamming_similarity(left: list[int], right: list[int], bits_per_hash: int = 6
     return max(0.0, 100.0 * (1.0 - distance / total_bits))
 
 
+# Two unrelated Hamming-based fingerprints of any bit width differ in ~half
+# their bits, so hamming_similarity converges to ~50% for content with
+# nothing in common - measured at mean 52.3%, range 49.6-55.5% over 300
+# random-pair simulations. A raw threshold therefore does not mean what it
+# appears to: "85%" sounds like "very similar" but is actually most of the
+# way from "identical" (100%) to "coin flip" (50%), and a real anime corpus
+# confirmed genuine duplicates commonly score in the low-to-mid 50s pre- and
+# even post-alignment (F-24).
+NOISE_FLOOR = 50.0
+
+
+def calibrate_similarity(raw: float) -> float:
+    """Rescale a raw Hamming-based similarity to a 0-100 confidence where 0
+    means "indistinguishable from unrelated content" and 100 means
+    identical, instead of 0 meaning "bit-for-bit opposite" (F-24).
+
+    Deliberately NOT applied inside `ordered_sequence_similarity` or
+    `video_similarity` themselves: `find_video_matches`'s
+    `ALIGNMENT_RECHECK_FLOOR` circuit-breaker needs to distinguish a
+    genuinely degenerate raw score (e.g. 0.0, common in mocked tests) from a
+    merely muddy real one (raw 51-56 is common for real confirmed
+    duplicates) - both collapse to the same clamped 0 after calibration, so
+    that comparison must stay on the raw scale. Calibration is applied once,
+    at the outer boundary (`find_video_matches`, `find_image_matches`,
+    `audio_similarity`, and the benchmark tool), where the result is about to
+    be shown to a user or compared against a user-supplied (calibrated)
+    threshold.
+    """
+    return max(0.0, min(100.0, (raw - NOISE_FLOOR) / (100.0 - NOISE_FLOOR) * 100.0))
+
+
+def decalibrate_similarity(calibrated: float) -> float:
+    """Inverse of `calibrate_similarity`: convert a calibrated threshold back
+    to the raw scale so it can be compared against a raw similarity value."""
+    return calibrated / 100.0 * (100.0 - NOISE_FLOOR) + NOISE_FLOOR
+
+
 def ordered_sequence_similarity(
     left: list[int],
     right: list[int],
@@ -301,6 +338,11 @@ def find_video_matches(
     max_duration_ratio: float = DEFAULT_MAX_DURATION_RATIO,
     max_duration_delta: float = DEFAULT_MAX_DURATION_DELTA,
 ) -> list[VideoMatch]:
+    # `threshold` arrives on the calibrated scale (F-24) - everything below
+    # this line compares against the raw internal scale instead, so it is
+    # converted once, up front. See `calibrate_similarity` for why the
+    # comparisons themselves stay raw rather than calibrating every score.
+    raw_threshold = decalibrate_similarity(threshold)
     missing_duration = [record for record in records if record.duration is None]
     if missing_duration:
         with cancellable_executor(workers) as executor:
@@ -371,7 +413,8 @@ def find_video_matches(
             # definition for why no higher raw-score threshold would be safe.
             if ALIGNMENT_RECHECK_FLOOR <= similarity and 0.05 < delta <= ALIGNMENT_RECHECK_MAX_DELTA:
                 similarity = video_similarity(left, right, ffmpeg, aligned_fingerprints)
-            if threshold <= similarity:
-                matches.append(VideoMatch(pair[0], pair[1], round(similarity, 2), round(delta, 3)))
+            if raw_threshold <= similarity:
+                calibrated = calibrate_similarity(similarity)
+                matches.append(VideoMatch(pair[0], pair[1], round(calibrated, 2), round(delta, 3)))
     matches.sort(key=lambda item: (-item.similarity, item.left, item.right))
     return matches
