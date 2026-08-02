@@ -46,6 +46,10 @@ from .result_items import CATEGORY_LABELS, ReviewItem, build_review_items, categ
 from .transcode_dialog import TranscodeDialog
 from .worker import ActionJob, ActionWorker, ScanWorker
 
+# Bump whenever a stored setting changes meaning rather than merely value.
+# 1: pre-F-24 raw-scale thresholds (1.7.8-1.7.9). 2: calibrated scale (A-03).
+SETTINGS_SCHEMA_VERSION = 2
+
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
@@ -165,7 +169,7 @@ class MainWindow(QMainWindow):
         # Calibrated scale (F-24): 0 = indistinguishable from unrelated
         # content, 100 = identical. See dedupe/cli.py's DEFAULT_CONFIG for
         # why video/image/audio defaults differ in how they were derived.
-        self.video_threshold = self._threshold_spin(15.0)
+        self.video_threshold = self._threshold_spin(20.0)
         self.image_threshold = self._threshold_spin(80.0)
         self.audio_threshold = self._threshold_spin(88.0)
         self.name_threshold = self._threshold_spin(92.0)
@@ -321,6 +325,7 @@ class MainWindow(QMainWindow):
 
     def _save_settings(self) -> None:
         settings = QSettings()
+        settings.setValue("schema_version", SETTINGS_SCHEMA_VERSION)
         settings.beginGroup("scan")
         settings.setValue("folders", [self.folder_list.item(i).text() for i in range(self.folder_list.count())])
         settings.setValue("name_provider", self.name_provider.currentData())
@@ -349,6 +354,13 @@ class MainWindow(QMainWindow):
 
     def _restore_settings(self) -> None:
         settings = QSettings()
+        # Thresholds stored by 1.7.8/1.7.9 are on the pre-F-24 raw scale, where
+        # 85 meant "quite similar"; on today's calibrated scale the same 85
+        # means "almost identical" and silently finds nothing. Stored values
+        # from an older schema are therefore dropped rather than restored, so
+        # the user gets the current defaults instead of a dead scan (A-03).
+        stored_schema = settings.value("schema_version", 0, type=int)
+        restore_thresholds = stored_schema >= SETTINGS_SCHEMA_VERSION
         settings.beginGroup("scan")
         folders = settings.value("folders", [])
         if isinstance(folders, str):
@@ -361,11 +373,15 @@ class MainWindow(QMainWindow):
         self.lmstudio_url.setText(settings.value("lmstudio_url", LMSTUDIO_URL, type=str))
         self.lmstudio_model.setText(settings.value("lmstudio_model", LMSTUDIO_MODEL, type=str))
         self.workers.setValue(settings.value("workers", self.workers.value(), type=int))
-        self.video_threshold.setValue(settings.value("video_threshold", self.video_threshold.value(), type=float))
-        self.image_threshold.setValue(settings.value("image_threshold", self.image_threshold.value(), type=float))
-        self.audio_threshold.setValue(settings.value("audio_threshold", self.audio_threshold.value(), type=float))
-        self.name_threshold.setValue(settings.value("name_threshold", self.name_threshold.value(), type=float))
-        self.folder_threshold.setValue(settings.value("folder_threshold", self.folder_threshold.value(), type=float))
+        if restore_thresholds:
+            for key, spin in (
+                ("video_threshold", self.video_threshold),
+                ("image_threshold", self.image_threshold),
+                ("audio_threshold", self.audio_threshold),
+                ("name_threshold", self.name_threshold),
+                ("folder_threshold", self.folder_threshold),
+            ):
+                spin.setValue(settings.value(key, spin.value(), type=float))
         self.skip_video.setChecked(settings.value("skip_video", False, type=bool))
         self.skip_images.setChecked(settings.value("skip_images", False, type=bool))
         self.skip_audio.setChecked(settings.value("skip_audio", False, type=bool))

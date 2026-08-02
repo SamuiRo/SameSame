@@ -114,7 +114,7 @@ finished properly": 80 minutes is roughly 3% of the work.
 **The recheck must not simply be removed** — see A-02: it is the single
 strongest discriminator the matcher has. It needs to stop re-decoding.
 
-**Proposed fix:** sample each file once on an *absolute* time
+**Fix (implemented in 1.9.0):** sample each file once on an *absolute* time
 grid, cache that sequence, and align by sliding integer offsets over cached
 hashes. Proof of concept measured on real `TestLib` pairs before
 implementing:
@@ -304,15 +304,33 @@ exist.
 
 | # | Work | Severity | Status |
 | --- | --- | --- | --- |
-| A-01 | Absolute-time grid fingerprint, cached; alignment without ffmpeg | Critical | Planned for 1.9.0 |
-| A-02 | Re-derive `video_threshold` on the full library with alignment on | Critical | Planned for 1.9.0 |
-| A-03 | `QSettings` schema version + reset of pre-F-24 thresholds | Critical | Planned for 1.9.0 |
-| A-04 | Migrate the local working config | Critical | Planned for 1.9.0 |
-| A-05 | Cancellation checks and progress events in the pair loop | High | Planned for 1.9.0 |
-| A-06 | Re-derive or re-document `image_threshold` | Medium | Open — needs real image evidence |
-| A-07 | Fix LSH blocking for low image thresholds | Medium | Planned for 1.9.0 |
-| A-08 | Report a genuinely raw score in the benchmark | Medium | Planned for 1.9.0 |
-| A-09 | Version and claim drift in the documentation | Low | Planned for 1.9.0 |
-| A-10 | Remove the dead `duration_tolerance` parameter | Low | Planned for 1.9.0 |
-| A-11 | De-duplicate identical folder pairs across scopes | Low | Planned for 1.9.0 |
-| A-12 | Restore Qt global state in tests; validate restored roots | Low | Open — cosmetic |
+| A-01 | Absolute-time grid fingerprint, cached; alignment without ffmpeg | Critical | Done in 1.9.0 |
+| A-02 | Re-derive `video_threshold` on the full library with alignment on | Critical | Done in 1.9.0 — `15.0` → `20.0` |
+| A-03 | `QSettings` schema version + reset of pre-F-24 thresholds | Critical | Done in 1.9.0 |
+| A-04 | Migrate the local working config | Critical | Done in 1.9.0 |
+| A-05 | Cancellation checks and progress events in the pair loop | High | Done in 1.9.0 |
+| A-06 | Re-derive or re-document `image_threshold` | Medium | Documented in 1.9.0; re-derivation still open |
+| A-07 | Fix LSH blocking for low image thresholds | Medium | Done in 1.9.0 |
+| A-08 | Report a genuinely raw score in the benchmark | Medium | Done in 1.9.0 |
+| A-09 | Version and claim drift in the documentation | Low | Done in 1.9.0 |
+| A-10 | Remove the dead `duration_tolerance` parameter | Low | Done in 1.9.0 |
+| A-11 | De-duplicate identical folder pairs across scopes | Low | Done in 1.9.0 |
+| A-12 | Restore Qt global state in tests; validate restored roots | Low | Qt state done in 1.9.0; root validation open |
+
+## Verification of the 1.9.0 fixes
+
+| Check | Result |
+| --- | --- |
+| `python -m pytest -q` | **130 passed, 7 subtests** (5 new A-01/A-03 regressions) |
+| `ruff check .` / `ruff format --check .` | clean |
+| `mypy dedupe` | 33 errors (was 37 — the removed re-decode path took four with it) |
+| Full library scan, cold cache | 1017 s, 105 video matches at the new `20.0` default |
+| Full library scan, warm cache | 31.7 s |
+| Alignment cost | 1.34 ms/pair over all 22 849 compatible pairs |
+
+The new regressions cover the properties the design depends on rather than
+the numbers it produced: that the cadence ladder stays on powers of two,
+that a coarser grid is exactly a stride of a finer one, that a time-shifted
+duplicate aligns, that a failed frame stays a placeholder instead of
+shifting the sequence, that an unreadable file gives up after a few probes,
+and that thresholds from an older settings schema are not restored.

@@ -78,7 +78,13 @@ def _candidate_pairs(
     # raw scale, since a Hamming distance has no notion of "noise floor" -
     # only the reported/compared similarity does. Convert once, here, rather
     # than changing `image_similarity`'s or the caller's contract.
-    minimum_structure_similarity = max(0.0, (threshold - COLOR_WEIGHT * 100.0) / STRUCTURE_WEIGHT)
+    minimum_structure_similarity = (threshold - COLOR_WEIGHT * 100.0) / STRUCTURE_WEIGHT
+    if minimum_structure_similarity <= 0.0:
+        # The colour term alone can already clear the bar, so no structure
+        # distance may be excluded. Decalibrating a clamped 0 would instead
+        # imply "raw >= 50" (half the bit space) and drop legitimate
+        # candidates at low thresholds (A-07).
+        return {(left, right) for left in range(len(candidates)) for right in range(left + 1, len(candidates))}
     minimum_structure_similarity_raw = decalibrate_similarity(min(100.0, minimum_structure_similarity))
     max_distance = math.floor(64 * (1.0 - minimum_structure_similarity_raw / 100.0) + 1e-9)
     block_count = min(64, max_distance + 1)

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from . import process
 from .cache import Cache
-from .models import VIDEO_FINGERPRINT_VERSION, FileRecord, VideoMatch
+from .models import GRID_FINGERPRINT_VERSION, VIDEO_FINGERPRINT_VERSION, FileRecord, VideoMatch
 from .progress import cancellable_executor, check_cancelled, tqdm
 
 try:
@@ -29,17 +29,24 @@ MINIMUM_FRAME_COVERAGE = 0.5
 FRAME_RETRY_NUDGE = 0.5
 DEFAULT_MAX_DURATION_RATIO = 1.5
 DEFAULT_MAX_DURATION_DELTA = 15 * 60.0
-ALIGNMENT_RECHECK_MAX_DELTA = 3 * 60.0
-ALIGNMENT_OFFSET_STEPS = 5
-# Cost circuit-breaker, not a correctness boundary: measured against a real
-# anime corpus, genuine duplicates (53.1+) and duration-coincidental
-# unrelated pairs (up to ~56) both clear the true noise floor (49.6-55.5,
-# see F-24's random-hash simulation), so no raw-score threshold in that range
-# can decide "is this worth an expensive re-fingerprint" - only the aligned
-# recheck itself can tell them apart. This floor sits comfortably below that
-# whole band; it exists only to skip pairs the cheap unaligned score already
-# shows are nowhere close (or, in tests, exactly 0).
-ALIGNMENT_RECHECK_FLOOR = 40.0
+ALIGNMENT_MAX_SHIFT = 3 * 60.0
+# Absolute-time alignment grid (A-01): perceptual hashes taken at fixed
+# offsets from the start of the file rather than at fractions of its duration,
+# so two files of different lengths produce directly comparable sequences and
+# alignment becomes an integer shift over cached hashes instead of a per-pair
+# re-decode of one file.
+# Cadence is chosen per file from a power-of-two ladder so that a 4-second
+# clip is still sampled usefully while a 3-hour file stays bounded. Powers of
+# two specifically: two files may land on different rungs, and a coarser grid
+# is then exactly a stride of the finer one, so their samples still describe
+# the same absolute moments.
+GRID_BASE_CADENCE = 1.0
+GRID_MAX_CADENCE = 32.0
+GRID_TARGET_SAMPLES = 96
+GRID_MIN_OVERLAP = 2
+GRID_MIN_OVERLAP_RATIO = 0.5
+GRID_MAX_CONSECUTIVE_FAILURES = 3
+GRID_MISSING_SAMPLE = -1
 
 
 def resolve_binary(name_or_path: str) -> str | None:
@@ -134,18 +141,10 @@ def phash(image: Image.Image, hash_size: int = 8, highfreq_factor: int = 4) -> i
     return value
 
 
-def fingerprint_video(
-    path: Path,
-    duration: float,
-    ffmpeg: str,
-    *,
-    sample_span: float | None = None,
-    start_offset: float = 0.0,
-) -> list[int] | None:
-    span = duration if sample_span is None else min(sample_span, max(0.0, duration - start_offset))
+def fingerprint_video(path: Path, duration: float, ffmpeg: str) -> list[int] | None:
     hashes: list[int] = []
     for fraction in SAMPLE_POINTS:
-        timestamp = max(0.0, start_offset + span * fraction)
+        timestamp = max(0.0, duration * fraction)
         frame = _extract_frame(path, timestamp, ffmpeg)
         if frame is None:
             # One retry with a nudged timestamp: the original position may have
@@ -157,6 +156,153 @@ def fingerprint_video(
     if len(hashes) < math.ceil(SAMPLE_COUNT * MINIMUM_FRAME_COVERAGE):
         return None
     return hashes
+
+
+def grid_cadence(duration: float) -> float:
+    """Seconds between alignment samples for a file of this duration.
+
+    A pure function of duration, so it never has to be stored: any caller
+    holding the (cached) duration can recompute how a cached grid was laid
+    out. Doubling until the sample count is bounded keeps a 3-hour file from
+    costing hundreds of seeks while a 4-second clip still gets sampled.
+    """
+    cadence = GRID_BASE_CADENCE
+    while cadence < GRID_MAX_CADENCE and duration / cadence > GRID_TARGET_SAMPLES:
+        cadence *= 2.0
+    return cadence
+
+
+def grid_timestamps(duration: float, cadence: float) -> list[float]:
+    """Absolute sample positions: whole multiples of `cadence`.
+
+    Multiples, not midpoints, so that a grid sampled at `2 * cadence` is
+    exactly every second entry of one sampled at `cadence` - which is what
+    lets two files on different rungs of the ladder still be compared.
+    """
+    if duration <= 0.0 or cadence <= 0.0:
+        return []
+    timestamps: list[float] = []
+    timestamp = cadence
+    while timestamp < duration:
+        timestamps.append(timestamp)
+        timestamp += cadence
+    return timestamps
+
+
+def fingerprint_video_grid(path: Path, duration: float, ffmpeg: str) -> list[int] | None:
+    """Perceptual hashes on an absolute-time grid, for alignment (A-01).
+
+    Computed once per file and cached. The proportional `fingerprint_video`
+    above stays the primary cheap score; this one exists so that alignment -
+    which used to re-decode the longer file once per candidate offset per
+    *pair*, at ~11 s a pair - becomes an integer shift over cached hashes.
+
+    Failed frames are kept as `GRID_MISSING_SAMPLE` placeholders rather than
+    dropped, because dropping one would shift every later sample off the
+    absolute grid and silently misalign the whole sequence.
+    """
+    timestamps = grid_timestamps(duration, grid_cadence(duration))
+    if not timestamps:
+        return None
+    # A grid can be hundreds of samples, each costing two ffmpeg spawns when a
+    # frame fails. Give up as soon as enough samples have failed that the
+    # coverage floor is already unreachable, so an unreadable file (or a
+    # missing ffmpeg) costs a handful of spawns instead of hundreds.
+    allowed_failures = len(timestamps) - math.ceil(len(timestamps) * MINIMUM_FRAME_COVERAGE)
+    failures = 0
+    consecutive_failures = 0
+    hashes: list[int] = []
+    for timestamp in timestamps:
+        frame = _extract_frame(path, timestamp, ffmpeg)
+        if frame is None:
+            frame = _extract_frame(path, timestamp + FRAME_RETRY_NUDGE, ffmpeg)
+        if frame is None:
+            failures += 1
+            consecutive_failures += 1
+            if failures > allowed_failures or consecutive_failures > GRID_MAX_CONSECUTIVE_FAILURES:
+                LOGGER.warning("Cannot build an alignment grid for %s: too many unreadable frames", path)
+                return None
+        else:
+            consecutive_failures = 0
+        hashes.append(phash(frame) if frame is not None else GRID_MISSING_SAMPLE)
+    return hashes
+
+
+def _grid_overlap(left: list[int], right: list[int], shift: int) -> list[tuple[int, int]]:
+    """Sample pairs that overlap when `right` is shifted `shift` slots later."""
+    start = max(0, shift)
+    stop = min(len(left), len(right) + shift)
+    return [
+        (left[index], right[index - shift])
+        for index in range(start, stop)
+        if left[index] != GRID_MISSING_SAMPLE and right[index - shift] != GRID_MISSING_SAMPLE
+    ]
+
+
+def _to_common_cadence(
+    left: list[int],
+    left_duration: float,
+    right: list[int],
+    right_duration: float,
+) -> tuple[list[int], list[int], float]:
+    """Put two grids on the same cadence by striding the finer one.
+
+    Cadences come from a power-of-two ladder, so the coarser grid's samples
+    are always a subset of the finer grid's - taking every Nth entry lines
+    them back up on identical absolute timestamps.
+    """
+    left_cadence = grid_cadence(left_duration)
+    right_cadence = grid_cadence(right_duration)
+    cadence = max(left_cadence, right_cadence)
+    if left_cadence < cadence:
+        stride = int(round(cadence / left_cadence))
+        left = left[stride - 1 :: stride]
+    if right_cadence < cadence:
+        stride = int(round(cadence / right_cadence))
+        right = right[stride - 1 :: stride]
+    return left, right, cadence
+
+
+def grid_aligned_similarity(
+    left: list[int] | None,
+    right: list[int] | None,
+    left_duration: float | None,
+    right_duration: float | None,
+    max_shift: float = ALIGNMENT_MAX_SHIFT,
+) -> float:
+    """Raw-scale similarity after aligning two absolute-time grids.
+
+    Two stages, both cheap. First pick the best integer shift by mean Hamming
+    similarity - one pass per candidate shift over cached integers. Then score
+    that alignment with `ordered_sequence_similarity`, the same DP (and the
+    same coverage penalty, and therefore the same scale) the unaligned path
+    uses, over an evenly spaced subsample of the aligned overlap. Scoring the
+    winner with the DP rather than the mean matters: a plain mean loses real
+    duplicates whose frames drift slightly against the grid.
+    """
+    if not left or not right or left_duration is None or right_duration is None:
+        return 0.0
+    left, right, cadence = _to_common_cadence(left, left_duration, right, right_duration)
+    if not left or not right:
+        return 0.0
+    max_steps = max(0, int(max_shift / cadence)) if cadence > 0 else 0
+    minimum_overlap = max(GRID_MIN_OVERLAP, math.ceil(GRID_MIN_OVERLAP_RATIO * min(len(left), len(right))))
+    best_pairs: list[tuple[int, int]] = []
+    best_mean = -1.0
+    for shift in range(-max_steps, max_steps + 1):
+        overlap = _grid_overlap(left, right, shift)
+        if len(overlap) < minimum_overlap:
+            continue
+        mean = sum(hamming_similarity([a], [b]) for a, b in overlap) / len(overlap)
+        if mean > best_mean:
+            best_mean = mean
+            best_pairs = overlap
+    if not best_pairs:
+        return 0.0
+    if len(best_pairs) > SAMPLE_COUNT:
+        step = len(best_pairs) / SAMPLE_COUNT
+        best_pairs = [best_pairs[int(index * step)] for index in range(SAMPLE_COUNT)]
+    return ordered_sequence_similarity([a for a, _ in best_pairs], [b for _, b in best_pairs])
 
 
 def hamming_similarity(left: list[int], right: list[int], bits_per_hash: int = 64) -> float:
@@ -270,61 +416,33 @@ def _ensure_fingerprint(record: FileRecord, ffmpeg: str) -> tuple[str, list[int]
     return record.path_key, fingerprint_video(record.path, record.duration, ffmpeg)
 
 
-def _sweep_offsets(duration_delta: float, steps: int = ALIGNMENT_OFFSET_STEPS) -> tuple[float, ...]:
-    if steps <= 1 or duration_delta <= 0.0:
-        return (0.0,)
-    return tuple(duration_delta * index / (steps - 1) for index in range(steps))
+def _ensure_grid_fingerprint(record: FileRecord, ffmpeg: str) -> tuple[str, list[int] | None]:
+    if record.grid_fingerprint is not None:
+        return record.path_key, record.grid_fingerprint
+    if record.duration is None:
+        return record.path_key, None
+    return record.path_key, fingerprint_video_grid(record.path, record.duration, ffmpeg)
 
 
-def _duration_aligned_similarity(
-    left: FileRecord,
-    right: FileRecord,
-    ffmpeg: str,
-    cache: dict[tuple[str, float, float], list[int] | None],
-) -> float:
-    if left.duration is None or right.duration is None or left.fingerprint is None or right.fingerprint is None:
-        return 0.0
-    shorter, longer = (left, right) if left.duration <= right.duration else (right, left)
-    duration_delta = longer.duration - shorter.duration
-    if duration_delta <= 0.05:
-        return ordered_sequence_similarity(left.fingerprint, right.fingerprint)
+def video_similarity(left: FileRecord, right: FileRecord) -> float:
+    """Raw-scale similarity for a pair, using the cached alignment grid when
+    both records have one.
 
-    # Extra content is not always entirely at the start or entirely at the
-    # end (a trimmed intro plus a trimmed outro, for example) - a fixed pair
-    # of offsets misses that. Sweep a small, bounded number of offsets across
-    # the gap instead so a mid-timeline shift has a chance to align (F-27).
-    best = 0.0
-    for start_offset in _sweep_offsets(duration_delta):
-        key = (longer.path_key, round(shorter.duration, 3), round(start_offset, 3))
-        if key not in cache:
-            cache[key] = fingerprint_video(
-                longer.path,
-                longer.duration,
-                ffmpeg,
-                sample_span=shorter.duration,
-                start_offset=start_offset,
-            )
-        aligned = cache[key]
-        if aligned:
-            best = max(best, ordered_sequence_similarity(shorter.fingerprint, aligned))
-    return best
-
-
-def video_similarity(
-    left: FileRecord,
-    right: FileRecord,
-    ffmpeg: str,
-    aligned_cache: dict[tuple[str, float, float], list[int] | None] | None = None,
-) -> float:
+    Takes no `ffmpeg` argument any more: alignment no longer decodes anything
+    at pair time (A-01). Callers that want alignment must populate
+    `grid_fingerprint` first - `find_video_matches` does this in a parallel
+    stage, and the benchmark tool does it per pair.
+    """
     if left.fingerprint is None or right.fingerprint is None:
         return 0.0
     similarity = ordered_sequence_similarity(left.fingerprint, right.fingerprint)
-    if left.duration is not None and right.duration is not None and abs(left.duration - right.duration) > 0.05:
-        similarity = max(
-            similarity,
-            _duration_aligned_similarity(left, right, ffmpeg, aligned_cache if aligned_cache is not None else {}),
-        )
-    return similarity
+    aligned = grid_aligned_similarity(
+        left.grid_fingerprint,
+        right.grid_fingerprint,
+        left.duration,
+        right.duration,
+    )
+    return max(similarity, aligned)
 
 
 def find_video_matches(
@@ -334,7 +452,6 @@ def find_video_matches(
     ffmpeg: str,
     ffprobe: str,
     workers: int = 2,
-    duration_tolerance: float = 2.0,
     max_duration_ratio: float = DEFAULT_MAX_DURATION_RATIO,
     max_duration_delta: float = DEFAULT_MAX_DURATION_DELTA,
 ) -> list[VideoMatch]:
@@ -375,6 +492,27 @@ def find_video_matches(
                 len(missing_fingerprint),
             )
 
+    # Alignment grids, computed once per file and cached forever (A-01).
+    # This is the whole reason alignment is affordable: it moves the ffmpeg
+    # cost from "once per candidate offset per pair, every scan" to "once per
+    # file, ever".
+    missing_grid = [
+        record
+        for record in records
+        if record.duration is not None and record.fingerprint and not record.grid_fingerprint
+    ]
+    if missing_grid:
+        with cancellable_executor(workers) as executor:
+            futures = {executor.submit(_ensure_grid_fingerprint, record, ffmpeg): record for record in missing_grid}
+            for future in tqdm(as_completed(futures), total=len(futures), desc="Video alignment grids", unit="file"):
+                record = futures[future]
+                _, grid = future.result()
+                if grid:
+                    record.grid_fingerprint = grid
+                    record.grid_fingerprint_version = GRID_FINGERPRINT_VERSION
+                    cache.upsert_file(record)
+        cache.conn.commit()
+
     # Sort by duration and sweep forward from each record: ratio and delta to
     # a later (equal-or-longer) candidate only ever grow as duration
     # increases, so compatibility can only go True -> False along this
@@ -388,10 +526,12 @@ def find_video_matches(
     )
 
     matches: list[VideoMatch] = []
-    aligned_fingerprints: dict[tuple[str, float, float], list[int] | None] = {}
-    for left_index, left in enumerate(candidates):
-        check_cancelled()
+    for left_index, left in enumerate(tqdm(candidates, desc="Video matching", unit="file")):
         for right in candidates[left_index + 1 :]:
+            # Checked per pair, not per outer record: an outer iteration can
+            # span hundreds of pairs, and a cancelled scan must not have to
+            # wait for all of them (A-05).
+            check_cancelled()
             if not video_durations_compatible(
                 left.duration,  # type: ignore[arg-type]
                 right.duration,  # type: ignore[arg-type]
@@ -403,16 +543,14 @@ def find_video_matches(
                 continue
             pair = tuple(sorted((left.path_key, right.path_key)))
             delta = abs(left.duration - right.duration)  # type: ignore[operator]
-            similarity = ordered_sequence_similarity(left.fingerprint, right.fingerprint)  # type: ignore[arg-type]
-            # Recheck whenever the raw score clears the (lowered) noise floor,
-            # independent of `threshold` (F-25). The floor used to be 65, which a
-            # real-anime corpus showed was well above where genuine duplicates
-            # actually land pre-alignment (measured min 53.1) - so it was
-            # rejecting real matches outright, not just filtering noise. It is
-            # now ALIGNMENT_RECHECK_FLOOR, set far below that whole band; see its
-            # definition for why no higher raw-score threshold would be safe.
-            if ALIGNMENT_RECHECK_FLOOR <= similarity and 0.05 < delta <= ALIGNMENT_RECHECK_MAX_DELTA:
-                similarity = video_similarity(left, right, ffmpeg, aligned_fingerprints)
+            # Alignment now runs for every compatible pair, with no score
+            # floor and no duration-delta gate: on cached grids it costs about
+            # a millisecond, so the circuit-breakers those gates provided are
+            # no longer worth the recall they cost (A-01). It is also the
+            # matcher's strongest discriminator - on the real library, true
+            # duplicates gain up to +76 points from it while confirmed
+            # unrelated pairs gain exactly zero (A-02).
+            similarity = video_similarity(left, right)
             if raw_threshold <= similarity:
                 calibrated = calibrate_similarity(similarity)
                 matches.append(VideoMatch(pair[0], pair[1], round(calibrated, 2), round(delta, 3)))

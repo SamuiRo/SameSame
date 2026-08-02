@@ -28,24 +28,57 @@ This is applied to the video, image (structure component only - the color
 component is a direct RGB distance with no noise floor and is left alone),
 and audio similarity scores wherever they are reported or compared against a
 user-supplied threshold. It is *not* applied to internal raw-scale
-comparisons that need to tell a genuinely degenerate score (e.g. exactly
-`0.0`, common in mocked tests) apart from a merely muddy real one (raw
-51-56 is common for confirmed real duplicates) - both collapse to the same
-clamped `0` after calibration, so `find_video_matches`'s
-`ALIGNMENT_RECHECK_FLOOR` circuit-breaker stays on the raw scale internally.
-See `calibrate_similarity`'s docstring for the full reasoning.
+comparisons: `find_video_matches` decalibrates the incoming threshold once
+and does all of its comparisons on the raw scale, calibrating only the final
+score. See `calibrate_similarity`'s docstring for the full reasoning.
+
+One caveat on the image path (A-06): calibration is applied to the structure
+term *before* it is blended with the colour term, so `image_threshold=80` is
+**not** equivalent to the old `90`. In old-scale terms the condition changed
+from `0.8·S + 0.2·C >= 90` to `0.8·S + 0.1·C >= 80` - the colour term now
+carries half the weight relative to the bar. The number is unchanged pending
+real image evidence, but it should be re-derived rather than assumed to
+preserve the old behaviour.
 
 No fingerprint version bump was needed for this change: the stored
 fingerprint bytes (the phash/Chromaprint values themselves) are unaffected;
 only the comparison math changed, and comparisons are computed fresh, never
 cached.
 
+## How video alignment works (A-01)
+
+Two fingerprints are stored per video, for different jobs:
+
+| | Sampling | Size | Used for |
+| --- | --- | ---: | --- |
+| `fingerprint` | 15 frames at fixed *fractions* of the duration | 15 hashes | the cheap first-pass score |
+| `grid_fingerprint` | one frame every `grid_cadence(duration)` seconds of *absolute* time | ~60-100 hashes | alignment |
+
+Because grid samples sit at absolute offsets, the same moment of the same
+content lands on the same index in both files, so aligning two videos is an
+integer shift over cached hashes - no decoding at pair time. Cadence comes
+from a power-of-two ladder (1s to 32s), so two files that land on different
+rungs still compare: the coarser grid is exactly a stride of the finer one.
+
+Alignment therefore runs for **every** duration-compatible pair, with no
+score floor and no duration-delta gate. It is the matcher's strongest
+discriminator: on the real library, true duplicates gain up to +76 points
+from it while confirmed unrelated pairs gain zero.
+
+Measured on the 276-video / 97.5 GB library:
+
+| | Before (1.8.0) | After (1.9.0) |
+| --- | ---: | ---: |
+| Alignment cost per pair | 10.3-12.3 s | ~1.3 ms |
+| Full scan, cold cache | ~39 hours | **17 minutes** |
+| Full scan, warm cache | ~39 hours (nothing cached) | **32 seconds** |
+
 ## Current defaults and how they were chosen
 
 | Media | Default (calibrated) | How it was derived |
 | --- | ---: | --- |
-| `video_threshold` | `15.0` | **Evidence-derived** from a 76-pair real, user-confirmed corpus (`docs/threshold-real-manifest.json`, local/gitignored - see `docs/AUDIT-1.7.0.md`'s 2026-08-01 updates). The corpus's own best-fit threshold is `13.86` (52/61 = 85% recall, 0 false positives across all 15 confirmed negatives); `15.0` adds a small safety margin above the worst confirmed negative (`12.51` calibrated) at the cost of 2 fewer true positives (50/61 = 82% recall). Raise it toward `13.9` for maximum recall on content similar to the corpus, or lower it further only with new evidence that the negative ceiling is actually higher than `12.51`. |
-| `image_threshold` | `80.0` | `calibrate_similarity(90)` - preserves the exact pre-F-24 practical strictness. The real corpus has only one confirmed image pair so far (a poster duplicate, scoring far above this bar); there isn't yet comparable evidence to justify moving this bar the way `video_threshold` was moved. |
+| `video_threshold` | `20.0` | **Evidence-derived from a full library scan** (A-02): all 22 849 duration-compatible pairs of a real 276-video library, with alignment on. The earlier `15.0` came from a 76-pair curated corpus and does not survive library scale - a real scan compares three orders of magnitude more unrelated pairs, and the 15-19 band turned out to be dominated by cross-title false positives (highest observed: `19.21`, two unrelated titles). Everything at `20.0` and above inspected as a genuine duplicate. The cost is two known true positives that score `15.25` and `19.08`; recovering them needs better descriptors (F-30), not a lower bar. |
+| `image_threshold` | `80.0` | `calibrate_similarity(90)`, kept unchanged - but see the caveat above: this is *not* equivalent to the pre-F-24 `90`, and no comparable real image evidence exists yet to re-derive it. The real corpus has only one confirmed image pair (a poster duplicate, scoring far above this bar). |
 | `audio_threshold` | `88.0` | `calibrate_similarity(94)` - same reasoning as `image_threshold`: preserved, not re-derived, pending real audio corpus evidence. |
 
 `folder_threshold` and `name_threshold` are **not** affected by F-24: they

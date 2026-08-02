@@ -5,6 +5,11 @@ from pathlib import Path
 from typing import Any
 
 VIDEO_FINGERPRINT_VERSION = 3
+# Absolute-time alignment grid (A-01). Versioned separately from the
+# proportional fingerprint above because the two are sampled differently and
+# invalidate for different reasons: bump this when the cadence or the sample
+# layout changes, not when the proportional fingerprint does.
+GRID_FINGERPRINT_VERSION = 1
 
 
 @dataclass(slots=True)
@@ -21,6 +26,8 @@ class FileRecord:
     duration: float | None = None
     fingerprint: list[int] | None = None
     fingerprint_version: int | None = None
+    grid_fingerprint: list[int] | None = None
+    grid_fingerprint_version: int | None = None
     image_fingerprint: list[int] | None = None
     audio_fingerprint: list[int] | None = None
 

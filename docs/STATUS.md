@@ -1,20 +1,41 @@
 # Project Status and Roadmap
 
-Last updated: 2026-07-31
+Last updated: 2026-08-02
 
 This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.7.8`. Stages A through E, and Stage F
+The current package version is `1.9.0`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
-Notably: similar-match results are grouped into transitive clusters instead
-of pairs (F-23), scans and folder consolidation batches actually stop when
-cancelled (F-02, F-12), `anthropic` is an optional `ai` extra (F-19), folder
-comparison runs per-directory (F-16), the desktop GUI remembers scan
-settings via `QSettings` (F-18), and the HTML report is English-only with a
-search/filter box (F-20).
+
+**Start here if you are picking this up fresh: `docs/AUDIT-1.8.0.md`.** That
+audit measured the 1.8.0 matcher against the real 276-video test library
+(`S:\Daedalus\Kiroku\TestLib`) and found that a full scan would have taken
+**~39 hours**, because F-25's lowered alignment floor and F-27's five
+offsets together made the expensive alignment recheck fire on essentially
+every duration-compatible pair, uncached. 1.9.0 fixes that (A-01) by
+sampling each video once on an absolute-time grid, caching it, and aligning
+by integer shifts over cached hashes:
+
+| | 1.8.0 | 1.9.0 |
+| --- | ---: | ---: |
+| Alignment cost per pair | 10.3-12.3 s | ~1.3 ms |
+| Full library scan, cold cache | ~39 hours | **17 minutes** |
+| Full library scan, warm cache | ~39 hours | **32 seconds** |
+
+`video_threshold` moved `15.0` → `20.0` as part of the same work, this time
+derived from all 22 849 compatible pairs of the real library rather than
+from 76 curated pairs (A-02). The 15-19 band turned out to be dominated by
+cross-title false positives, including different episodes of the same show.
+
+From the earlier `1.7.0` audit: similar-match results are grouped into
+transitive clusters instead of pairs (F-23), scans and folder consolidation
+batches actually stop when cancelled (F-02, F-12), `anthropic` is an optional
+`ai` extra (F-19), folder comparison runs per-directory (F-16), the desktop
+GUI remembers scan settings via `QSettings` (F-18), and the HTML report is
+English-only with a search/filter box (F-20).
 
 A real, user-confirmed labelled corpus exists at
 `docs/threshold-real-manifest.json` (76 video/image pairs across roughly 20
@@ -31,15 +52,14 @@ is now a *calibrated* confidence (`0` = indistinguishable from unrelated
 content, `100` = identical) instead of a raw Hamming-based percentage with a
 ~50% noise floor — see `docs/THRESHOLDS.md` for the full explanation and
 migration notes. Defaults changed accordingly: `video_threshold` `85` → `15`
-(evidence-derived from the real corpus), `image_threshold` `90` → `80`,
-`audio_threshold` `94` → `88` (both scale-preserving pending comparable real
-evidence for those media types). At the evidence-derived video threshold the
-corpus reaches **52/61 confirmed matches (85%) with 0 false positives**
-across all 15 confirmed negatives — a recall percentage that held stable as
-the corpus tripled in size during Stage C's corpus-building work, evidence
-it reflects the matcher's real behavior rather than sampling luck. The
-shipped default (`15.0`) trades 2 of those true positives for extra safety
-margin above the corpus's worst confirmed negative.
+→ `20` (see below), `image_threshold` `90` → `80`, `audio_threshold` `94` →
+`88` (both pending comparable real evidence for those media types; note
+A-06: the image number is *not* scale-preserving the way it was originally
+documented). At `15.0` the 76-pair corpus reached **52/61 confirmed matches
+(85%) with 0 false positives on that corpus** — but A-02 showed that result
+does not transfer to a library scan, which compares three orders of
+magnitude more unrelated pairs and does produce false positives at `15.0`.
+The shipped default is now `20.0`, derived from the full library.
 
 The remaining 9 misses (7 muddy + 2 duration-gated) concentrate in a small,
 named set of titles/episodes — a **descriptor** ceiling (F-30, not yet
@@ -59,7 +79,12 @@ Implemented:
 - exact duplicate detection for every explicitly included file extension using
   partial and full hashes;
 - video similarity using 15 sampled ffmpeg frames and perceptual hashes;
-- start/end-aligned video resampling for small duration differences;
+- a second, absolute-time alignment grid per video (one frame every 1-32s
+  depending on duration), cached in SQLite and versioned separately, so
+  time-shifted duplicates align by integer offset over cached hashes instead
+  of re-decoding a file per candidate offset per pair;
+- alignment applied to every duration-compatible pair, with no score floor
+  and no duration-delta gate, at about a millisecond per pair;
 - versioned video fingerprints with monotonic sequence alignment;
 - ratio/delta duration gating that permits ordinary alternate cuts while
   excluding single episodes from multi-episode compilations;
@@ -220,7 +245,7 @@ clean and a documented 37-error `mypy` baseline.
 - Python compilation, JSON config parsing, cache migration, CLI startup, and
   `git diff --check` pass.
 - Package builds produce both the `samesame-1.7.0` source archive and
-  universal wheel (current package version: `1.7.5`).
+  universal wheel (current package version: `1.9.0`).
 - A recursive CLI test confirms that a resized/recompressed JPEG in a nested
   folder matches its PNG source and appears in HTML/JSON and folder clusters.
 - Candidate blocking was checked against generated passing pairs without
@@ -232,10 +257,13 @@ clean and a documented 37-error `mypy` baseline.
 - The local 25-pair real video manifest measures 5/15 content-backed positives
   and 0/10 false positives at 85%; weaker same-title variants remain review
   hints, and the compilation pair is duration-gated.
-- A full 59-file real collection scan completes in about 20 seconds on the
-  warmed cache, yielding 9 video matches and 7 contextual name hints without
-  merging three differently-numbered seasons of the same show or the
-  compilation pair.
+- A full 276-video / 97.5 GB real library scan (`S:\Daedalus\Kiroku\TestLib`)
+  completes in **17 minutes cold** and **32 seconds warm** on 4 workers,
+  yielding 105 video matches, 14 exact groups, and 53 folder pairs at the
+  `20.0` default. The pre-1.9.0 matcher would have needed ~39 hours for the
+  same scan (`docs/AUDIT-1.8.0.md`, A-01). This supersedes the earlier
+  "59-file collection in about 20 seconds" note, which predated the
+  alignment work entirely.
 
 ## Development Environment
 
@@ -288,17 +316,22 @@ Deferred matching and advanced encoding ideas remain in `docs/ROADMAP.md`.
 
 Ongoing matching work remains evidence-driven:
 
-- add representative labeled pairs, especially hard negatives and low-texture
-  video variants — a real labelled anime corpus is still needed before F-24
-  (similarity scale recalibration), F-27 (absolute-time sampling grid), or
-  F-30 (descriptor investigation) in `docs/AUDIT-1.7.0.md` can be attempted;
+- F-24 (similarity rescale) and F-27 (absolute-time sampling grid) are both
+  done — the grid landed properly in 1.9.0 as A-01. F-30 (descriptor
+  investigation) is the remaining detection-quality item, and it is now the
+  only thing standing between the matcher and the last known misses: two
+  confirmed duplicates in the real library score `15.25` and `19.08` even
+  with alignment, below the evidence-derived `20.0` bar;
+- re-derive `image_threshold` on real image evidence (A-06): the current
+  `80.0` is not the scale-preserving equivalent of the old `90` it was
+  documented as;
 - improve alternate-cut hints without weakening content-backed matching;
 - keep episode-in-compilation segment matching and crop/rotation-resistant
   image matching as separately scoped future features.
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.7.5`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.9.0`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:
@@ -313,18 +346,29 @@ Check the working tree before continuing and preserve any user changes that are
 present. Start deferred features only after the service, GUI/action, and full
 FFmpeg/transcode integration suites remain green.
 
-The closed `1.6.6` safety review is recorded in `docs/AUDIT.md`. The current
-forward-looking `1.7.0` audit — findings, fixes, regression coverage, and
-residual/open items (Stage C's corpus-dependent detection-quality work) — is
-recorded in `docs/AUDIT-1.7.0.md`.
+The closed `1.6.6` safety review is recorded in `docs/AUDIT.md`. The `1.7.0`
+audit — findings, fixes, regression coverage, and residual/open items — is in
+`docs/AUDIT-1.7.0.md`. **The current audit is `docs/AUDIT-1.8.0.md`**: it
+measured 1.8.0 against the real library, and its Critical and High items
+(A-01 through A-05) plus A-07/A-08/A-09/A-11 are fixed in 1.9.0. A-06
+(re-derive `image_threshold`) and A-12's cosmetic half (validate restored
+collection roots) remain open.
+
+A lesson worth carrying forward from that audit: every Critical finding in
+it existed because detection changes had been validated on curated pairs and
+a fast synthetic suite, never on a full library run. Both matter, and only
+the second one catches cost and base-rate problems.
 
 ## Suggested Prompt for a New Chat
 
 ```text
 Read README.md, docs/USAGE.md, docs/CONFIG.md, docs/STATUS.md,
-docs/AUDIT-1.7.0.md, docs/ROADMAP.md, and docs/ANIME_ENCODING_PRESETS.md.
-Inspect and preserve any existing working-tree changes. Verify the test suite,
-then choose one separately scoped deferred item from docs/AUDIT-1.7.0.md
-(Stage F, or Stage C once a real corpus exists) or docs/ROADMAP.md while
-keeping the existing source-protection rules intact.
+docs/AUDIT-1.8.0.md, docs/AUDIT-1.7.0.md, docs/ROADMAP.md, and
+docs/ANIME_ENCODING_PRESETS.md. Inspect and preserve any existing
+working-tree changes. Verify the test suite, then choose one separately
+scoped deferred item from docs/AUDIT-1.8.0.md (A-06 or A-12),
+docs/AUDIT-1.7.0.md (F-30), or docs/ROADMAP.md, while keeping the existing
+source-protection rules intact. Any change to detection quality or matching
+cost must be validated with a full scan of the real library, not only with
+the test suite.
 ```

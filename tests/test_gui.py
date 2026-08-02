@@ -70,7 +70,57 @@ class GuiSmokeTests(unittest.TestCase):
         QSettings.setDefaultFormat(QSettings.Format.IniFormat)
 
     def tearDown(self) -> None:
+        from PySide6.QtCore import QSettings
+
+        # Both of these are process-global Qt state. Leaving them pointing at
+        # a deleted temporary directory would silently affect anything that
+        # constructs QSettings later in the same process (A-12).
+        QSettings.setDefaultFormat(QSettings.Format.NativeFormat)
+        QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, "")
         self._settings_dir.cleanup()
+
+    def test_thresholds_from_an_older_schema_are_not_restored(self) -> None:
+        # A-03: 1.7.8/1.7.9 stored thresholds on the pre-F-24 raw scale. If
+        # 85 came back on today's calibrated scale, video matching would find
+        # nothing and never say why - so an older schema must fall back to
+        # current defaults. Everything else still restores.
+        from PySide6.QtCore import QSettings
+
+        from dedupe.gui.main_window import MainWindow
+
+        settings = QSettings()
+        settings.beginGroup("scan")
+        settings.setValue("video_threshold", 85.0)
+        settings.setValue("image_threshold", 90.0)
+        settings.setValue("audio_threshold", 94.0)
+        settings.setValue("workers", 7)
+        settings.endGroup()
+        settings.sync()
+
+        window = MainWindow()
+        try:
+            self.assertNotEqual(window.video_threshold.value(), 85.0)
+            self.assertNotEqual(window.image_threshold.value(), 90.0)
+            self.assertNotEqual(window.audio_threshold.value(), 94.0)
+            self.assertEqual(window.workers.value(), 7)
+        finally:
+            window.close()
+            self.application.processEvents()
+
+        # Saved by the current version, the same values now survive a reopen.
+        reopened = MainWindow()
+        try:
+            reopened.video_threshold.setValue(42.0)
+        finally:
+            reopened.close()
+            self.application.processEvents()
+
+        final = MainWindow()
+        try:
+            self.assertEqual(final.video_threshold.value(), 42.0)
+        finally:
+            final.close()
+            self.application.processEvents()
 
     def test_main_window_constructs_with_all_filters(self) -> None:
         from dedupe.gui.main_window import MainWindow

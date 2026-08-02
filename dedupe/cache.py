@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .db import connect
-from .models import VIDEO_FINGERPRINT_VERSION, FileRecord, NormalizedName
+from .models import GRID_FINGERPRINT_VERSION, VIDEO_FINGERPRINT_VERSION, FileRecord, NormalizedName
 
 
 class Cache:
@@ -41,6 +41,8 @@ class Cache:
                 duration REAL,
                 fingerprint TEXT,
                 fingerprint_version INTEGER,
+                grid_fingerprint TEXT,
+                grid_fingerprint_version INTEGER,
                 image_fingerprint TEXT,
                 audio_fingerprint TEXT,
                 raw_name TEXT NOT NULL
@@ -67,6 +69,8 @@ class Cache:
         self._ensure_column("files", "image_fingerprint", "TEXT")
         self._ensure_column("files", "audio_fingerprint", "TEXT")
         self._ensure_column("files", "fingerprint_version", "INTEGER")
+        self._ensure_column("files", "grid_fingerprint", "TEXT")
+        self._ensure_column("files", "grid_fingerprint_version", "INTEGER")
         self._ensure_column("name_cache", "provider", "TEXT")
         self._ensure_column("name_cache", "model", "TEXT")
         self._ensure_column("name_cache", "prompt_hash", "TEXT")
@@ -98,6 +102,12 @@ class Cache:
             if row["fingerprint"] and record.fingerprint_version == VIDEO_FINGERPRINT_VERSION
             else None
         )
+        record.grid_fingerprint_version = row["grid_fingerprint_version"]
+        record.grid_fingerprint = (
+            json.loads(row["grid_fingerprint"])
+            if row["grid_fingerprint"] and record.grid_fingerprint_version == GRID_FINGERPRINT_VERSION
+            else None
+        )
         record.image_fingerprint = json.loads(row["image_fingerprint"]) if row["image_fingerprint"] else None
         record.audio_fingerprint = json.loads(row["audio_fingerprint"]) if row["audio_fingerprint"] else None
         record.raw_name = row["raw_name"]
@@ -108,10 +118,10 @@ class Cache:
             """
             INSERT INTO files(
                 path, size, mtime, partial_hash, partial_hash_algo, full_hash,
-                full_hash_algo, duration, fingerprint, fingerprint_version, image_fingerprint,
-                audio_fingerprint, raw_name
+                full_hash_algo, duration, fingerprint, fingerprint_version, grid_fingerprint,
+                grid_fingerprint_version, image_fingerprint, audio_fingerprint, raw_name
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
                 size = excluded.size,
                 mtime = excluded.mtime,
@@ -122,6 +132,8 @@ class Cache:
                 duration = excluded.duration,
                 fingerprint = excluded.fingerprint,
                 fingerprint_version = excluded.fingerprint_version,
+                grid_fingerprint = excluded.grid_fingerprint,
+                grid_fingerprint_version = excluded.grid_fingerprint_version,
                 image_fingerprint = excluded.image_fingerprint,
                 audio_fingerprint = excluded.audio_fingerprint,
                 raw_name = excluded.raw_name
@@ -137,6 +149,8 @@ class Cache:
                 record.duration,
                 json.dumps(record.fingerprint) if record.fingerprint is not None else None,
                 record.fingerprint_version,
+                json.dumps(record.grid_fingerprint) if record.grid_fingerprint is not None else None,
+                record.grid_fingerprint_version,
                 json.dumps(record.image_fingerprint) if record.image_fingerprint is not None else None,
                 json.dumps(record.audio_fingerprint) if record.audio_fingerprint is not None else None,
                 record.raw_name,
@@ -167,8 +181,11 @@ class Cache:
             record.duration = None
             record.fingerprint = None
             record.fingerprint_version = None
+            record.grid_fingerprint = None
+            record.grid_fingerprint_version = None
         self.conn.executemany(
-            "UPDATE files SET duration = NULL, fingerprint = NULL, fingerprint_version = NULL WHERE path = ?",
+            "UPDATE files SET duration = NULL, fingerprint = NULL, fingerprint_version = NULL,"
+            " grid_fingerprint = NULL, grid_fingerprint_version = NULL WHERE path = ?",
             [(path,) for path in paths],
         )
         self.conn.commit()

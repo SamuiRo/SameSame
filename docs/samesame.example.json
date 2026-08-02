@@ -8,7 +8,7 @@
     "path": ".cache/samesame.sqlite3"
   },
   "matching": {
-    "video": 15,
+    "video": 20,
     "image": 80,
     "audio": 88,
     "folder": 50,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sqlite3
 import subprocess
@@ -30,9 +31,14 @@ from dedupe.name_normalizer import (
 from dedupe.report import report_to_dict, write_html_report, write_json_report
 from dedupe.scanner import scan_folders
 from dedupe.video_fingerprint import (
+    GRID_MAX_CADENCE,
     SAMPLE_COUNT,
     find_video_matches,
     fingerprint_video,
+    fingerprint_video_grid,
+    grid_aligned_similarity,
+    grid_cadence,
+    grid_timestamps,
     ordered_sequence_similarity,
     video_durations_compatible,
 )
@@ -656,6 +662,55 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(len(matches), 1)
             self.assertEqual(matches[0].similarity, 100.0)
 
+    def test_grid_cadence_stays_on_a_power_of_two_ladder(self) -> None:
+        # A-01: two files on different rungs must still describe the same
+        # absolute moments, which only holds if every cadence divides every
+        # coarser one - i.e. powers of two, and nothing above the cap.
+        for duration in (4.0, 60.0, 600.0, 1109.0, 3406.0, 36000.0):
+            cadence = grid_cadence(duration)
+            self.assertLessEqual(cadence, GRID_MAX_CADENCE)
+            self.assertEqual(cadence, 2 ** round(math.log2(cadence)))
+
+    def test_coarse_grid_is_a_stride_of_a_finer_one(self) -> None:
+        # A-01: the property the whole cross-cadence comparison rests on -
+        # sampling at 2c must land on exactly every second sample of c.
+        fine = grid_timestamps(600.0, 8.0)
+        coarse = grid_timestamps(600.0, 16.0)
+        self.assertEqual(coarse, fine[1::2])
+
+    def test_grid_alignment_recovers_a_shifted_duplicate(self) -> None:
+        # A-01: the same content offset in time must align. `right` is `left`
+        # shifted three slots later, with different content in the gap.
+        content = [index * 0x0101010101010101 for index in range(1, 40)]
+        left = content
+        right = [0xFFFFFFFFFFFFFFFF, 0xF0F0F0F0F0F0F0F0, 0x0F0F0F0F0F0F0F0F, *content]
+        duration = 40.0
+        self.assertGreaterEqual(grid_aligned_similarity(left, right, duration, duration + 3.0), 99.0)
+
+    def test_grid_alignment_ignores_missing_samples_without_shifting(self) -> None:
+        # A-01: a failed frame is a placeholder, not a gap - dropping it would
+        # move every later sample off the absolute grid.
+        content = [index * 0x0101010101010101 for index in range(1, 40)]
+        damaged = list(content)
+        damaged[5] = -1
+        damaged[17] = -1
+        self.assertGreaterEqual(grid_aligned_similarity(content, damaged, 40.0, 40.0), 99.0)
+
+    def test_grid_fingerprint_gives_up_on_an_unreadable_file(self) -> None:
+        # A-01: a grid can be hundreds of samples and each failure costs two
+        # ffmpeg spawns, so an unreadable file must not probe the whole file.
+        attempts = 0
+
+        def fake_extract(path: Path, timestamp: float, ffmpeg: str) -> None:
+            nonlocal attempts
+            attempts += 1
+            return None
+
+        with patch("dedupe.video_fingerprint._extract_frame", side_effect=fake_extract):
+            self.assertIsNone(fingerprint_video_grid(Path("broken.mkv"), 600.0, "ffmpeg"))
+
+        self.assertLessEqual(attempts, 10)
+
     def test_video_sequence_similarity_tolerates_inserted_samples(self) -> None:
         source = [index << 56 for index in range(15)]
         edited = source[:7] + [(1 << 64) - 1, (1 << 64) - 2] + source[7:]
@@ -682,7 +737,9 @@ class CoreTests(unittest.TestCase):
             ]
             with Cache(base / "cache.sqlite3") as cache:
                 cache.upsert_files(records)
-                with patch("dedupe.video_fingerprint.fingerprint_video", return_value=[0] * 5):
+                # A-01: alignment reads a cached absolute-time grid instead of
+                # re-fingerprinting the longer file per candidate offset.
+                with patch("dedupe.video_fingerprint.fingerprint_video_grid", return_value=[0] * 60):
                     matches = find_video_matches(
                         records,
                         cache,
@@ -697,11 +754,11 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(matches[0].duration_delta, 1.0)
 
     def test_alignment_recheck_still_fires_at_a_low_threshold(self) -> None:
-        # Regression for F-25: ALIGNMENT_RECHECK_FLOOR (65) combined with a
-        # `< threshold` upper bound made the recheck unreachable whenever
-        # threshold <= 65 - exactly the range users fall back to after a real
-        # duplicate goes missing. Raw similarity here is ~75% (>= the floor);
-        # with threshold=50 the buggy guard `65 <= 75 < 50` was always False.
+        # Regression for F-25: a score floor combined with a `< threshold`
+        # upper bound made the recheck unreachable whenever threshold was low -
+        # exactly the range users fall back to after a real duplicate goes
+        # missing. A-01 removed the floor entirely (alignment is now cheap
+        # enough to always run), so this must hold at any threshold.
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             records = [
@@ -718,7 +775,7 @@ class CoreTests(unittest.TestCase):
             ]
             with Cache(base / "cache.sqlite3") as cache:
                 cache.upsert_files(records)
-                with patch("dedupe.video_fingerprint.fingerprint_video", return_value=[0] * 5):
+                with patch("dedupe.video_fingerprint.fingerprint_video_grid", return_value=[0] * 60):
                     matches = find_video_matches(
                         records,
                         cache,
@@ -811,7 +868,13 @@ class CoreTests(unittest.TestCase):
 
             with Cache(base / "cache.sqlite3") as cache:
                 cache.upsert_files(records)
-                with patch("dedupe.video_fingerprint.ordered_sequence_similarity", return_value=0.0) as mock_similarity:
+                # These records point at paths that do not exist; this test is
+                # about pair generation, so skip grid building entirely rather
+                # than let 100 files probe a non-existent ffmpeg.
+                with (
+                    patch("dedupe.video_fingerprint.fingerprint_video_grid", return_value=None),
+                    patch("dedupe.video_fingerprint.ordered_sequence_similarity", return_value=0.0) as mock_similarity,
+                ):
                     find_video_matches(records, cache, threshold=200, ffmpeg="unused", ffprobe="unused", workers=1)
 
             self.assertEqual(mock_similarity.call_count, expected_pairs)

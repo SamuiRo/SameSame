@@ -9,7 +9,7 @@ SameSame reads settings from three places, in this order:
 CLI flags always win over the config file. This means you can keep a stable
 project config and override only one value for a specific run.
 
-This page documents the scanner configuration available in SameSame `1.7.5`.
+This page documents the scanner configuration available in SameSame `1.9.0`.
 Desktop UI state, quarantine location, review decisions, and operation history
 are managed by the GUI and its journal rather than scanner config keys. Anime
 transcoding settings are not scanner configuration keys; use the independent
@@ -47,7 +47,7 @@ python dedupe.py --config samesame.json
   "json_output": "reports/samesame.json",
   "cache": ".cache/samesame.sqlite3",
   "extensions": [".mkv", ".mp4", ".jpg", ".jpeg", ".png", ".webp", ".mp3", ".flac"],
-  "video_threshold": 15,
+  "video_threshold": 20,
   "image_threshold": 80,
   "audio_threshold": 88,
   "folder_threshold": 50,
@@ -88,7 +88,7 @@ For readability, these nested sections are also supported:
     "path": ".cache/samesame.sqlite3"
   },
   "matching": {
-    "video": 15,
+    "video": 20,
     "image": 80,
     "audio": 88,
     "folder": 50,
@@ -227,7 +227,7 @@ $env:LMSTUDIO_MODEL = "qwen2.5-7b-instruct"
 | `json_output` | `report.json` | Machine-readable JSON report path. |
 | `cache` | `.dedupe_cache.sqlite3` | SQLite cache path. |
 | `extensions` | common video, image, and audio extensions | File extensions to scan; a custom list replaces the defaults. |
-| `video_threshold` | `15` | Minimum sequence-aligned video fingerprint match confidence; finite `0`–`100`. Calibrated scale: `0` = indistinguishable from unrelated content, `100` = identical (F-24) — not a naive "percent similar." See `docs/THRESHOLDS.md`. |
+| `video_threshold` | `20` | Minimum sequence-aligned video fingerprint match confidence; finite `0`–`100`. Calibrated scale: `0` = indistinguishable from unrelated content, `100` = identical (F-24) — not a naive "percent similar." See `docs/THRESHOLDS.md`. |
 | `image_threshold` | `80` | Minimum perceptual image match confidence; finite `0`–`100`. Same calibrated scale as `video_threshold`. |
 | `audio_threshold` | `88` | Minimum Chromaprint audio match confidence; finite `0`–`100`. Same calibrated scale as `video_threshold`. |
 | `folder_threshold` | `50` | Minimum folder Jaccard similarity percent; finite `0`–`100`. Applies to both the directory-level comparison (default) and the collection-root roll-up (F-16). |

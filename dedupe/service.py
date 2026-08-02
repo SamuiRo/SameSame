@@ -102,7 +102,7 @@ class ScanOptions:
     cache: Path = Path(".dedupe_cache.sqlite3")
     extensions: set[str] = field(default_factory=lambda: normalize_extensions(None))
     # Calibrated scale (F-24) - see dedupe/cli.py's DEFAULT_CONFIG comment.
-    video_threshold: float = 15.0
+    video_threshold: float = 20.0
     image_threshold: float = 80.0
     audio_threshold: float = 88.0
     folder_threshold: float = 50.0
@@ -408,13 +408,21 @@ class ScanService:
                     # catch e.g. two differently-named season folders directly.
                     # The coarser collection-root comparison is kept as an
                     # additional roll-up rather than the only view (F-16).
-                    folder_pairs = folder_pairs + compare_folders(
-                        records,
-                        assignments,
-                        threshold=config.folder_threshold,
-                        key=lambda record: record.root_key,
-                        scope="root",
-                    )
+                    seen = {(pair.left, pair.right) for pair in folder_pairs}
+                    folder_pairs = folder_pairs + [
+                        pair
+                        for pair in compare_folders(
+                            records,
+                            assignments,
+                            threshold=config.folder_threshold,
+                            key=lambda record: record.root_key,
+                            scope="root",
+                        )
+                        # A root that holds files directly produces the same
+                        # folder key in both passes; reporting that pair twice
+                        # is noise, not a roll-up (A-11).
+                        if (pair.left, pair.right) not in seen
+                    ]
             LOGGER.info("Found %d folder pairs", len(folder_pairs))
 
         report = DedupeReport(
