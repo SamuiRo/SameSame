@@ -9,7 +9,7 @@
   },
   "matching": {
     "video": 20,
-    "image": 80,
+    "image": 60,
     "audio": 88,
     "folder": 50,
     "name": 92

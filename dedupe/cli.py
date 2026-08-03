@@ -27,12 +27,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "extensions": None,
     # Calibrated scale (F-24): 0 = indistinguishable from unrelated content,
     # 100 = identical. video_threshold is evidence-derived from a full scan of
-    # a real 276-video library rather than from curated pairs (A-02);
-    # image_threshold and audio_threshold preserve their pre-F-24 practical
-    # strictness (calibrate_similarity(90) / calibrate_similarity(94)) pending
-    # comparable real evidence for those media types.
+    # a real 276-video library (A-02) and image_threshold from 132 real images
+    # against 720 transformed duplicates (A-06); audio_threshold still only
+    # preserves its pre-F-24 practical strictness (calibrate_similarity(94)),
+    # pending comparable real evidence for that media type.
     "video_threshold": 20.0,
-    "image_threshold": 80.0,
+    "image_threshold": 60.0,
     "audio_threshold": 88.0,
     "folder_threshold": 50.0,
     "name_threshold": 92.0,

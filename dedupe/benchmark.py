@@ -301,7 +301,7 @@ def main() -> int:
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--ffprobe", default="ffprobe")
     # Calibrated scale (F-24) - see dedupe/cli.py's DEFAULT_CONFIG comment.
-    parser.add_argument("--image-threshold", type=float, default=80.0)
+    parser.add_argument("--image-threshold", type=float, default=60.0)
     parser.add_argument("--video-threshold", type=float, default=20.0)
     parser.add_argument("--audio-threshold", type=float, default=88.0)
     args = parser.parse_args()

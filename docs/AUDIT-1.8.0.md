@@ -212,6 +212,10 @@ line sit frozen for the entire matching phase.
 
 ### A-06 · Image calibration is not scale-preserving, contrary to the docs
 
+**Resolved in 1.9.2, and the fix went further than the finding.** Measured
+against real evidence, the colour term was not merely mis-weighted - it was
+actively harmful. See "A-06 resolution" below.
+
 `docs/THRESHOLDS.md` states that `image_threshold=80.0` is
 `calibrate_similarity(90)` and "preserves the exact pre-F-24 practical
 strictness". It does not. Calibration is applied to the structure term
@@ -309,7 +313,7 @@ exist.
 | A-03 | `QSettings` schema version + reset of pre-F-24 thresholds | Critical | Done in 1.9.0 |
 | A-04 | Migrate the local working config | Critical | Done in 1.9.0 |
 | A-05 | Cancellation checks and progress events in the pair loop | High | Done in 1.9.0 |
-| A-06 | Re-derive or re-document `image_threshold` | Medium | Documented in 1.9.0; re-derivation still open |
+| A-06 | Re-derive or re-document `image_threshold` | Medium | Done in 1.9.1/1.9.2 — formula changed, `80.0` → `60.0` |
 | A-07 | Fix LSH blocking for low image thresholds | Medium | Done in 1.9.0 |
 | A-08 | Report a genuinely raw score in the benchmark | Medium | Done in 1.9.0 |
 | A-09 | Version and claim drift in the documentation | Low | Done in 1.9.0 |
@@ -415,6 +419,63 @@ Two process notes worth keeping:
   (5.7%), which looked like proof of different content — but the check
   sampled both files on the same broken grid, so it inherited the same blind
   spot. The contact sheets and the fine cross-scan corrected it.
+
+## A-06 resolution — the colour term was harmful, not just mis-weighted
+
+A-06 recorded that `image_threshold=80` was documented as scale-preserving
+and was not. Deriving a correct number needed real image evidence, which the
+project did not have. Built one: **132 real images** (110 frames sampled
+across different episodes of the library, plus all 22 real posters in it),
+**720 true positives** produced by the transformations the tool claims to
+support (½ and ¼ resize, JPEG q80/q40, WebP, BMP, resize+recompress,
+brightness ±20%, saturation ±40%, contrast +25%), and **5 995 unrelated real
+pairs**.
+
+The first measurement invalidated the formula's central assumption. The code
+said the colour term "is a direct RGB distance and is already meaningful on
+0-100". On real images it is not:
+
+```
+UNRELATED real image pairs (n=8646):
+  structure, calibrated     median   0.00   p95  25.00
+  colour term               median  83.66   p95  96.47
+  blended score             median  18.73   p95  34.64
+```
+
+Unrelated images share an average colour far more often than they share
+structure, so the colour term has a *worse* noise floor than the one F-24
+was written to fix — it contributed ~17 points to every pair.
+
+Three formulations, same corpus:
+
+| Formulation | Worst true positive | Worst false positive | Gap |
+| --- | ---: | ---: | ---: |
+| Blend, colour uncalibrated (shipped in 1.9.1) | 77.86 | 54.03 | +23.82 |
+| Blend, colour calibrated at its own noise floor | 66.60 | 48.95 | +17.65 |
+| **Structure only** | **75.00** | **43.75** | **+31.25** |
+
+Calibrating colour — the obvious fix, and what A-06 implied — is the *worst*
+of the three: once colour is stretched against its floor, ordinary colour
+grading reads as a real difference and graded duplicates collapse to 66.60.
+
+Dropping colour outright was better on every axis except one, and the
+existing test suite found that one immediately: two solid colours have no
+structure to compare, and their perceptual hashes are near-identical (red vs
+white: 81.25). So colour is kept, but demoted to a **veto** — it can reject a
+pair, never lift one. That removes its noise-floor problem by construction.
+The bound is evidence-derived too: real duplicates never fall below 83.27
+colour similarity (worst case a 20% brightness grade), solid-colour pairs
+reach at most 66.67, so the veto sits at 70 and rejects 0 of 720 true
+positives while rejecting all 10 solid-colour pairs.
+
+Final: `image_similarity` returns calibrated structure with a colour veto,
+and `image_threshold` moves `80.0` → **`60.0`**, the midpoint of the
+75.00/43.75 gap — 0 false positives and 0 false negatives on the corpus.
+
+A process note: this is the second finding in this audit where the *stated
+reason* for a design turned out to be untested (the first was A-13's
+assumption about alignment). Both survived because they sounded right. The
+corpus took about twenty minutes to build.
 
 ## Verification of the 1.9.0 fixes
 

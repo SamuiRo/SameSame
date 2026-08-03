@@ -15,7 +15,7 @@ from dedupe.models import FileRecord, NormalizedName
 from dedupe.scanner import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, normalize_extensions
 
 if PIL_AVAILABLE:
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageDraw, ImageEnhance
 
 
 @unittest.skipUnless(PIL_AVAILABLE, "Pillow is required for image fingerprint tests")
@@ -102,6 +102,73 @@ class ImageFingerprintTests(unittest.TestCase):
             with Cache(base / "cache.sqlite3") as cache:
                 cache.upsert_files(records)
                 matches = find_image_matches(records, cache, threshold=90, workers=1)
+
+            self.assertEqual(matches, [])
+
+    def test_solid_colors_stay_apart_at_the_default_threshold(self) -> None:
+        # A-06: colour is no longer 20% of the score, so this case now rests
+        # entirely on the veto. Two flat images have almost no structure to
+        # compare - red vs white hash to 81.25% similar - and the old test
+        # only passed because it used a threshold far above the default.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            paths = []
+            for name in ("red", "white", "blue"):
+                path = base / f"{name}.png"
+                Image.new("RGB", (200, 200), name).save(path)
+                paths.append(path)
+            records = self._records(tuple(paths), base)
+
+            with Cache(base / "cache.sqlite3") as cache:
+                cache.upsert_files(records)
+                matches = find_image_matches(records, cache, threshold=60, workers=1)
+
+            self.assertEqual(matches, [])
+
+    def test_colour_grading_still_matches(self) -> None:
+        # A-06: the veto must not reject a duplicate that was merely graded
+        # differently - the reason a *calibrated* colour term was rejected.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source = base / "source.png"
+            graded = base / "graded.png"
+            image = Image.new("RGB", (320, 200), "navy")
+            draw = ImageDraw.Draw(image)
+            draw.rectangle((30, 25, 290, 175), fill="gold")
+            draw.ellipse((100, 45, 220, 165), fill="crimson")
+            image.save(source)
+            ImageEnhance.Brightness(image).enhance(1.2).save(graded)
+            records = self._records((source, graded), base)
+
+            with Cache(base / "cache.sqlite3") as cache:
+                cache.upsert_files(records)
+                matches = find_image_matches(records, cache, threshold=60, workers=1)
+
+            self.assertEqual(len(matches), 1)
+
+    def test_similar_average_colour_does_not_lift_an_unrelated_pair(self) -> None:
+        # A-06: the old blend added up to 20 points for a shared average
+        # colour, which unrelated images share far more often than structure.
+        # Colour may now only veto, so it cannot raise this pair at all.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            left = base / "left.png"
+            right = base / "right.png"
+            for path, shape in ((left, "rect"), (right, "ellipse")):
+                image = Image.new("RGB", (240, 240), "gray")
+                draw = ImageDraw.Draw(image)
+                if shape == "rect":
+                    draw.rectangle((10, 10, 120, 230), fill="black")
+                    draw.rectangle((130, 10, 230, 230), fill="white")
+                else:
+                    draw.ellipse((20, 60, 220, 180), fill="white")
+                    draw.line((0, 0, 239, 239), fill="black", width=20)
+                image.save(path)
+            records = self._records((left, right), base)
+
+            with Cache(base / "cache.sqlite3") as cache:
+                cache.upsert_files(records)
+                matches = find_image_matches(records, cache, threshold=60, workers=1)
 
             self.assertEqual(matches, [])
 

@@ -170,7 +170,7 @@ class MainWindow(QMainWindow):
         # content, 100 = identical. See dedupe/cli.py's DEFAULT_CONFIG for
         # why video/image/audio defaults differ in how they were derived.
         self.video_threshold = self._threshold_spin(20.0)
-        self.image_threshold = self._threshold_spin(80.0)
+        self.image_threshold = self._threshold_spin(60.0)
         self.audio_threshold = self._threshold_spin(88.0)
         self.name_threshold = self._threshold_spin(92.0)
         self.folder_threshold = self._threshold_spin(50.0)

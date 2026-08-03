@@ -18,8 +18,14 @@ except ImportError:
 
 PIL_AVAILABLE = Image is not None and ImageOps is not None
 LOGGER = logging.getLogger(__name__)
-STRUCTURE_WEIGHT = 0.8
-COLOR_WEIGHT = 0.2
+# Average colour is a veto, not an addend (A-06). Two images whose average
+# colours are this far apart are not the same image, whatever their structure
+# hashes say - which matters most for pictures that have no structure to
+# compare at all, where a perceptual hash of one flat colour looks much like a
+# perceptual hash of another. Derived from real evidence: 720 transformed
+# duplicates (including brightness and saturation grading) never fall below
+# 83.27 here, while solid-colour pairs reach at most 66.67.
+COLOR_VETO_SIMILARITY = 70.0
 
 
 def fingerprint_image(record: FileRecord) -> list[int] | None:
@@ -34,6 +40,10 @@ def fingerprint_image(record: FileRecord) -> list[int] | None:
                 rgb = Image.alpha_composite(background, rgba).convert("RGB")
             else:
                 rgb = image.convert("RGB")
+            # The average colour is still stored, though `image_similarity` no
+            # longer scores with it (A-06). Keeping the four-value layout means
+            # every cached image fingerprint stays valid, and the extra cost is
+            # one 1x1 resize.
             average = rgb.resize((1, 1), Image.Resampling.LANCZOS).getpixel((0, 0))
             structure_hash = phash(rgb)
             return [structure_hash, int(average[0]), int(average[1]), int(average[2])]
@@ -43,15 +53,33 @@ def fingerprint_image(record: FileRecord) -> list[int] | None:
 
 
 def image_similarity(left: list[int], right: list[int]) -> float:
+    """Calibrated perceptual-structure similarity, 0-100, with a colour veto.
+
+    Colour used to be blended in as 20% of the score. Measured on 132 real
+    images (video frames and posters) against 720 transformed duplicates,
+    that made the matcher *worse in both directions*: unrelated images share
+    average colour far more often than they share structure - the colour term
+    scores a median of 83.7 on unrelated pairs - so it inflated exactly the
+    hardest false positives, while adding nothing structure did not already
+    carry. Calibrating colour against its own noise floor came out worst of
+    the three, because ordinary colour grading then reads as a real change.
+
+        formulation           worst positive   worst negative   gap
+        blend (old)                    77.86            54.03   +23.82
+        blend, colour calibrated       66.60            48.95   +17.65
+        structure only                 75.00            43.75   +31.25
+
+    Colour still has one job structure cannot do: telling apart images with
+    no structure to compare. Two solid colours produce near-identical
+    perceptual hashes (red vs white: 81.25). So colour is kept, but only as a
+    veto - it can reject a pair, never lift one (A-06).
+    """
     if len(left) != 4 or len(right) != 4:
         return 0.0
-    # Only the structure term is Hamming-based and has the ~50% noise floor;
-    # the color term is a direct RGB distance and is already meaningful on
-    # 0-100, so it is not calibrated (F-24).
-    structure_similarity = calibrate_similarity(hamming_similarity([left[0]], [right[0]]))
     color_distance = sum(abs(a - b) for a, b in zip(left[1:], right[1:]))
-    color_similarity = 100.0 * (1.0 - color_distance / (3 * 255))
-    return max(0.0, STRUCTURE_WEIGHT * structure_similarity + COLOR_WEIGHT * color_similarity)
+    if 100.0 * (1.0 - color_distance / (3 * 255)) < COLOR_VETO_SIMILARITY:
+        return 0.0
+    return calibrate_similarity(hamming_similarity([left[0]], [right[0]]))
 
 
 def _candidate_pairs(
@@ -77,15 +105,10 @@ def _candidate_pairs(
     # `threshold` is calibrated (F-24); the bit-distance math below needs the
     # raw scale, since a Hamming distance has no notion of "noise floor" -
     # only the reported/compared similarity does. Convert once, here, rather
-    # than changing `image_similarity`'s or the caller's contract.
-    minimum_structure_similarity = (threshold - COLOR_WEIGHT * 100.0) / STRUCTURE_WEIGHT
-    if minimum_structure_similarity <= 0.0:
-        # The colour term alone can already clear the bar, so no structure
-        # distance may be excluded. Decalibrating a clamped 0 would instead
-        # imply "raw >= 50" (half the bit space) and drop legitimate
-        # candidates at low thresholds (A-07).
-        return {(left, right) for left in range(len(candidates)) for right in range(left + 1, len(candidates))}
-    minimum_structure_similarity_raw = decalibrate_similarity(min(100.0, minimum_structure_similarity))
+    # than changing `image_similarity`'s or the caller's contract. Since A-06
+    # the score *is* the calibrated structure similarity, so the bound is
+    # exact rather than an allowance for a second blended term.
+    minimum_structure_similarity_raw = decalibrate_similarity(min(100.0, threshold))
     max_distance = math.floor(64 * (1.0 - minimum_structure_similarity_raw / 100.0) + 1e-9)
     block_count = min(64, max_distance + 1)
     base_block_size, larger_blocks = divmod(64, block_count)

@@ -1,12 +1,12 @@
 # Project Status and Roadmap
 
-Last updated: 2026-08-02
+Last updated: 2026-08-03
 
 This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.9.1`. Stages A through E, and Stage F
+The current package version is `1.9.2`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -60,24 +60,21 @@ is now a *calibrated* confidence (`0` = indistinguishable from unrelated
 content, `100` = identical) instead of a raw Hamming-based percentage with a
 ~50% noise floor — see `docs/THRESHOLDS.md` for the full explanation and
 migration notes. Defaults changed accordingly: `video_threshold` `85` → `15`
-→ `20` (see below), `image_threshold` `90` → `80`, `audio_threshold` `94` →
-`88` (both pending comparable real evidence for those media types; note
-A-06: the image number is *not* scale-preserving the way it was originally
-documented). At `15.0` the 76-pair corpus reached **52/61 confirmed matches
+→ `20` (see below), `image_threshold` `90` → `80` → `60`, `audio_threshold` `94` →
+`88` → `60` for images, evidence-derived in 1.9.2 (A-06); `audio_threshold`
+still only preserves its pre-F-24 strictness, pending real audio evidence.
+At `15.0` the 76-pair corpus reached **52/61 confirmed matches
 (85%) with 0 false positives on that corpus** — but A-02 showed that result
 does not transfer to a library scan, which compares three orders of
 magnitude more unrelated pairs and does produce false positives at `15.0`.
 The shipped default is now `20.0`, derived from the full library.
 
-The remaining 9 misses (7 muddy + 2 duration-gated) concentrate in a small,
-named set of titles/episodes — a **descriptor** ceiling (F-30, not yet
-implemented), not an alignment one: one episode of "Title P" has essentially no
-duration delta for F-27 to work with, yet still scores low, which rules out
-alignment as the cause for that pair specifically. As expected, F-24's
-rescale did not and structurally could not fix these — a monotonic rescale
-preserves rank order, so a confirmed match that already scored below a
-confirmed non-match still does after rescaling. F-30 remains open as a
-separately-scoped investigation into that named minority of titles.
+F-30 was closed in 1.9.1, and its premise was wrong: the misses it named
+were alignment failures, not a descriptor ceiling. Its reasoning ("this
+episode has essentially no duration delta, yet still scores low, so
+alignment is not the cause") assumed alignment means *duration*
+compensation — but a same-duration pair can still be offset in time, and at
+1.9.0's 32-second grid cadence a 6-second offset was invisible. See A-13.
 
 ## Current State
 
@@ -96,7 +93,8 @@ Implemented:
 - versioned video fingerprints with monotonic sequence alignment;
 - ratio/delta duration gating that permits ordinary alternate cuts while
   excluding single episodes from multi-episode compilations;
-- image similarity using perceptual structure plus average color;
+- image similarity using calibrated perceptual structure, with average
+  colour acting only as a veto rather than as part of the score;
 - default image support for JPG/JPEG, PNG, WebP, BMP, GIF, TIFF;
 - image matching across resize, JPEG recompression, and common format changes;
 - audio similarity using ffmpeg's Chromaprint muxer;
@@ -332,16 +330,17 @@ Ongoing matching work remains evidence-driven:
   `75.42` instead of `19.08` and `15.25`, with no movement at all in any
   confirmed false positive (A-13). If new misses appear, re-check alignment
   before assuming the descriptor is at fault;
-- re-derive `image_threshold` on real image evidence (A-06): the current
-  `80.0` is not the scale-preserving equivalent of the old `90` it was
-  documented as;
+- re-derive `audio_threshold` on real audio evidence: it is the last default
+  still carried over from the pre-F-24 scale rather than measured. The image
+  equivalent (A-06) is done — and it changed the scoring formula, not just
+  the number, so expect the same to be possible here;
 - improve alternate-cut hints without weakening content-backed matching;
 - keep episode-in-compilation segment matching and crop/rotation-resistant
   image matching as separately scoped future features.
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.9.0`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.9.2`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:
@@ -359,10 +358,10 @@ FFmpeg/transcode integration suites remain green.
 The closed `1.6.6` safety review is recorded in `docs/AUDIT.md`. The `1.7.0`
 audit — findings, fixes, regression coverage, and residual/open items — is in
 `docs/AUDIT-1.7.0.md`. **The current audit is `docs/AUDIT-1.8.0.md`**: it
-measured 1.8.0 against the real library, and its Critical and High items
-(A-01 through A-05) plus A-07/A-08/A-09/A-11 are fixed in 1.9.0. A-06
-(re-derive `image_threshold`) and A-12's cosmetic half (validate restored
-collection roots) remain open.
+measured 1.8.0 against the real library. Everything in it is now fixed
+except A-12's cosmetic half (validate restored collection roots) — A-01
+through A-05 and A-07/A-08/A-09/A-11 in 1.9.0, A-13 in 1.9.1, A-06 in
+1.9.2.
 
 A lesson worth carrying forward from that audit: every Critical finding in
 it existed because detection changes had been validated on curated pairs and
@@ -376,7 +375,7 @@ Read README.md, docs/USAGE.md, docs/CONFIG.md, docs/STATUS.md,
 docs/AUDIT-1.8.0.md, docs/AUDIT-1.7.0.md, docs/ROADMAP.md, and
 docs/ANIME_ENCODING_PRESETS.md. Inspect and preserve any existing
 working-tree changes. Verify the test suite, then choose one separately
-scoped deferred item from docs/AUDIT-1.8.0.md (A-06 or A-12),
+scoped deferred item from docs/AUDIT-1.8.0.md (A-12),
 docs/AUDIT-1.7.0.md (F-30), or docs/ROADMAP.md, while keeping the existing
 source-protection rules intact. Any change to detection quality or matching
 cost must be validated with a full scan of the real library, not only with

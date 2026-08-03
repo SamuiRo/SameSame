@@ -103,7 +103,7 @@ class ScanOptions:
     extensions: set[str] = field(default_factory=lambda: normalize_extensions(None))
     # Calibrated scale (F-24) - see dedupe/cli.py's DEFAULT_CONFIG comment.
     video_threshold: float = 20.0
-    image_threshold: float = 80.0
+    image_threshold: float = 60.0
     audio_threshold: float = 88.0
     folder_threshold: float = 50.0
     name_threshold: float = 92.0
