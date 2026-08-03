@@ -1,6 +1,6 @@
 # Usage Guide
 
-This guide describes SameSame `1.10.0`. The current application provides a
+This guide describes SameSame `1.10.1`. The current application provides a
 report-only CLI and an optional desktop review interface with explicit,
 journaled quarantine/recycle actions and a transcoding queue. There is no
 permanent-delete command.

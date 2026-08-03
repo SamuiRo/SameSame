@@ -364,6 +364,33 @@ went against the more ambitious option:
 Content cropping past roughly 10% of a side remains unsupported and needs a
 different descriptor, not another whole-image view.
 
+**A-16 · `samesame-benchmark` had no test coverage and had silently
+rotted.** Running the shipped tool — something nothing in the suite did —
+showed its synthetic corpus reporting **6 of 6 audio positives as misses**
+and **one image false positive at 62.50** against a 60.0 bar. Both were
+fixture faults introduced by earlier fixes in this series: A-14's
+degenerate-fingerprint veto correctly refuses the pure tones the corpus was
+built from, and A-15's dihedral views give two pieces of flat synthetic art
+eight chances to line up.
+
+The corpus now mixes seeded pink noise into the audio, gives each image
+family a distinct composition plus seeded texture, and the tool's thresholds
+are read from `DEFAULT_CONFIG` instead of being repeated as literals, so a
+re-derived threshold cannot be updated in one place and forgotten in the
+other. `main()` takes an `argv` like the other entry points, and
+`tests/test_benchmark_integration.py` now runs the whole thing and asserts
+zero false positives, zero misses, and at least 20 points of headroom on
+every medium.
+
+| Medium | Before | After |
+| --- | --- | --- |
+| image | 1 FP, worst negative 62.50 | 0 FP / 0 FN, 93.75 vs 25.00 |
+| video | clean | 0 FP / 0 FN, 47.50 vs 6.25 |
+| audio | **6 FN of 6** | 0 FP / 0 FN, 96.92 vs 41.88 |
+
+The lesson is the same one this audit opened with, one level further out: a
+fast green suite says nothing about the code paths it never executes.
+
 ## Closing validation — 1.9.4
 
 A full scan of the real library at the shipped defaults, all three matchers

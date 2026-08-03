@@ -6,7 +6,7 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.10.0`. Stages A through E, and Stage F
+The current package version is `1.10.1`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -262,6 +262,10 @@ clean and a documented 37-error `mypy` baseline.
   destination conflicts, and automatic source restore after a simulated move failure.
 - Python compilation, JSON config parsing, cache migration, CLI startup, and
   `git diff --check` pass.
+- `samesame-benchmark` runs its synthetic corpus with zero false positives
+  and zero misses on all three media at the shipped defaults, guarded by
+  `tests/test_benchmark_integration.py` (added in 1.10.1 after the tool
+  was found to have rotted unnoticed — see A-16).
 - Package builds produce both the `samesame-1.7.0` source archive and
   universal wheel (current package version: `1.9.0`).
 - A recursive CLI test confirms that a resized/recompressed JPEG in a nested
@@ -362,7 +366,7 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.10.0`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.10.1`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:

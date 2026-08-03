@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -11,6 +12,7 @@ from PIL import Image, ImageDraw, ImageEnhance
 
 from dedupe import process
 from dedupe.audio_fingerprint import audio_similarity, fingerprint_audio
+from dedupe.cli import DEFAULT_CONFIG
 from dedupe.image_fingerprint import fingerprint_image, image_similarity
 from dedupe.models import FileRecord
 from dedupe.thresholds import LabeledScore, summarize_scores
@@ -49,6 +51,19 @@ def _run_ffmpeg(ffmpeg: str, *arguments: str) -> None:
     )
 
 
+def _texture(size: tuple[int, int], seed: int) -> Image.Image:
+    """Deterministic fine-grained noise.
+
+    Flat synthetic art is a degenerate case for a perceptual hash, and A-15's
+    eight dihedral views give two such pictures eight chances to line up:
+    without texture the negatives here reached 62.50 against a 60.0 bar.
+    Seeded so the corpus stays reproducible.
+    """
+    generator = random.Random(seed)
+    data = bytes(generator.randrange(256) for _ in range(size[0] * size[1]))
+    return Image.frombytes("L", size, data).convert("RGB")
+
+
 def _generate_images(root: Path) -> list[PairSpec]:
     root.mkdir(parents=True, exist_ok=True)
     sources: list[Path] = []
@@ -64,9 +79,22 @@ def _generate_images(root: Path) -> list[PairSpec]:
         adjusted = root / f"family-{index}-adjusted.webp"
         image = Image.new("RGB", (320, 200), background)
         draw = ImageDraw.Draw(image)
-        draw.rectangle((25 + index * 8, 20, 295, 180 - index * 7), fill=primary)
-        draw.ellipse((85, 35 + index * 5, 235, 175), fill=secondary)
-        draw.line((0, 199 - index * 15, 319, index * 20), fill="white", width=7)
+        # Deliberately different compositions per family, not the same shapes
+        # nudged a few pixels: near-identical layouts are what let two
+        # negatives score 62.50 once orientation stopped mattering.
+        if index == 0:
+            draw.rectangle((25, 20, 295, 180), fill=primary)
+            draw.ellipse((85, 35, 235, 175), fill=secondary)
+            draw.line((0, 199, 319, 0), fill="white", width=7)
+        elif index == 1:
+            draw.polygon([(160, 10), (310, 190), (10, 190)], fill=primary)
+            draw.rectangle((120, 120, 200, 195), fill=secondary)
+            draw.line((0, 40, 319, 40), fill="white", width=5)
+        else:
+            draw.ellipse((10, 10, 150, 150), fill=primary)
+            draw.rectangle((170, 60, 310, 195), fill=secondary)
+            draw.line((0, 0, 160, 199), fill="white", width=9)
+        image = Image.blend(image, _texture(image.size, 17 + index), 0.28)
         image.save(source)
         image.resize((800, 500), Image.Resampling.LANCZOS).save(resized, quality=58)
         ImageEnhance.Brightness(image.resize((480, 300))).enhance(0.78).save(adjusted, quality=70)
@@ -156,8 +184,16 @@ def _generate_audio(root: Path, ffmpeg: str) -> list[PairSpec]:
         source = root / f"family-{index}-source.wav"
         mp3 = root / f"family-{index}-96k.mp3"
         flac = root / f"family-{index}-quiet.flac"
+        # Noise plus tones, not tones alone (A-14). A pure tone fingerprints
+        # to a single repeated Chromaprint item, which carries no information
+        # and is refused outright - a corpus built from tones alone reported
+        # every one of its own positives as a miss.
         _run_ffmpeg(
             ffmpeg,
+            "-f",
+            "lavfi",
+            "-i",
+            f"anoisesrc=c=pink:seed={11 + index}:r=44100:d=20",
             "-f",
             "lavfi",
             "-i",
@@ -167,7 +203,9 @@ def _generate_audio(root: Path, ffmpeg: str) -> list[PairSpec]:
             "-i",
             f"sine=frequency={right_frequency}:sample_rate=44100:duration=20",
             "-filter_complex",
-            "[0:a][1:a]amix=inputs=2:weights=1 0.45,volume=0.7",
+            "[0:a][1:a][2:a]amix=inputs=3:weights=1 0.6 0.35,volume=0.8",
+            "-ac",
+            "2",
             "-c:a",
             "pcm_s16le",
             str(source),
@@ -293,18 +331,19 @@ def _evaluate_pairs(pairs: list[PairSpec], ffmpeg: str, ffprobe: str) -> dict[st
     return results
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Generate or evaluate a labeled media corpus for threshold tuning.")
     parser.add_argument("--manifest", type=Path, help="Optional JSON manifest with labeled image/video/audio pairs.")
     parser.add_argument("--work-dir", type=Path, help="Keep generated synthetic fixtures in this directory.")
     parser.add_argument("--output", type=Path, default=Path("threshold-benchmark.json"))
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--ffprobe", default="ffprobe")
-    # Calibrated scale (F-24) - see dedupe/cli.py's DEFAULT_CONFIG comment.
-    parser.add_argument("--image-threshold", type=float, default=60.0)
-    parser.add_argument("--video-threshold", type=float, default=20.0)
-    parser.add_argument("--audio-threshold", type=float, default=60.0)
-    args = parser.parse_args()
+    # Taken from the CLI defaults rather than repeated, so a re-derived
+    # threshold cannot be updated in one place and forgotten in the other.
+    parser.add_argument("--image-threshold", type=float, default=DEFAULT_CONFIG["image_threshold"])
+    parser.add_argument("--video-threshold", type=float, default=DEFAULT_CONFIG["video_threshold"])
+    parser.add_argument("--audio-threshold", type=float, default=DEFAULT_CONFIG["audio_threshold"])
+    args = parser.parse_args(argv)
 
     ffmpeg, ffprobe = check_video_tools(args.ffmpeg, args.ffprobe)
     if not ffmpeg or not ffprobe:
