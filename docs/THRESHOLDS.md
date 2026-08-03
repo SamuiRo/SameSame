@@ -70,6 +70,43 @@ so without colour they would match. Real duplicates never fall below 83.27
 colour similarity (worst case: a 20% brightness grade), while solid-colour
 pairs reach at most 66.67, so the veto sits at 70.
 
+## How audio matching aligns (A-14)
+
+ffmpeg's Chromaprint muxer emits one 32-bit item per **0.1266 s** of audio,
+which is what makes the constants readable:
+
+| | Before | Now |
+| --- | ---: | ---: |
+| Alignment shift | 8 items ≈ **1.0 s** | 237 items ≈ **30 s** |
+| Duration tolerance (pairs outside are never compared) | 3 s | 120 s |
+| Minimum overlap | 90% of the shorter fingerprint | 75% |
+| Cost per pair, 15-minute fingerprints | 8.9 ms | **3.1 ms** |
+
+The one-second shift was the same blind spot as A-13's video grid: past one
+second of offset the score collapses. Measured on real library audio, adding
+a 2-second lead-in takes a byte-identical recording from `98.63` to `10.90`.
+Two releases of one episode routinely differ by more than a second at the
+head.
+
+Widening the shift naively costs 240 ms per pair — 91 minutes for a
+library-sized pass, the A-01 shape again. Instead the *overlap* is
+subsampled during the search (64 evenly spaced probes per candidate shift)
+and only the winning shift is scored exactly over the full overlap. Every
+shift is still probed: a coarse strided pass would assume the score varies
+smoothly around the true offset, and the peak can be one item wide.
+
+Duration tolerance and shift range are deliberately different sizes. Extra
+content at the *end* of a release does not need a shift, only a smaller
+overlap — which is why the tolerance is looser than the shift range and the
+overlap requirement had to come down with it.
+
+Audio also has a **degenerate-fingerprint veto**, the counterpart of the
+image colour veto. A pure tone or silence fingerprints to a single repeated
+Chromaprint item, and two *different* pure tones score `75.00` against each
+other. Real library audio has 99.1-99.6% distinct items; silence and a
+constant tone have 0.7%. A fingerprint below 50% distinct items is refused
+outright.
+
 ## How video alignment works (A-01)
 
 Two fingerprints are stored per video, for different jobs:
@@ -122,7 +159,7 @@ paid once per file, ever.
 | --- | ---: | --- |
 | `video_threshold` | `20.0` | **Evidence-derived from a full library scan** (A-02): all 22 849 duration-compatible pairs of a real 276-video library, with alignment on. The earlier `15.0` came from a 76-pair curated corpus and does not survive library scale - a real scan compares three orders of magnitude more unrelated pairs, and the 15-19 band is dominated by cross-title false positives. After A-13 fixed alignment the two classes separate cleanly with **nothing at all between 18.72 and 28.44**: every pair above that gap is a genuine same-title duplicate, every pair below it is cross-title. `20.0` sits inside the empty gap, so it has real margin on both sides rather than being a knife edge. |
 | `image_threshold` | `60.0` | **Evidence-derived** (A-06) from 132 real images - video frames sampled across the library, plus every real poster in it - scored against 720 duplicates produced by the transformations the tool claims to support (resize, JPEG/WebP/BMP re-encode, brightness/saturation/contrast grading) and 5 995 unrelated real pairs. The worst true positive scores `75.00`, the worst false positive `43.75`; `60.0` is the midpoint of that gap and gives 0 errors either way. |
-| `audio_threshold` | `88.0` | `calibrate_similarity(94)` - same reasoning as `image_threshold`: preserved, not re-derived, pending real audio corpus evidence. |
+| `audio_threshold` | `60.0` | **Evidence-derived** (A-14) from the real audio tracks of the library: 20 pairs the video matcher confirms as duplicates against 40 unrelated pairs, all full-length. Confirmed duplicate audio scores `80.87` and up; unrelated audio never exceeds `6.83`. The previous `88.0` was a carried-over `calibrate_similarity(94)` and missed **16 of those 20** confirmed pairs. |
 
 `folder_threshold` and `name_threshold` are **not** affected by F-24: they
 are Jaccard/fuzzy-string scores, not Hamming-based, and have no noise floor.

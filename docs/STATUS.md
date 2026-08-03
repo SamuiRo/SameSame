@@ -6,7 +6,7 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.9.2`. Stages A through E, and Stage F
+The current package version is `1.9.3`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -61,9 +61,8 @@ content, `100` = identical) instead of a raw Hamming-based percentage with a
 ~50% noise floor — see `docs/THRESHOLDS.md` for the full explanation and
 migration notes. Defaults changed accordingly: `video_threshold` `85` → `15`
 → `20` (see below), `image_threshold` `90` → `80` → `60`, `audio_threshold` `94` →
-`88` → `60` for images, evidence-derived in 1.9.2 (A-06); `audio_threshold`
-still only preserves its pre-F-24 strictness, pending real audio evidence.
-At `15.0` the 76-pair corpus reached **52/61 confirmed matches
+`88` → `60` for both images (1.9.2, A-06) and audio (1.9.3, A-14), both
+evidence-derived. At `15.0` the 76-pair corpus reached **52/61 confirmed matches
 (85%) with 0 false positives on that corpus** — but A-02 showed that result
 does not transfer to a library scan, which compares three orders of
 magnitude more unrelated pairs and does produce false positives at `15.0`.
@@ -97,7 +96,8 @@ Implemented:
   colour acting only as a veto rather than as part of the score;
 - default image support for JPG/JPEG, PNG, WebP, BMP, GIF, TIFF;
 - image matching across resize, JPEG recompression, and common format changes;
-- audio similarity using ffmpeg's Chromaprint muxer;
+- audio similarity using ffmpeg's Chromaprint muxer, aligned over ±30
+  seconds of offset by probing every shift and scoring only the winner;
 - default audio support for MP3, FLAC, WAV, M4A, AAC, Ogg, Opus, WMA, AIFF;
 - audio matching across codec, bitrate, container, and moderate volume changes;
 - separate cached video, image, and audio fingerprints in SQLite;
@@ -330,17 +330,19 @@ Ongoing matching work remains evidence-driven:
   `75.42` instead of `19.08` and `15.25`, with no movement at all in any
   confirmed false positive (A-13). If new misses appear, re-check alignment
   before assuming the descriptor is at fault;
-- re-derive `audio_threshold` on real audio evidence: it is the last default
-  still carried over from the pre-F-24 scale rather than measured. The image
-  equivalent (A-06) is done — and it changed the scoring formula, not just
-  the number, so expect the same to be possible here;
+- all three similarity thresholds are now measured rather than carried over
+  (A-02 video, A-06 images, A-14 audio), and in two of the three cases the
+  measurement changed the formula, not just the number;
+- audio matching only ever runs on files with audio extensions, so a
+  video-only library never exercises it. If audio evidence for video files
+  is ever wanted, that is a scoping decision, not a bug;
 - improve alternate-cut hints without weakening content-backed matching;
 - keep episode-in-compilation segment matching and crop/rotation-resistant
   image matching as separately scoped future features.
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.9.2`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.9.3`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:
@@ -361,7 +363,7 @@ audit — findings, fixes, regression coverage, and residual/open items — is i
 measured 1.8.0 against the real library. Everything in it is now fixed
 except A-12's cosmetic half (validate restored collection roots) — A-01
 through A-05 and A-07/A-08/A-09/A-11 in 1.9.0, A-13 in 1.9.1, A-06 in
-1.9.2.
+1.9.2, A-14 in 1.9.3.
 
 A lesson worth carrying forward from that audit: every Critical finding in
 it existed because detection changes had been validated on curated pairs and

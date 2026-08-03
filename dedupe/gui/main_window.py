@@ -171,7 +171,7 @@ class MainWindow(QMainWindow):
         # why video/image/audio defaults differ in how they were derived.
         self.video_threshold = self._threshold_spin(20.0)
         self.image_threshold = self._threshold_spin(60.0)
-        self.audio_threshold = self._threshold_spin(88.0)
+        self.audio_threshold = self._threshold_spin(60.0)
         self.name_threshold = self._threshold_spin(92.0)
         self.folder_threshold = self._threshold_spin(50.0)
         settings_layout.addRow("Video threshold", self.video_threshold)

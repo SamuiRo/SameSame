@@ -321,6 +321,7 @@ exist.
 | A-11 | De-duplicate identical folder pairs across scopes | Low | Done in 1.9.0 |
 | A-12 | Restore Qt global state in tests; validate restored roots | Low | Qt state done in 1.9.0; root validation open |
 | A-13 | Grid cadence too coarse to resolve a few seconds of offset | Critical | Done in 1.9.1 |
+| A-14 | Audio: 1-second alignment, 3-second duration gate, threshold above where real duplicates land | Critical | Done in 1.9.3 |
 
 ## A-13 · The 1.9.0 grid cadence was too coarse to see a few seconds of offset
 
@@ -476,6 +477,117 @@ A process note: this is the second finding in this audit where the *stated
 reason* for a design turned out to be untested (the first was A-13's
 assumption about alignment). Both survived because they sounded right. The
 corpus took about twenty minutes to build.
+
+## A-14 · Audio alignment had the same blind spot, and its threshold missed 80% of real duplicates
+
+Opened after A-13 and A-06, on the suspicion that `audio_threshold` was the
+last default still carried over from the pre-F-24 scale rather than measured,
+and that `MAX_ALIGNMENT_SHIFT = 8` looked like A-13's problem in another
+medium. Both were true, and there was a third problem underneath.
+
+ffmpeg's Chromaprint muxer emits one item per **0.1266 s**, which makes the
+constants legible for the first time:
+
+```
+MAX_ALIGNMENT_SHIFT = 8 items   = 1.01 seconds of shift
+duration_tolerance  = 3 seconds - pairs outside it are never compared at all
+minimum_overlap     = 90% of the shorter fingerprint
+```
+
+Against video's ±180 s of shift and 15-minute duration gating, audio was
+running on gates an order of magnitude tighter.
+
+**Three findings, all measured on the library's own audio.**
+
+*One second of shift is not enough.* On 30 real 120-second segments, every
+codec, bitrate, volume, channel and sample-rate transformation the tool
+claims to support scores 96.58-100. A **2-second lead-in scores 8.20-10.90**:
+
+| Transformation | min | median |
+| --- | ---: | ---: |
+| mp3 320k / 128k / 96k | 99.68 / 98.04 / 96.60 | 99.91 / 98.85 / 97.71 |
+| aac 128k, opus 96k, flac | 96.96 / 96.58 / 100.00 | 98.79 / 97.68 / 100.00 |
+| volume −6 dB / +4 dB, mono, 22 kHz | 99.50-99.93 | ~99.99 |
+| lead-in 0.5 s | 98.10 | 98.63 |
+| **lead-in 2 s** | **8.20** | **10.90** |
+| **lead-in 5 s** | **5.95** | **8.09** |
+
+*The threshold was far above where real duplicates land.* Taking the audio
+of 20 video pairs the (fixed) video matcher confirms as duplicates, against
+40 unrelated pairs, all full-length:
+
+```
+positives  min 30.46   p10 82.28   median 85.58
+negatives  max  6.83   p90  6.28   median  5.68
+```
+
+At the shipped `88.0`, **16 of the 20 confirmed pairs were missed**. The
+`30.46` outlier is not a miss: it is `Youkoso-Sukebe-Elf-no-Mori-e_01_rus`
+against its non-dubbed release — same video, genuinely different audio, and
+scoring it low is the audio channel doing its job as independent evidence.
+Excluding it, real duplicate audio starts at `80.87` against a negative
+ceiling of `6.83`.
+
+*The duration tolerance silently excluded pairs.* Two of the 20 pairs differ
+in length by 36.7 s and 82.7 s, so at a 3-second tolerance they were never
+compared. One of them scores `82.68` once it is.
+
+**Fixes (1.9.3):** shift range 8 → 237 items (30 s), duration tolerance
+3 s → 120 s, minimum overlap 90% → 75%, `audio_threshold` 88.0 → **60.0**
+(0 false positives and 0 false negatives on the evidence, with 53 points of
+margin above the negative ceiling and 21 below the positive floor).
+
+**And the same cost trap as A-01, avoided by measuring first.** Widening the
+shift naively is O(range × overlap): measured at 240 ms per pair, i.e. 91
+minutes for a library-sized pass. The search now subsamples the *overlap*
+(64 probes per shift) and scores only the winning shift exactly, which lands
+at **3.1 ms per pair — three times cheaper than the old one-second search**
+while covering thirty times the range.
+
+One design note worth keeping: the first implementation also strided the
+shift search coarsely, which assumes the score varies smoothly around the
+true offset. A new regression test with random fingerprints failed
+immediately, because that peak can be one item wide. Real Chromaprint items
+are correlated in time so it would have worked in practice and hidden the
+assumption — the stride was removed rather than the test weakened.
+
+**A fourth problem, surfaced by the existing suite.** Lowering the threshold
+made `test_cli_matches_wav_mp3_flac_and_rejects_unrelated_audio` fail: its
+"unrelated" file started matching. The cause is the exact audio counterpart
+of A-06's flat-image problem — a pure tone fingerprints to a **single
+repeated Chromaprint item**, so two *different* tones score `75.00` against
+each other. That was true before this work too; `88.0` merely hid it.
+
+```
+                        distinct items    two different tones score
+real library audio      99.1% - 99.6%     -
+pink noise              96.4%             51.18 vs white noise
+silence / pure tone      0.7%             75.00
+```
+
+So `audio_similarity` now vetoes a fingerprint whose distinct-item ratio is
+below 50% — real content sits at 99%+, degenerate content at 0.7%, so the
+bound has two orders of magnitude of margin.
+
+The test fixture itself was the degenerate case: it built its sources from
+pure tones, which means its positive assertions had been passing for the
+same reason its negative assertion nearly failed. It now mixes seeded pink
+noise with the tones (`source vs mp3` 97.59, `source vs flac` 100.00,
+`source vs unrelated` 41.07), so both directions are meaningful.
+
+**Scope, stated plainly.** `find_audio_matches` only ever receives files
+with *audio* extensions, so a video-only library never exercises the audio
+path at all — a scan of `TestLib` reports zero audio matches and skips the
+stage in 0.3 s. The evidence above is real audio (the library's own tracks,
+and real Chromaprint fingerprints of them), which is exactly what the
+matcher consumes, but this library does not exercise the path end to end.
+That was verified separately on a 20-file library of real audio files: 29
+matches, all correct — 16 same-track across wav/mp3/flac, and 13 from two
+episodes that genuinely exist twice in the library. Pairs offset by 3
+seconds score 91.49-91.73, where before they were unreachable.
+
+Whether video files should also contribute audio evidence is a scoping
+decision, not a defect, and is not changed here.
 
 ## Verification of the 1.9.0 fixes
 
