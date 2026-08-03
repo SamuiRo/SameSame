@@ -1,6 +1,6 @@
 # Desktop Interface Reference
 
-This page documents the SameSame `1.9.0` desktop interface button by button.
+This page documents the SameSame `1.9.1` desktop interface button by button.
 The GUI is launched with `samesame-gui` and contains three main tabs:
 **Duplicate review**, **Video compression**, and **Folder consolidation**.
 

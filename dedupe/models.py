@@ -9,7 +9,7 @@ VIDEO_FINGERPRINT_VERSION = 3
 # proportional fingerprint above because the two are sampled differently and
 # invalidate for different reasons: bump this when the cadence or the sample
 # layout changes, not when the proportional fingerprint does.
-GRID_FINGERPRINT_VERSION = 1
+GRID_FINGERPRINT_VERSION = 2
 
 
 @dataclass(slots=True)

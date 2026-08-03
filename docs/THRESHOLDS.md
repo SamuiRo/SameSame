@@ -52,13 +52,25 @@ Two fingerprints are stored per video, for different jobs:
 | | Sampling | Size | Used for |
 | --- | --- | ---: | --- |
 | `fingerprint` | 15 frames at fixed *fractions* of the duration | 15 hashes | the cheap first-pass score |
-| `grid_fingerprint` | one frame every `grid_cadence(duration)` seconds of *absolute* time | ~60-100 hashes | alignment |
+| `grid_fingerprint` | one frame every **2 seconds** of *absolute* time, one decode pass | ~850 hashes for a 28-min episode | alignment |
 
 Because grid samples sit at absolute offsets, the same moment of the same
 content lands on the same index in both files, so aligning two videos is an
-integer shift over cached hashes - no decoding at pair time. Cadence comes
-from a power-of-two ladder (1s to 32s), so two files that land on different
-rungs still compare: the coarser grid is exactly a stride of the finer one.
+integer shift over cached hashes - no decoding at pair time.
+
+The cadence has to be fine relative to a *shot*, not merely to the file
+(A-13). An integer-slot shift can only cancel offsets that are multiples of
+the cadence, and a few seconds of extra logo or intro is the commonest
+difference between two releases of one episode - a real pair in the test
+library sits exactly 6s apart. An earlier 32-second cadence could not see
+that at all and scored the pair as noise.
+
+A 2-second cadence is affordable because the grid is built in **one decode
+pass** (`fps=1/2,scale=32:32`), not one seek per sample: 851 samples in 7.9s
+against 8.5s for the 53 seeks a 32-second cadence needed. This does not
+contradict the 1.7.0 audit's withdrawn "single pass" idea - that was
+measured for 15 samples, where per-sample seeks genuinely win. The trade
+inverts once you want hundreds.
 
 Alignment therefore runs for **every** duration-compatible pair, with no
 score floor and no duration-delta gate. It is the matcher's strongest
@@ -67,17 +79,23 @@ from it while confirmed unrelated pairs gain zero.
 
 Measured on the 276-video / 97.5 GB library:
 
-| | Before (1.8.0) | After (1.9.0) |
-| --- | ---: | ---: |
-| Alignment cost per pair | 10.3-12.3 s | ~1.3 ms |
-| Full scan, cold cache | ~39 hours | **17 minutes** |
-| Full scan, warm cache | ~39 hours (nothing cached) | **32 seconds** |
+| | 1.8.0 | 1.9.0 (32s grid) | 1.9.1 (2s grid) |
+| --- | ---: | ---: | ---: |
+| Alignment cost per pair | 10.3-12.3 s | 1.3 ms | 4.5 ms |
+| Grid build, all 276 files, 4 workers | — | 15 min | 26 min |
+| Full scan, warm cache | ~39 hours (nothing cached) | 32 s | **105 s** |
+| Video matches at the default threshold | 82 (many false) | 105 | **129** |
+
+1.9.1 trades a slower one-time grid build - it reads every file once, so it
+is disk-bandwidth-bound rather than CPU-bound - for detection that actually
+works on time-shifted releases. The build is cached and versioned, so it is
+paid once per file, ever.
 
 ## Current defaults and how they were chosen
 
 | Media | Default (calibrated) | How it was derived |
 | --- | ---: | --- |
-| `video_threshold` | `20.0` | **Evidence-derived from a full library scan** (A-02): all 22 849 duration-compatible pairs of a real 276-video library, with alignment on. The earlier `15.0` came from a 76-pair curated corpus and does not survive library scale - a real scan compares three orders of magnitude more unrelated pairs, and the 15-19 band turned out to be dominated by cross-title false positives (highest observed: `19.21`, two unrelated titles). Everything at `20.0` and above inspected as a genuine duplicate. The cost is two known true positives that score `15.25` and `19.08`; recovering them needs better descriptors (F-30), not a lower bar. |
+| `video_threshold` | `20.0` | **Evidence-derived from a full library scan** (A-02): all 22 849 duration-compatible pairs of a real 276-video library, with alignment on. The earlier `15.0` came from a 76-pair curated corpus and does not survive library scale - a real scan compares three orders of magnitude more unrelated pairs, and the 15-19 band is dominated by cross-title false positives. After A-13 fixed alignment the two classes separate cleanly with **nothing at all between 18.72 and 28.44**: every pair above that gap is a genuine same-title duplicate, every pair below it is cross-title. `20.0` sits inside the empty gap, so it has real margin on both sides rather than being a knife edge. |
 | `image_threshold` | `80.0` | `calibrate_similarity(90)`, kept unchanged - but see the caveat above: this is *not* equivalent to the pre-F-24 `90`, and no comparable real image evidence exists yet to re-derive it. The real corpus has only one confirmed image pair (a poster duplicate, scoring far above this bar). |
 | `audio_threshold` | `88.0` | `calibrate_similarity(94)` - same reasoning as `image_threshold`: preserved, not re-derived, pending real audio corpus evidence. |
 

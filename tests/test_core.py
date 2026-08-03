@@ -31,14 +31,14 @@ from dedupe.name_normalizer import (
 from dedupe.report import report_to_dict, write_html_report, write_json_report
 from dedupe.scanner import scan_folders
 from dedupe.video_fingerprint import (
-    GRID_MAX_CADENCE,
+    GRID_CADENCE,
     SAMPLE_COUNT,
+    calibrate_similarity,
     find_video_matches,
     fingerprint_video,
     fingerprint_video_grid,
     grid_aligned_similarity,
-    grid_cadence,
-    grid_timestamps,
+    grid_sample_count,
     ordered_sequence_similarity,
     video_durations_compatible,
 )
@@ -662,30 +662,27 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(len(matches), 1)
             self.assertEqual(matches[0].similarity, 100.0)
 
-    def test_grid_cadence_stays_on_a_power_of_two_ladder(self) -> None:
-        # A-01: two files on different rungs must still describe the same
-        # absolute moments, which only holds if every cadence divides every
-        # coarser one - i.e. powers of two, and nothing above the cap.
-        for duration in (4.0, 60.0, 600.0, 1109.0, 3406.0, 36000.0):
-            cadence = grid_cadence(duration)
-            self.assertLessEqual(cadence, GRID_MAX_CADENCE)
-            self.assertEqual(cadence, 2 ** round(math.log2(cadence)))
+    def test_grid_cadence_resolves_a_few_seconds_of_offset(self) -> None:
+        # A-13: an integer-slot shift can only cancel offsets that are
+        # multiples of the cadence, and two releases of one episode routinely
+        # sit a handful of seconds apart. A coarse grid cannot see that at all.
+        self.assertLessEqual(GRID_CADENCE, 4.0)
+        self.assertEqual(grid_sample_count(1703.0), math.ceil(1703.0 / GRID_CADENCE))
 
-    def test_coarse_grid_is_a_stride_of_a_finer_one(self) -> None:
-        # A-01: the property the whole cross-cadence comparison rests on -
-        # sampling at 2c must land on exactly every second sample of c.
-        fine = grid_timestamps(600.0, 8.0)
-        coarse = grid_timestamps(600.0, 16.0)
-        self.assertEqual(coarse, fine[1::2])
+    def test_grid_alignment_recovers_a_small_offset(self) -> None:
+        # A-13's regression: a 6-second offset between two releases of the
+        # same episode used to score as noise because it fell inside one slot.
+        content = [index * 0x0101010101010101 for index in range(1, 120)]
+        offset_slots = round(6.0 / GRID_CADENCE)
+        shifted = [0xFFFFFFFFFFFFFFFF] * offset_slots + content
+        self.assertGreaterEqual(grid_aligned_similarity(content, shifted), 99.0)
 
     def test_grid_alignment_recovers_a_shifted_duplicate(self) -> None:
         # A-01: the same content offset in time must align. `right` is `left`
         # shifted three slots later, with different content in the gap.
         content = [index * 0x0101010101010101 for index in range(1, 40)]
-        left = content
         right = [0xFFFFFFFFFFFFFFFF, 0xF0F0F0F0F0F0F0F0, 0x0F0F0F0F0F0F0F0F, *content]
-        duration = 40.0
-        self.assertGreaterEqual(grid_aligned_similarity(left, right, duration, duration + 3.0), 99.0)
+        self.assertGreaterEqual(grid_aligned_similarity(content, right), 99.0)
 
     def test_grid_alignment_ignores_missing_samples_without_shifting(self) -> None:
         # A-01: a failed frame is a placeholder, not a gap - dropping it would
@@ -694,22 +691,25 @@ class CoreTests(unittest.TestCase):
         damaged = list(content)
         damaged[5] = -1
         damaged[17] = -1
-        self.assertGreaterEqual(grid_aligned_similarity(content, damaged, 40.0, 40.0), 99.0)
+        self.assertGreaterEqual(grid_aligned_similarity(content, damaged), 99.0)
 
-    def test_grid_fingerprint_gives_up_on_an_unreadable_file(self) -> None:
-        # A-01: a grid can be hundreds of samples and each failure costs two
-        # ffmpeg spawns, so an unreadable file must not probe the whole file.
-        attempts = 0
+    def test_grid_alignment_does_not_invent_a_match(self) -> None:
+        # The search maximises over many shifts, so it must not lift unrelated
+        # content: with a 2s cadence there are ~180 candidate shifts to pick
+        # the luckiest one from.
+        import random
 
-        def fake_extract(path: Path, timestamp: float, ffmpeg: str) -> None:
-            nonlocal attempts
-            attempts += 1
-            return None
+        random.seed(17)
+        left = [random.getrandbits(64) for _ in range(120)]
+        right = [random.getrandbits(64) for _ in range(120)]
+        self.assertLessEqual(calibrate_similarity(grid_aligned_similarity(left, right)), 10.0)
 
-        with patch("dedupe.video_fingerprint._extract_frame", side_effect=fake_extract):
-            self.assertIsNone(fingerprint_video_grid(Path("broken.mkv"), 600.0, "ffmpeg"))
-
-        self.assertLessEqual(attempts, 10)
+    def test_grid_fingerprint_rejects_a_truncated_decode(self) -> None:
+        # A-13: the grid is one decode pass now, so the failure mode is a
+        # short read rather than individual missing frames.
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"\x00" * (32 * 32 * 3))
+        with patch("dedupe.video_fingerprint.process.run", return_value=completed):
+            self.assertIsNone(fingerprint_video_grid(Path("truncated.mkv"), 600.0, "ffmpeg"))
 
     def test_video_sequence_similarity_tolerates_inserted_samples(self) -> None:
         source = [index << 56 for index in range(15)]

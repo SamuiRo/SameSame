@@ -35,18 +35,31 @@ ALIGNMENT_MAX_SHIFT = 3 * 60.0
 # so two files of different lengths produce directly comparable sequences and
 # alignment becomes an integer shift over cached hashes instead of a per-pair
 # re-decode of one file.
-# Cadence is chosen per file from a power-of-two ladder so that a 4-second
-# clip is still sampled usefully while a 3-hour file stays bounded. Powers of
-# two specifically: two files may land on different rungs, and a coarser grid
-# is then exactly a stride of the finer one, so their samples still describe
-# the same absolute moments.
-GRID_BASE_CADENCE = 1.0
-GRID_MAX_CADENCE = 32.0
-GRID_TARGET_SAMPLES = 96
+#
+# The cadence has to be small relative to a *shot*, not merely to the file
+# (A-13). An integer-slot shift can only cancel offsets that are multiples of
+# the cadence, and a few seconds of extra logo or intro is the single most
+# common difference between two releases of the same episode: measured on the
+# real library, two byte-different releases of one episode sit exactly 6s
+# apart, which a coarse grid cannot see at all - every sample lands in a
+# different shot and the pair scores as noise.
+#
+# 2 seconds is affordable because the grid is built in one decode pass rather
+# than one seek per sample: measured on a 28-minute 720p episode, 851 samples
+# in 7.9s, against 8.5s for the 53 seeks a 32-second cadence used to need.
+GRID_CADENCE = 2.0
+GRID_MAX_SAMPLES = 8000
+GRID_MIN_COVERAGE = 0.5
 GRID_MIN_OVERLAP = 2
 GRID_MIN_OVERLAP_RATIO = 0.5
-GRID_MAX_CONSECUTIVE_FAILURES = 3
 GRID_MISSING_SAMPLE = -1
+# Shift search: scan coarsely over the whole ±ALIGNMENT_MAX_SHIFT range using a
+# bounded subsample, then refine around the winner at full resolution. A flat
+# full-resolution scan would be ~76k hash comparisons per pair; this is ~6k.
+GRID_SEARCH_PROBES = 64
+GRID_SEARCH_COARSE_STRIDE = 2
+GRID_SEARCH_REFINE_SLOTS = 3
+GRID_THUMBNAIL_SIZE = 32
 
 
 def resolve_binary(name_or_path: str) -> str | None:
@@ -158,74 +171,67 @@ def fingerprint_video(path: Path, duration: float, ffmpeg: str) -> list[int] | N
     return hashes
 
 
-def grid_cadence(duration: float) -> float:
-    """Seconds between alignment samples for a file of this duration.
-
-    A pure function of duration, so it never has to be stored: any caller
-    holding the (cached) duration can recompute how a cached grid was laid
-    out. Doubling until the sample count is bounded keeps a 3-hour file from
-    costing hundreds of seeks while a 4-second clip still gets sampled.
-    """
-    cadence = GRID_BASE_CADENCE
-    while cadence < GRID_MAX_CADENCE and duration / cadence > GRID_TARGET_SAMPLES:
-        cadence *= 2.0
-    return cadence
-
-
-def grid_timestamps(duration: float, cadence: float) -> list[float]:
-    """Absolute sample positions: whole multiples of `cadence`.
-
-    Multiples, not midpoints, so that a grid sampled at `2 * cadence` is
-    exactly every second entry of one sampled at `cadence` - which is what
-    lets two files on different rungs of the ladder still be compared.
-    """
+def grid_sample_count(duration: float, cadence: float = GRID_CADENCE) -> int:
+    """How many samples an absolute-time grid should hold for this duration."""
     if duration <= 0.0 or cadence <= 0.0:
-        return []
-    timestamps: list[float] = []
-    timestamp = cadence
-    while timestamp < duration:
-        timestamps.append(timestamp)
-        timestamp += cadence
-    return timestamps
+        return 0
+    return min(GRID_MAX_SAMPLES, math.ceil(duration / cadence))
 
 
 def fingerprint_video_grid(path: Path, duration: float, ffmpeg: str) -> list[int] | None:
     """Perceptual hashes on an absolute-time grid, for alignment (A-01).
 
-    Computed once per file and cached. The proportional `fingerprint_video`
-    above stays the primary cheap score; this one exists so that alignment -
-    which used to re-decode the longer file once per candidate offset per
-    *pair*, at ~11 s a pair - becomes an integer shift over cached hashes.
+    Sample `n` is the frame at `n * GRID_CADENCE` seconds, so the same moment
+    of the same content lands on the same index in every file that contains
+    it and alignment is an integer shift over cached hashes.
 
-    Failed frames are kept as `GRID_MISSING_SAMPLE` placeholders rather than
-    dropped, because dropping one would shift every later sample off the
-    absolute grid and silently misalign the whole sequence.
+    Built in a single decode pass. One seek per sample is cheaper only while
+    the sample count is small - the 1.7.0 audit measured that trade for 15
+    samples and rightly chose seeks - but the cadence has to be fine enough to
+    resolve a few seconds of offset (A-13), and at hundreds of samples one
+    pass wins outright: 851 samples in 7.9s versus 8.5s for 53 seeks on the
+    same file. ffmpeg does the downscale, so nothing full-resolution is ever
+    piped back.
     """
-    timestamps = grid_timestamps(duration, grid_cadence(duration))
-    if not timestamps:
+    expected = grid_sample_count(duration)
+    if expected <= 0:
         return None
-    # A grid can be hundreds of samples, each costing two ffmpeg spawns when a
-    # frame fails. Give up as soon as enough samples have failed that the
-    # coverage floor is already unreachable, so an unreadable file (or a
-    # missing ffmpeg) costs a handful of spawns instead of hundreds.
-    allowed_failures = len(timestamps) - math.ceil(len(timestamps) * MINIMUM_FRAME_COVERAGE)
-    failures = 0
-    consecutive_failures = 0
-    hashes: list[int] = []
-    for timestamp in timestamps:
-        frame = _extract_frame(path, timestamp, ffmpeg)
-        if frame is None:
-            frame = _extract_frame(path, timestamp + FRAME_RETRY_NUDGE, ffmpeg)
-        if frame is None:
-            failures += 1
-            consecutive_failures += 1
-            if failures > allowed_failures or consecutive_failures > GRID_MAX_CONSECUTIVE_FAILURES:
-                LOGGER.warning("Cannot build an alignment grid for %s: too many unreadable frames", path)
-                return None
-        else:
-            consecutive_failures = 0
-        hashes.append(phash(frame) if frame is not None else GRID_MISSING_SAMPLE)
-    return hashes
+    size = GRID_THUMBNAIL_SIZE
+    command = [
+        ffmpeg,
+        "-v",
+        "error",
+        "-i",
+        str(path),
+        "-vf",
+        f"fps=1/{GRID_CADENCE:g},scale={size}:{size}",
+        "-frames:v",
+        str(expected),
+        "-pix_fmt",
+        "gray",
+        "-f",
+        "rawvideo",
+        "-",
+    ]
+    try:
+        result = process.run(command, capture_output=True, check=True, timeout=600)
+    except (subprocess.SubprocessError, OSError) as exc:
+        LOGGER.warning("Cannot build an alignment grid for %s: %s", path, exc)
+        return None
+
+    raw = result.stdout
+    stride = size * size
+    count = len(raw) // stride
+    if count < max(2, math.ceil(expected * GRID_MIN_COVERAGE)):
+        LOGGER.warning(
+            "Cannot build an alignment grid for %s: decoded %d of %d expected samples", path, count, expected
+        )
+        return None
+    if Image is None:
+        return None
+    return [
+        phash(Image.frombytes("L", (size, size), raw[index * stride : (index + 1) * stride])) for index in range(count)
+    ]
 
 
 def _grid_overlap(left: list[int], right: list[int], shift: int) -> list[tuple[int, int]]:
@@ -239,70 +245,91 @@ def _grid_overlap(left: list[int], right: list[int], shift: int) -> list[tuple[i
     ]
 
 
-def _to_common_cadence(
-    left: list[int],
-    left_duration: float,
-    right: list[int],
-    right_duration: float,
-) -> tuple[list[int], list[int], float]:
-    """Put two grids on the same cadence by striding the finer one.
+def _shift_score(left: list[int], right: list[int], shift: int, minimum_span: int) -> tuple[float, int]:
+    """Mean similarity at one shift, over at most `GRID_SEARCH_PROBES` slots.
 
-    Cadences come from a power-of-two ladder, so the coarser grid's samples
-    are always a subset of the finer grid's - taking every Nth entry lines
-    them back up on identical absolute timestamps.
+    Subsampling is what keeps the search affordable at a 2-second cadence: a
+    full-resolution scan of every shift against every slot would be tens of
+    thousands of comparisons per pair.
+
+    Returns `(mean, span)` so callers can break ties toward the wider overlap.
+    Without `minimum_span`, a shift that leaves only a couple of overlapping
+    slots can tie - or beat - the true alignment on pure luck.
     """
-    left_cadence = grid_cadence(left_duration)
-    right_cadence = grid_cadence(right_duration)
-    cadence = max(left_cadence, right_cadence)
-    if left_cadence < cadence:
-        stride = int(round(cadence / left_cadence))
-        left = left[stride - 1 :: stride]
-    if right_cadence < cadence:
-        stride = int(round(cadence / right_cadence))
-        right = right[stride - 1 :: stride]
-    return left, right, cadence
+    start = max(0, shift)
+    stop = min(len(left), len(right) + shift)
+    span = stop - start
+    if span < minimum_span:
+        return -1.0, 0
+    step = max(1, span // GRID_SEARCH_PROBES)
+    total = 0.0
+    count = 0
+    for index in range(start, stop, step):
+        a = left[index]
+        b = right[index - shift]
+        if a == GRID_MISSING_SAMPLE or b == GRID_MISSING_SAMPLE:
+            continue
+        total += hamming_similarity([a], [b])
+        count += 1
+    if count < GRID_MIN_OVERLAP:
+        return -1.0, 0
+    return total / count, span
+
+
+def _best_grid_shift(left: list[int], right: list[int], max_steps: int, minimum_span: int) -> int | None:
+    """Coarse-to-fine search for the shift that best aligns two grids."""
+    best_shift: int | None = None
+    best_key = (-1.0, 0)
+    for shift in range(-max_steps, max_steps + 1, GRID_SEARCH_COARSE_STRIDE):
+        key = _shift_score(left, right, shift, minimum_span)
+        if key > best_key:
+            best_key = key
+            best_shift = shift
+    if best_shift is None:
+        return None
+    # The coarse pass can only land within GRID_SEARCH_COARSE_STRIDE slots of
+    # the true offset; refine at full resolution around the winner.
+    for shift in range(best_shift - GRID_SEARCH_REFINE_SLOTS, best_shift + GRID_SEARCH_REFINE_SLOTS + 1):
+        if abs(shift) > max_steps:
+            continue
+        key = _shift_score(left, right, shift, minimum_span)
+        if key > best_key:
+            best_key = key
+            best_shift = shift
+    return best_shift
 
 
 def grid_aligned_similarity(
     left: list[int] | None,
     right: list[int] | None,
-    left_duration: float | None,
-    right_duration: float | None,
     max_shift: float = ALIGNMENT_MAX_SHIFT,
 ) -> float:
     """Raw-scale similarity after aligning two absolute-time grids.
 
-    Two stages, both cheap. First pick the best integer shift by mean Hamming
-    similarity - one pass per candidate shift over cached integers. Then score
-    that alignment with `ordered_sequence_similarity`, the same DP (and the
-    same coverage penalty, and therefore the same scale) the unaligned path
-    uses, over an evenly spaced subsample of the aligned overlap. Scoring the
-    winner with the DP rather than the mean matters: a plain mean loses real
-    duplicates whose frames drift slightly against the grid.
+    Two stages, both cheap. First find the integer shift that best lines the
+    two grids up, coarse-to-fine. Then score that alignment with
+    `ordered_sequence_similarity`, the same DP (and the same coverage penalty,
+    and therefore the same scale) the unaligned path uses, over an evenly
+    spaced subsample of the aligned overlap. Scoring the winner with the DP
+    rather than the mean matters: a plain mean loses real duplicates whose
+    frames drift slightly against the grid.
     """
-    if not left or not right or left_duration is None or right_duration is None:
-        return 0.0
-    left, right, cadence = _to_common_cadence(left, left_duration, right, right_duration)
     if not left or not right:
         return 0.0
-    max_steps = max(0, int(max_shift / cadence)) if cadence > 0 else 0
+    # Half of the shorter grid must still overlap, so that a pair can never be
+    # "aligned" on a sliver of its content.
     minimum_overlap = max(GRID_MIN_OVERLAP, math.ceil(GRID_MIN_OVERLAP_RATIO * min(len(left), len(right))))
-    best_pairs: list[tuple[int, int]] = []
-    best_mean = -1.0
-    for shift in range(-max_steps, max_steps + 1):
-        overlap = _grid_overlap(left, right, shift)
-        if len(overlap) < minimum_overlap:
-            continue
-        mean = sum(hamming_similarity([a], [b]) for a, b in overlap) / len(overlap)
-        if mean > best_mean:
-            best_mean = mean
-            best_pairs = overlap
-    if not best_pairs:
+    max_steps = max(0, int(max_shift / GRID_CADENCE))
+    shift = _best_grid_shift(left, right, max_steps, minimum_overlap)
+    if shift is None:
         return 0.0
-    if len(best_pairs) > SAMPLE_COUNT:
-        step = len(best_pairs) / SAMPLE_COUNT
-        best_pairs = [best_pairs[int(index * step)] for index in range(SAMPLE_COUNT)]
-    return ordered_sequence_similarity([a for a, _ in best_pairs], [b for _, b in best_pairs])
+    pairs = _grid_overlap(left, right, shift)
+    if len(pairs) < GRID_MIN_OVERLAP:
+        return 0.0
+    if len(pairs) > SAMPLE_COUNT:
+        step = len(pairs) / SAMPLE_COUNT
+        pairs = [pairs[int(index * step)] for index in range(SAMPLE_COUNT)]
+    return ordered_sequence_similarity([a for a, _ in pairs], [b for _, b in pairs])
 
 
 def hamming_similarity(left: list[int], right: list[int], bits_per_hash: int = 64) -> float:
@@ -436,13 +463,7 @@ def video_similarity(left: FileRecord, right: FileRecord) -> float:
     if left.fingerprint is None or right.fingerprint is None:
         return 0.0
     similarity = ordered_sequence_similarity(left.fingerprint, right.fingerprint)
-    aligned = grid_aligned_similarity(
-        left.grid_fingerprint,
-        right.grid_fingerprint,
-        left.duration,
-        right.duration,
-    )
-    return max(similarity, aligned)
+    return max(similarity, grid_aligned_similarity(left.grid_fingerprint, right.grid_fingerprint))
 
 
 def find_video_matches(

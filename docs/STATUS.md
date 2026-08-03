@@ -6,7 +6,7 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.9.0`. Stages A through E, and Stage F
+The current package version is `1.9.1`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -19,16 +19,24 @@ every duration-compatible pair, uncached. 1.9.0 fixes that (A-01) by
 sampling each video once on an absolute-time grid, caching it, and aligning
 by integer shifts over cached hashes:
 
-| | 1.8.0 | 1.9.0 |
-| --- | ---: | ---: |
-| Alignment cost per pair | 10.3-12.3 s | ~1.3 ms |
-| Full library scan, cold cache | ~39 hours | **17 minutes** |
-| Full library scan, warm cache | ~39 hours | **32 seconds** |
+1.9.1 then fixed a defect in that fix (A-13): the grid cadence was chosen to
+bound the sample count, which made it 32 seconds for a typical episode — too
+coarse to resolve the few seconds of offset that separate two releases of
+the same episode. It is now a fixed 2 seconds, built in one decode pass.
+
+| | 1.8.0 | 1.9.0 | 1.9.1 |
+| --- | ---: | ---: | ---: |
+| Alignment cost per pair | 10.3-12.3 s | 1.3 ms | 4.5 ms |
+| Full library scan, warm cache | ~39 hours | 32 s | **105 s** |
+| Video matches at the default | 82 (many false) | 105 | **129** |
+| Lowest labelled true positive | — | 15.25 | **34.00** |
 
 `video_threshold` moved `15.0` → `20.0` as part of the same work, this time
 derived from all 22 849 compatible pairs of the real library rather than
-from 76 curated pairs (A-02). The 15-19 band turned out to be dominated by
-cross-title false positives, including different episodes of the same show.
+from 76 curated pairs (A-02). The 15-19 band was dominated by cross-title
+false positives, including different episodes of the same show. After A-13
+the two classes separate with nothing at all between `18.72` and `28.44`,
+so `20.0` sits inside an empty gap rather than on a knife edge.
 
 From the earlier `1.7.0` audit: similar-match results are grouped into
 transitive clusters instead of pairs (F-23), scans and folder consolidation
@@ -79,8 +87,8 @@ Implemented:
 - exact duplicate detection for every explicitly included file extension using
   partial and full hashes;
 - video similarity using 15 sampled ffmpeg frames and perceptual hashes;
-- a second, absolute-time alignment grid per video (one frame every 1-32s
-  depending on duration), cached in SQLite and versioned separately, so
+- a second, absolute-time alignment grid per video (one frame every 2s, built
+  in a single decode pass), cached in SQLite and versioned separately, so
   time-shifted duplicates align by integer offset over cached hashes instead
   of re-decoding a file per candidate offset per pair;
 - alignment applied to every duration-compatible pair, with no score floor
@@ -258,12 +266,13 @@ clean and a documented 37-error `mypy` baseline.
   and 0/10 false positives at 85%; weaker same-title variants remain review
   hints, and the compilation pair is duration-gated.
 - A full 276-video / 97.5 GB real library scan (`S:\Daedalus\Kiroku\TestLib`)
-  completes in **17 minutes cold** and **32 seconds warm** on 4 workers,
-  yielding 105 video matches, 14 exact groups, and 53 folder pairs at the
-  `20.0` default. The pre-1.9.0 matcher would have needed ~39 hours for the
-  same scan (`docs/AUDIT-1.8.0.md`, A-01). This supersedes the earlier
-  "59-file collection in about 20 seconds" note, which predated the
-  alignment work entirely.
+  yields 129 video matches, 14 exact groups, and 61 folder pairs at the
+  `20.0` default. On 4 workers the one-time alignment-grid build takes
+  **26 minutes** (it reads every file once, so it is disk-bandwidth-bound)
+  and a warm-cache rescan takes **105 seconds**. The pre-1.9.0 matcher would
+  have needed ~39 hours for the same scan (`docs/AUDIT-1.8.0.md`, A-01).
+  This supersedes the earlier "59-file collection in about 20 seconds" note,
+  which predated the alignment work entirely.
 
 ## Development Environment
 
@@ -316,12 +325,13 @@ Deferred matching and advanced encoding ideas remain in `docs/ROADMAP.md`.
 
 Ongoing matching work remains evidence-driven:
 
-- F-24 (similarity rescale) and F-27 (absolute-time sampling grid) are both
-  done — the grid landed properly in 1.9.0 as A-01. F-30 (descriptor
-  investigation) is the remaining detection-quality item, and it is now the
-  only thing standing between the matcher and the last known misses: two
-  confirmed duplicates in the real library score `15.25` and `19.08` even
-  with alignment, below the evidence-derived `20.0` bar;
+- **F-30 is closed, and its premise was wrong.** Both of its named misses
+  turned out to be alignment failures, not descriptor ceilings: at 1.9.0's
+  32-second grid cadence a mere 6-second offset between two releases was
+  invisible. At 1.9.1's 2-second cadence the same pairs score `66.30` and
+  `75.42` instead of `19.08` and `15.25`, with no movement at all in any
+  confirmed false positive (A-13). If new misses appear, re-check alignment
+  before assuming the descriptor is at fault;
 - re-derive `image_threshold` on real image evidence (A-06): the current
   `80.0` is not the scale-preserving equivalent of the old `90` it was
   documented as;

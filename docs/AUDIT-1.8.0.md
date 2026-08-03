@@ -316,6 +316,105 @@ exist.
 | A-10 | Remove the dead `duration_tolerance` parameter | Low | Done in 1.9.0 |
 | A-11 | De-duplicate identical folder pairs across scopes | Low | Done in 1.9.0 |
 | A-12 | Restore Qt global state in tests; validate restored roots | Low | Qt state done in 1.9.0; root validation open |
+| A-13 | Grid cadence too coarse to resolve a few seconds of offset | Critical | Done in 1.9.1 |
+
+## A-13 · The 1.9.0 grid cadence was too coarse to see a few seconds of offset
+
+Found while investigating F-30 (the "descriptor ceiling") with the fast
+infrastructure A-01 had just made possible. **It was not a descriptor
+problem, and F-30's premise does not hold for these pairs** — it was a defect
+in A-01's own fix.
+
+A-01 chose the grid cadence to bound the sample count: a power-of-two ladder
+targeting ~96 samples, which for a 28-minute episode means one frame every
+**32 seconds**. But an integer-slot shift can only cancel offsets that are
+*multiples of the cadence*, and a few seconds of extra logo, intro, or black
+at the head of a release is the most common difference between two copies of
+one episode. At a 32-second cadence such a pair is invisible: every sample
+lands in a different shot, and the pair scores as noise.
+
+Measured on `Bikyaku Seido Kaichou Ai 01`, `_dub` versus `_rus` — which the
+1.9.0 matcher scored `19.08`, below its own threshold. A fine cross-scan of
+frames 60-360s found a clean constant offset:
+
+```
+best constant offsets (mean similarity over overlapping frames):
+  offset     +6s  mean  81.4%  over 49 frames     <- the true alignment
+  offset    +12s  mean  57.2%  over 48 frames
+  offset     +0s  mean  54.8%  over 50 frames     <- what a 32s grid can see
+frame pairs >= 85%: 38 of 2500, many at exactly 100%
+```
+
+Six seconds. Invisible to a 32-second grid, obvious at a fine one.
+
+The reason A-01 picked a coarse cadence was cost: one ffmpeg seek per sample
+at ~0.16 s means 425 seeks (68 s) for a 4-second cadence. But that trade
+inverts once the sample count is large — the 1.7.0 audit's withdrawn
+"single decode pass" idea was measured for **15** samples, where seeks
+rightly won. Re-measured on a 28-minute 720p episode for a *grid*:
+
+| Approach | Samples | Time |
+| --- | ---: | ---: |
+| Seeks, 32s cadence (1.9.0) | 53 | 8.5 s |
+| Seeks, 4s cadence | 425 | 67.8 s (extrapolated) |
+| **One decode pass, 4s cadence** | 426 | **7.5 s** |
+| **One decode pass, 2s cadence** | 851 | **7.9 s** |
+
+One pass at a 2-second cadence is *cheaper* than 53 seeks and gives 16×
+the resolution, because ffmpeg does the downscale and the cost is decode-
+bound, not sample-bound.
+
+**Fix (1.9.1):** fixed 2-second cadence for every file, built in a single
+decode pass (`fps=1/2,scale=32:32`, gray rawvideo). A fixed cadence also
+removes the power-of-two ladder and the cross-cadence striding it needed.
+The shift search became coarse-to-fine with a bounded probe subsample, since
+a flat scan of ~180 shifts against ~850 slots would be ~76k comparisons per
+pair.
+
+Effect on the labelled pairs — true positives move, false positives do not:
+
+| Pair | Truth | 1.9.0 | 1.9.1 |
+| --- | --- | ---: | ---: |
+| `Bikyaku Seido Kaichou Ai 01` `_dub` ↔ `_rus` | duplicate | 19.08 | **66.30** |
+| `Vampire_02` ↔ `Vampire_02` | duplicate | 15.25 | **75.42** |
+| `Vampire_01` ↔ `Vampire_01` | duplicate | 21.50 | **71.72** |
+| `Mesudachi-The-Animation-2` ↔ `Мои горячие подружки 2` | duplicate | 91.98 | 92.87 |
+| `Kimekoi Ep.2` ↔ `Shishunki-Sex-1` | unrelated | 15.47 | 15.47 |
+| `Venus Blood Brave/Ep.2` ↔ `Boku Dake/Ep.1` | unrelated | 15.44 | 15.44 |
+| `Aku no Onna Kanbu` Ep.1 ↔ Ep.2 | different episodes | 17.33 | 17.33 |
+| `Girls-Rush-1` ↔ `Girls-Rush-2` | different episodes | 15.64 | 15.64 |
+
+Re-measured over the whole library afterwards, the two classes now separate
+with a wide empty gap — **no pair at all scores between 18.72 and 28.44**.
+Everything above the gap is a genuine same-title duplicate; everything below
+it is cross-title. The `20.0` default therefore sits inside empty space
+rather than on a knife edge, and needed no change.
+
+| Library scan | 1.9.0 (32s grid) | 1.9.1 (2s grid) |
+| --- | ---: | ---: |
+| Video matches at the `20.0` default | 105 | **129** |
+| Lowest labelled true positive | 15.25 | **34.00** |
+| Highest labelled false positive | 19.21 | **18.72** |
+| Grid build, 276 files, 4 workers | 15 min | 26 min |
+| Warm-cache scan | 32 s | 105 s |
+
+The extra 24 matches are true duplicates that 1.9.0 scored as noise. The
+cost is a slower one-time grid build (it reads every file once, so it is
+disk-bandwidth-bound) and a 3.5× slower pair loop, both of which stay well
+inside a usable scan.
+
+Two process notes worth keeping:
+
+- **F-30 was chasing the wrong cause.** Both of its named misses were
+  alignment failures, not descriptor ceilings. The 1.7.0 audit's reasoning
+  ("one episode has essentially no duration delta, yet still scores low,
+  which rules out alignment") assumed alignment means *duration*
+  compensation; a same-duration pair can still be offset in time.
+- **An intermediate conclusion here was wrong and caught by measurement.**
+  An order-agnostic coverage check said these files shared almost no frames
+  (5.7%), which looked like proof of different content — but the check
+  sampled both files on the same broken grid, so it inherited the same blind
+  spot. The contact sheets and the fine cross-scan corrected it.
 
 ## Verification of the 1.9.0 fixes
 
