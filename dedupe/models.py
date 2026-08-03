@@ -10,6 +10,9 @@ VIDEO_FINGERPRINT_VERSION = 3
 # invalidate for different reasons: bump this when the cadence or the sample
 # layout changes, not when the proportional fingerprint does.
 GRID_FINGERPRINT_VERSION = 2
+# 1: one perceptual hash plus the average colour. 2: eight dihedral hashes of
+# the border-trimmed image, plus its trimmed average colour (A-15).
+IMAGE_FINGERPRINT_VERSION = 2
 
 
 @dataclass(slots=True)
@@ -29,6 +32,7 @@ class FileRecord:
     grid_fingerprint: list[int] | None = None
     grid_fingerprint_version: int | None = None
     image_fingerprint: list[int] | None = None
+    image_fingerprint_version: int | None = None
     audio_fingerprint: list[int] | None = None
 
     @property

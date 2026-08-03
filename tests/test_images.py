@@ -10,7 +10,13 @@ from dedupe.cache import Cache
 from dedupe.cli import main
 from dedupe.exact_hash import find_exact_duplicates
 from dedupe.folder_compare import build_cluster_assignments
-from dedupe.image_fingerprint import PIL_AVAILABLE, find_image_matches
+from dedupe.image_fingerprint import (
+    PIL_AVAILABLE,
+    fingerprint_image,
+    find_image_matches,
+    image_similarity,
+    trim_border,
+)
 from dedupe.models import FileRecord, NormalizedName
 from dedupe.scanner import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, normalize_extensions
 
@@ -89,6 +95,92 @@ class ImageFingerprintTests(unittest.TestCase):
 
             self.assertEqual(len(exact_groups), 1)
             self.assertEqual(image_matches, [])
+
+    def _textured(self, path: Path, seed: int = 0) -> Path:
+        image = Image.new("RGB", (320, 200), "navy")
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((20 + seed, 15, 300, 150), fill="gold")
+        draw.ellipse((70, 30 + seed, 250, 180), fill="crimson")
+        draw.line((0, 199, 319, seed), fill="white", width=6)
+        image.save(path)
+        return path
+
+    def _fingerprint(self, path: Path) -> list[int]:
+        record = FileRecord(path, path.parent, 0, 0.0, path.name)
+        fingerprint = fingerprint_image(record)
+        assert fingerprint is not None
+        return fingerprint
+
+    def test_rotations_and_mirrors_match_exactly(self) -> None:
+        # A-15: a perceptual hash of a rotated picture shares nothing with the
+        # original - every 90-degree rotation and every mirror scored exactly
+        # 0 before the dihedral views were stored.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source = self._textured(base / "source.png")
+            original = self._fingerprint(source)
+
+            with Image.open(source) as opened:
+                image = opened.convert("RGB")
+                for label, view in (
+                    ("rotate 90", image.rotate(90, expand=True)),
+                    ("rotate 180", image.rotate(180, expand=True)),
+                    ("rotate 270", image.rotate(270, expand=True)),
+                    ("mirror", image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)),
+                ):
+                    target = base / f"{label.replace(' ', '_')}.png"
+                    view.save(target)
+                    with self.subTest(transform=label):
+                        self.assertEqual(image_similarity(self._fingerprint(target), original), 100.0)
+
+    def test_letterboxing_is_trimmed_before_hashing(self) -> None:
+        # A-15: bars and margins used to change the descriptor outright.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source = self._textured(base / "source.png")
+            with Image.open(source) as opened:
+                image = opened.convert("RGB")
+                boxed = Image.new("RGB", (image.width, image.height + 60), "black")
+                boxed.paste(image, (0, 30))
+                boxed.save(base / "letterboxed.png")
+
+            self.assertEqual(
+                image_similarity(self._fingerprint(base / "letterboxed.png"), self._fingerprint(source)),
+                100.0,
+            )
+
+    def test_border_trimming_survives_a_brightness_change(self) -> None:
+        # A-15: the border tolerance is an absolute number of levels, so on a
+        # raw image a 20% darkening shrinks every difference by 20% and moves
+        # the boundary - measured on two real frames, that turned a pair
+        # scoring 100 into 43.75 and 50.00. Detection runs on a
+        # contrast-normalised copy for exactly this reason.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source = self._textured(base / "source.png")
+            with Image.open(source) as opened:
+                image = opened.convert("RGB")
+                boxed = Image.new("RGB", (image.width, image.height + 60), "black")
+                boxed.paste(image, (0, 30))
+                boxed.save(base / "boxed.png")
+                ImageEnhance.Brightness(boxed).enhance(0.8).save(base / "boxed_dark.png")
+
+            self.assertEqual(
+                trim_border(Image.open(base / "boxed.png").convert("RGB")).size,
+                trim_border(Image.open(base / "boxed_dark.png").convert("RGB")).size,
+            )
+
+    def test_trimming_refuses_to_swallow_the_picture(self) -> None:
+        # A-15: trimming is for borders. A picture that is mostly one colour
+        # must not be reduced to whatever small area differs from it.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            image = Image.new("RGB", (400, 400), "white")
+            ImageDraw.Draw(image).rectangle((180, 180, 220, 220), fill="black")
+            image.save(base / "mostly_blank.png")
+
+            trimmed = trim_border(Image.open(base / "mostly_blank.png").convert("RGB"))
+            self.assertEqual(trimmed.size, (400, 400))
 
     def test_different_solid_colors_are_not_false_matches(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

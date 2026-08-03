@@ -100,6 +100,48 @@ content at the *end* of a release does not need a shift, only a smaller
 overlap — which is why the tolerance is looser than the shift range and the
 overlap requirement had to come down with it.
 
+## Image orientation and borders (A-15)
+
+An image stores **eleven** values: eight perceptual hashes and an average
+colour. The eight are the same picture under the dihedral group — four
+rotations, each optionally mirrored — because a perceptual hash of a rotated
+picture has nothing whatever in common with the original. Comparison takes
+one side's eight views against the other's own view, which covers every
+relative orientation since the group is closed.
+
+Before hashing, a uniform border is trimmed, so letterboxing and page
+margins stop changing the descriptor. Border detection runs on a
+contrast-normalised copy: the tolerance is an absolute number of levels, so
+on the raw image a 20% darkening shrinks every difference by 20% and moves
+the boundary. Trimming refuses to remove more than 60% of the area — past
+that it is a crop, not a border.
+
+Measured on 60 real images, 60 variants each:
+
+| Transformation | Before | After |
+| --- | ---: | ---: |
+| Rotate 90 / 180 / 270 | 0/60 | **60/60 at exactly 100** |
+| Mirror | 0/60 | **60/60 at exactly 100** |
+| Letterbox 10% | 30/60 | **59/60** |
+| White margin 8% | 33/60 | **60/60** |
+| Unrelated pairs, worst score | 43.75 | 50.00 |
+
+The eight views give an unrelated pair eight chances to match, which is why
+the negative ceiling moved — from `43.75` to `50.00`, still comfortably
+under the `60.0` bar, and no false positives appeared in 5 995 real pairs. A
+sixteen-view variant that also stored an 80%-centre crop was measured and
+**rejected**: it bought one crop level while pushing the worst negative to
+`56.25`, too close to the threshold to be worth it.
+
+Content cropping remains unsupported past roughly 10% of a side — a centre
+crop to 80% scores 37.50 at the median. Normalising the border detection
+also made ordinary transformations *more* robust, not less: the worst
+`brightness -20%` case went from `43.75` to `87.50`, and `jpeg q40` from
+`75.00` to `87.50`.
+
+Cost: about 66 ms per image to fingerprint, against roughly 8 ms for the
+single hash before. That is paid once per file and cached.
+
 Audio also has a **degenerate-fingerprint veto**, the counterpart of the
 image colour veto. A pure tone or silence fingerprints to a single repeated
 Chromaprint item, and two *different* pure tones score `75.00` against each

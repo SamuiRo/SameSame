@@ -312,7 +312,14 @@ Empty source directories are removed only after full success.
 These remain separate from the GUI/transcoding roadmap:
 
 - optional episode-in-compilation segment matching;
-- rotation/crop-resistant image matching;
+- ~~rotation/crop-resistant image matching~~ — **partly delivered in 1.10.0**
+  (A-15): 90-degree rotation and mirroring now match exactly, and uniform
+  borders are trimmed so letterboxing and margins do not matter. Content
+  cropping past roughly 10% of a side is still unsupported and would need a
+  different descriptor (tiles or keypoints), not another whole-image view —
+  a 16-view variant carrying an 80%-centre crop was measured and rejected
+  for pushing the worst unrelated pair from 43.75 to 56.25 against a 60.0
+  bar. See `docs/THRESHOLDS.md`;
 - threshold-safe video/audio candidate blocking if real collections prove it
   necessary;
 - broader threshold manifests and low-texture video tuning;

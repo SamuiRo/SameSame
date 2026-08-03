@@ -7,7 +7,13 @@ from pathlib import Path
 from typing import Iterable
 
 from .db import connect
-from .models import GRID_FINGERPRINT_VERSION, VIDEO_FINGERPRINT_VERSION, FileRecord, NormalizedName
+from .models import (
+    GRID_FINGERPRINT_VERSION,
+    IMAGE_FINGERPRINT_VERSION,
+    VIDEO_FINGERPRINT_VERSION,
+    FileRecord,
+    NormalizedName,
+)
 
 
 class Cache:
@@ -44,6 +50,7 @@ class Cache:
                 grid_fingerprint TEXT,
                 grid_fingerprint_version INTEGER,
                 image_fingerprint TEXT,
+                image_fingerprint_version INTEGER,
                 audio_fingerprint TEXT,
                 raw_name TEXT NOT NULL
             );
@@ -71,6 +78,7 @@ class Cache:
         self._ensure_column("files", "fingerprint_version", "INTEGER")
         self._ensure_column("files", "grid_fingerprint", "TEXT")
         self._ensure_column("files", "grid_fingerprint_version", "INTEGER")
+        self._ensure_column("files", "image_fingerprint_version", "INTEGER")
         self._ensure_column("name_cache", "provider", "TEXT")
         self._ensure_column("name_cache", "model", "TEXT")
         self._ensure_column("name_cache", "prompt_hash", "TEXT")
@@ -108,7 +116,12 @@ class Cache:
             if row["grid_fingerprint"] and record.grid_fingerprint_version == GRID_FINGERPRINT_VERSION
             else None
         )
-        record.image_fingerprint = json.loads(row["image_fingerprint"]) if row["image_fingerprint"] else None
+        record.image_fingerprint_version = row["image_fingerprint_version"]
+        record.image_fingerprint = (
+            json.loads(row["image_fingerprint"])
+            if row["image_fingerprint"] and record.image_fingerprint_version == IMAGE_FINGERPRINT_VERSION
+            else None
+        )
         record.audio_fingerprint = json.loads(row["audio_fingerprint"]) if row["audio_fingerprint"] else None
         record.raw_name = row["raw_name"]
         return True
@@ -119,9 +132,10 @@ class Cache:
             INSERT INTO files(
                 path, size, mtime, partial_hash, partial_hash_algo, full_hash,
                 full_hash_algo, duration, fingerprint, fingerprint_version, grid_fingerprint,
-                grid_fingerprint_version, image_fingerprint, audio_fingerprint, raw_name
+                grid_fingerprint_version, image_fingerprint, image_fingerprint_version,
+                audio_fingerprint, raw_name
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
                 size = excluded.size,
                 mtime = excluded.mtime,
@@ -135,6 +149,7 @@ class Cache:
                 grid_fingerprint = excluded.grid_fingerprint,
                 grid_fingerprint_version = excluded.grid_fingerprint_version,
                 image_fingerprint = excluded.image_fingerprint,
+                image_fingerprint_version = excluded.image_fingerprint_version,
                 audio_fingerprint = excluded.audio_fingerprint,
                 raw_name = excluded.raw_name
             """,
@@ -152,6 +167,7 @@ class Cache:
                 json.dumps(record.grid_fingerprint) if record.grid_fingerprint is not None else None,
                 record.grid_fingerprint_version,
                 json.dumps(record.image_fingerprint) if record.image_fingerprint is not None else None,
+                record.image_fingerprint_version,
                 json.dumps(record.audio_fingerprint) if record.audio_fingerprint is not None else None,
                 record.raw_name,
             ),
@@ -194,8 +210,9 @@ class Cache:
         paths = [record.path_key for record in records]
         for record in records:
             record.image_fingerprint = None
+            record.image_fingerprint_version = None
         self.conn.executemany(
-            "UPDATE files SET image_fingerprint = NULL WHERE path = ?",
+            "UPDATE files SET image_fingerprint = NULL, image_fingerprint_version = NULL WHERE path = ?",
             [(path,) for path in paths],
         )
         self.conn.commit()

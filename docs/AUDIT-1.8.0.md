@@ -325,6 +325,45 @@ exist.
 
 Every finding in this audit is now closed.
 
+## Post-audit work carrying the same numbering
+
+`A-15` is not an audit finding — it is a `docs/ROADMAP.md` deferred feature
+(rotation/crop-resistant image matching) delivered in 1.10.0, numbered in
+this series because the code comments reference it and a reader needs
+somewhere to look it up.
+
+**A-15 · Images ignored orientation entirely, and borders changed the
+descriptor.** A perceptual hash of a rotated picture has nothing in common
+with the original: measured on 60 real images, every 90-degree rotation and
+every mirror scored **exactly 0**. Letterboxing and page margins were nearly
+as bad, matching about half the time.
+
+An image now stores eight dihedral views instead of one hash, and a uniform
+border is trimmed before hashing. Border detection runs on a
+contrast-normalised copy — the tolerance is an absolute number of levels, so
+on the raw image a 20% darkening shrinks every difference by 20% and moves
+the boundary, which cost two real frames a drop from 100 to 43.75 and 50.00.
+
+| Transformation | Before | After |
+| --- | ---: | ---: |
+| Rotate 90 / 180 / 270, mirror | 0/60 | **60/60 at exactly 100** |
+| Letterbox 10% | 30/60 | **59/60** |
+| White margin 8% | 33/60 | **60/60** |
+| Unrelated pairs, worst | 43.75 | 50.00 (0 false positives at 60) |
+
+Two design decisions were made by measurement rather than taste, and both
+went against the more ambitious option:
+
+- A sixteen-view descriptor that also stored an 80%-centre crop was
+  **rejected**: it rescued one crop level while pushing the worst unrelated
+  pair to `56.25`, leaving under four points of margin.
+- A "only trim a substantial border" stability rule was **removed** after it
+  changed nothing measurable and slightly hurt one case. Normalising the
+  probe was the fix; the extra rule was unjustified complexity.
+
+Content cropping past roughly 10% of a side remains unsupported and needs a
+different descriptor, not another whole-image view.
+
 ## Closing validation — 1.9.4
 
 A full scan of the real library at the shipped defaults, all three matchers

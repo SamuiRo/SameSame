@@ -1,6 +1,6 @@
 # SameSame
 
-SameSame `1.9.4` finds duplicate and similar media files through a command-line
+SameSame `1.10.0` finds duplicate and similar media files through a command-line
 scanner or an optional desktop review interface. It scans one or more folder
 trees recursively and writes reports for manual review.
 
@@ -16,7 +16,8 @@ can identity-check and quarantine it before promoting the validated MKV.
 - exact byte-identical files, confirmed by full hashes;
 - similar videos across container, resolution, bitrate, and ordinary cut
   differences;
-- similar images across resize, recompression, and common format changes;
+- similar images across resize, recompression, format changes, 90-degree
+  rotation, mirroring, and letterboxing or page margins;
 - similar audio across codec, bitrate, container, and moderate volume changes;
 - related folder trees based on their canonical media clusters;
 - lower-confidence name hints for files that deserve manual inspection.

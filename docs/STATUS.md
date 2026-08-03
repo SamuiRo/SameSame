@@ -6,7 +6,7 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.9.4`. Stages A through E, and Stage F
+The current package version is `1.10.0`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -98,10 +98,14 @@ Implemented:
 - versioned video fingerprints with monotonic sequence alignment;
 - ratio/delta duration gating that permits ordinary alternate cuts while
   excluding single episodes from multi-episode compilations;
-- image similarity using calibrated perceptual structure, with average
-  colour acting only as a veto rather than as part of the score;
+- image similarity using calibrated perceptual structure over eight
+  dihedral views (four rotations, each optionally mirrored), so 90-degree
+  rotation and mirroring match exactly, with a uniform border trimmed before
+  hashing and average colour acting only as a veto rather than as part of
+  the score;
 - default image support for JPG/JPEG, PNG, WebP, BMP, GIF, TIFF;
-- image matching across resize, JPEG recompression, and common format changes;
+- image matching across resize, JPEG recompression, common format changes,
+  90-degree rotation, mirroring, and letterboxing or page margins;
 - audio similarity using ffmpeg's Chromaprint muxer, aligned over ±30
   seconds of offset by probing every shift and scoring only the winner;
 - default audio support for MP3, FLAC, WAV, M4A, AAC, Ogg, Opus, WMA, AIFF;
@@ -271,7 +275,8 @@ clean and a documented 37-error `mypy` baseline.
   baseline — the live evidence is the real-library measurement below and the
   per-medium derivations in `docs/AUDIT-1.8.0.md` (A-02, A-06, A-14).
 - A full 276-video / 97.5 GB real library scan (`S:\Daedalus\Kiroku\TestLib`)
-  yields 129 video matches, 14 exact groups, and 61 folder pairs at the
+  takes 114 s warm and yields 129 video matches, 14 exact groups, and 61
+  folder pairs at the
   `20.0` default. On 4 workers the one-time alignment-grid build takes
   **26 minutes** (it reads every file once, so it is disk-bandwidth-bound)
   and a warm-cache rescan takes **105 seconds**. The pre-1.9.0 matcher would
@@ -304,8 +309,11 @@ ffprobe -version
 - Video containment matching (for example, finding one episode inside a
   multi-episode compilation) is not implemented. Such pairs may still appear
   as name hints and are not treated as content duplicates.
-- Image matching is not designed yet for heavy cropping, arbitrary rotation,
-  large overlays/watermarks, or major edits.
+- Image matching handles 90-degree rotations and mirroring exactly, and
+  trims uniform borders so letterboxing and page margins do not matter
+  (A-15). It is still not designed for **content** cropping beyond roughly
+  10% of a side, arbitrary (non-right-angle) rotation, large
+  overlays/watermarks, or major edits.
 - Animated GIF and multi-page TIFF matching currently uses the first decoded
   frame/page.
 - With overlapping roots, each resolved path is assigned to the first supplied
@@ -337,9 +345,13 @@ Ongoing matching work remains evidence-driven:
   `75.42` instead of `19.08` and `15.25`, with no movement at all in any
   confirmed false positive (A-13). If new misses appear, re-check alignment
   before assuming the descriptor is at fault;
-- all three similarity thresholds are now measured rather than carried over
+- all three similarity thresholds are measured rather than carried over
   (A-02 video, A-06 images, A-14 audio), and in two of the three cases the
   measurement changed the formula, not just the number;
+- image matching gained rotation/mirror and border robustness in 1.10.0
+  (A-15). Content cropping past ~10% of a side is the remaining gap and
+  needs a different descriptor — tiles or keypoints — rather than more
+  whole-image views, which were measured and rejected;
 - audio matching is for finding duplicates among standalone audio files
   (mp3/wav/flac and friends) and deliberately does not work alongside video;
   a video-only library correctly exercises none of it. This is settled
@@ -350,7 +362,7 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.9.4`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.10.0`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:
