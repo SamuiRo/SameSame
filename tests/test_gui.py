@@ -122,6 +122,36 @@ class GuiSmokeTests(unittest.TestCase):
             final.close()
             self.application.processEvents()
 
+    def test_missing_collection_roots_are_kept_but_reported(self) -> None:
+        # A-12: a root on a removable drive is missing today and back
+        # tomorrow, so it must survive a restart - but the user should be told
+        # rather than left wondering why the scan found nothing.
+        from dedupe.gui.main_window import MainWindow
+
+        with tempfile.TemporaryDirectory() as tmp:
+            present = str(Path(tmp).resolve())
+            absent = str(Path(tmp).resolve() / "gone")
+
+            first = MainWindow()
+            try:
+                first.folder_list.addItem(present)
+                first.folder_list.addItem(absent)
+            finally:
+                first.close()
+                self.application.processEvents()
+
+            second = MainWindow()
+            try:
+                restored = [second.folder_list.item(i).text() for i in range(second.folder_list.count())]
+                self.assertEqual(restored, [present, absent])
+                # Compare the listed roots exactly: `absent` is a child path of
+                # `present`, so a substring check cannot tell them apart.
+                listed = [line.strip() for line in second.log_view.toPlainText().splitlines()[1:]]
+                self.assertEqual(listed, [absent])
+            finally:
+                second.close()
+                self.application.processEvents()
+
     def test_main_window_constructs_with_all_filters(self) -> None:
         from dedupe.gui.main_window import MainWindow
 

@@ -365,8 +365,19 @@ class MainWindow(QMainWindow):
         folders = settings.value("folders", [])
         if isinstance(folders, str):
             folders = [folders] if folders else []
+        missing: list[str] = []
         for folder in folders:
             self.folder_list.addItem(str(folder))
+            if not Path(str(folder)).is_dir():
+                missing.append(str(folder))
+        if missing:
+            # Kept rather than dropped: a root on a removable drive is missing
+            # today and back tomorrow, and silently discarding it would lose
+            # the user's configuration. Say so instead (A-12).
+            self._append_log(
+                "These collection roots are not available right now and will be skipped by a scan:\n  "
+                + "\n  ".join(missing)
+            )
         provider_index = self.name_provider.findData(settings.value("name_provider", "none", type=str))
         if provider_index >= 0:
             self.name_provider.setCurrentIndex(provider_index)

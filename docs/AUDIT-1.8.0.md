@@ -319,9 +319,34 @@ exist.
 | A-09 | Version and claim drift in the documentation | Low | Done in 1.9.0 |
 | A-10 | Remove the dead `duration_tolerance` parameter | Low | Done in 1.9.0 |
 | A-11 | De-duplicate identical folder pairs across scopes | Low | Done in 1.9.0 |
-| A-12 | Restore Qt global state in tests; validate restored roots | Low | Qt state done in 1.9.0; root validation open |
+| A-12 | Restore Qt global state in tests; validate restored roots | Low | Done — Qt state in 1.9.0, root reporting in 1.9.4 |
 | A-13 | Grid cadence too coarse to resolve a few seconds of offset | Critical | Done in 1.9.1 |
 | A-14 | Audio: 1-second alignment, 3-second duration gate, threshold above where real duplicates land | Critical | Done in 1.9.3 |
+
+Every finding in this audit is now closed.
+
+## Closing validation — 1.9.4
+
+A full scan of the real library at the shipped defaults, all three matchers
+enabled, on a warm cache:
+
+```
+298 files, 109.1 s
+14 exact duplicate groups, 129 video matches, 61 folder pairs, 4 name hints
+0 image matches, 0 audio matches
+```
+
+Both zeroes are correct, and worth recording because a zero is the easiest
+result to mistake for a broken stage:
+
+- **Images.** All 22 posters were fingerprinted. The only genuinely
+  duplicated poster is byte-identical, so it is reported as an exact
+  duplicate and deliberately excluded from perceptual matching. The
+  remaining pairs top out at `37.50`, well under the `60.0` bar — an
+  independent confirmation of A-06's threshold on content that had no part
+  in deriving it.
+- **Audio.** The library is entirely `.mp4`, and audio matching is for
+  standalone audio files by design, so the stage has nothing to do.
 
 ## A-13 · The 1.9.0 grid cadence was too coarse to see a few seconds of offset
 
@@ -586,8 +611,11 @@ matches, all correct — 16 same-track across wav/mp3/flac, and 13 from two
 episodes that genuinely exist twice in the library. Pairs offset by 3
 seconds score 91.49-91.73, where before they were unreachable.
 
-Whether video files should also contribute audio evidence is a scoping
-decision, not a defect, and is not changed here.
+**Confirmed with the user, so it is settled rather than open:** audio
+matching exists to find duplicates *among standalone audio files* — mp3,
+wav, flac and the like — and is deliberately not meant to work alongside
+video. Video files contributing audio evidence is out of scope by design,
+not an omission to be fixed later.
 
 ## Verification of the 1.9.0 fixes
 

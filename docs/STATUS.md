@@ -6,7 +6,7 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.9.3`. Stages A through E, and Stage F
+The current package version is `1.9.4`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -59,14 +59,20 @@ they can readily label). F-27 (alignment-recheck offset sweep) and **F-24
 is now a *calibrated* confidence (`0` = indistinguishable from unrelated
 content, `100` = identical) instead of a raw Hamming-based percentage with a
 ~50% noise floor — see `docs/THRESHOLDS.md` for the full explanation and
-migration notes. Defaults changed accordingly: `video_threshold` `85` → `15`
-→ `20` (see below), `image_threshold` `90` → `80` → `60`, `audio_threshold` `94` →
-`88` → `60` for both images (1.9.2, A-06) and audio (1.9.3, A-14), both
-evidence-derived. At `15.0` the 76-pair corpus reached **52/61 confirmed matches
-(85%) with 0 false positives on that corpus** — but A-02 showed that result
-does not transfer to a library scan, which compares three orders of
-magnitude more unrelated pairs and does produce false positives at `15.0`.
-The shipped default is now `20.0`, derived from the full library.
+migration notes. **All three defaults are now measured rather than carried
+over**, and in two of the three cases the measurement changed the scoring
+formula, not just the number:
+
+| | pre-F-24 | F-24 | measured | derived in |
+| --- | ---: | ---: | ---: | --- |
+| `video_threshold` | `85` | `15` | **`20`** | 1.9.0-1.9.1 (A-02) |
+| `image_threshold` | `90` | `80` | **`60`** | 1.9.2 (A-06) |
+| `audio_threshold` | `94` | `88` | **`60`** | 1.9.3 (A-14) |
+
+At `15.0` the 76-pair corpus reached 52/61 confirmed matches (85%) with 0
+false positives *on that corpus* — but A-02 showed that result does not
+transfer to a library scan, which compares three orders of magnitude more
+unrelated pairs and does produce false positives at `15.0`.
 
 F-30 was closed in 1.9.1, and its premise was wrong: the misses it named
 were alignment failures, not a descriptor ceiling. Its reasoning ("this
@@ -118,8 +124,10 @@ Implemented:
 - parent-folder context for generic names such as `01 - Episode 1`, preventing
   same-number episodes from unrelated seasons becoming identical name keys;
 - threshold-safe candidate blocking for large image candidate sets;
+- degenerate-descriptor vetoes on both image and audio: two flat colours
+  and two pure tones each produce near-identical descriptors, so pairs
+  whose descriptors carry no information are refused rather than scored;
 - reproducible synthetic/manifest threshold benchmark with FP/FN metrics;
-- measured audio default threshold of 94% based on the baseline corpus;
 - deduplication of resolved file paths discovered through overlapping roots;
 - automatic migration of older cache databases with image/audio columns.
 - reusable `ScanService` orchestration independent of argparse and PySide6;
@@ -256,13 +264,12 @@ clean and a documented 37-error `mypy` baseline.
   folder matches its PNG source and appears in HTML/JSON and folder clusters.
 - Candidate blocking was checked against generated passing pairs without
   observed false negatives.
-- The 27-pair synthetic threshold corpus is recorded in
-  `docs/threshold-baseline.json`: image 90% and audio 94% produce zero measured
-  errors; video 85% has two synthetic low-texture false negatives and no false
-  positives.
-- The local 25-pair real video manifest measures 5/15 content-backed positives
-  and 0/10 false positives at 85%; weaker same-title variants remain review
-  hints, and the compilation pair is duration-gated.
+- The 27-pair synthetic threshold corpus in `docs/threshold-baseline.json`
+  and the 25-pair real video manifest predate the 1.9.x work: their recorded
+  numbers are on the pre-F-24 raw scale and against matchers that have since
+  changed in both formula and cost. Treat them as history, not as a current
+  baseline — the live evidence is the real-library measurement below and the
+  per-medium derivations in `docs/AUDIT-1.8.0.md` (A-02, A-06, A-14).
 - A full 276-video / 97.5 GB real library scan (`S:\Daedalus\Kiroku\TestLib`)
   yields 129 video matches, 14 exact groups, and 61 folder pairs at the
   `20.0` default. On 4 workers the one-time alignment-grid build takes
@@ -333,16 +340,17 @@ Ongoing matching work remains evidence-driven:
 - all three similarity thresholds are now measured rather than carried over
   (A-02 video, A-06 images, A-14 audio), and in two of the three cases the
   measurement changed the formula, not just the number;
-- audio matching only ever runs on files with audio extensions, so a
-  video-only library never exercises it. If audio evidence for video files
-  is ever wanted, that is a scoping decision, not a bug;
+- audio matching is for finding duplicates among standalone audio files
+  (mp3/wav/flac and friends) and deliberately does not work alongside video;
+  a video-only library correctly exercises none of it. This is settled
+  scope, confirmed with the user — not a gap to close;
 - improve alternate-cut hints without weakening content-backed matching;
 - keep episode-in-compilation segment matching and crop/rotation-resistant
   image matching as separately scoped future features.
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.9.3`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.9.4`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:
@@ -361,9 +369,10 @@ The closed `1.6.6` safety review is recorded in `docs/AUDIT.md`. The `1.7.0`
 audit — findings, fixes, regression coverage, and residual/open items — is in
 `docs/AUDIT-1.7.0.md`. **The current audit is `docs/AUDIT-1.8.0.md`**: it
 measured 1.8.0 against the real library. Everything in it is now fixed
-except A-12's cosmetic half (validate restored collection roots) — A-01
-through A-05 and A-07/A-08/A-09/A-11 in 1.9.0, A-13 in 1.9.1, A-06 in
-1.9.2, A-14 in 1.9.3.
+— A-01 through A-05 and A-07/A-08/A-09/A-11 in 1.9.0, A-13 in 1.9.1, A-06
+in 1.9.2, A-14 in 1.9.3, A-12 in 1.9.4. **Every finding in that audit is
+closed**, and its closing section records a full-library validation at the
+shipped defaults.
 
 A lesson worth carrying forward from that audit: every Critical finding in
 it existed because detection changes had been validated on curated pairs and
