@@ -6,7 +6,7 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.10.1`. Stages A through E, and Stage F
+The current package version is `1.10.2`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -140,7 +140,12 @@ Implemented:
   library does not flood the Qt event loop with one signal per file;
 - cooperative cancellation of every fingerprinting stage that drops the
   queued backlog instead of waiting for it to finish (`cancel_futures=True`),
-  and retains already committed cache work;
+  and retains already committed cache work — which is now a real guarantee
+  rather than a technicality: every stage commits at most 30 seconds of work
+  at a time, so a cancel during the 26-minute alignment-grid build keeps what
+  it has already paid for instead of discarding all of it (A-20);
+- a recorded failure marker for files whose alignment grid cannot be built, so
+  an unreadable file is not re-decoded on every subsequent scan (A-20);
 - `ScanResult` with scanned records and basic review metadata;
 - lazy read-only probing of container, codec, resolution, frame rate, audio and
   subtitle tracks, chapters, and attachments.
@@ -366,7 +371,7 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.10.1`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.10.2`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:
@@ -382,29 +387,54 @@ present. Start deferred features only after the service, GUI/action, and full
 FFmpeg/transcode integration suites remain green.
 
 The closed `1.6.6` safety review is recorded in `docs/AUDIT.md`. The `1.7.0`
-audit — findings, fixes, regression coverage, and residual/open items — is in
-`docs/AUDIT-1.7.0.md`. **The current audit is `docs/AUDIT-1.8.0.md`**: it
-measured 1.8.0 against the real library. Everything in it is now fixed
-— A-01 through A-05 and A-07/A-08/A-09/A-11 in 1.9.0, A-13 in 1.9.1, A-06
-in 1.9.2, A-14 in 1.9.3, A-12 in 1.9.4. **Every finding in that audit is
-closed**, and its closing section records a full-library validation at the
-shipped defaults.
+audit is in `docs/AUDIT-1.7.0.md`, and the `1.8.0` audit — which measured
+1.8.0 against the real library — is in `docs/AUDIT-1.8.0.md`. Every finding
+in both is closed.
 
-A lesson worth carrying forward from that audit: every Critical finding in
-it existed because detection changes had been validated on curated pairs and
-a fast synthetic suite, never on a full library run. Both matter, and only
-the second one catches cost and base-rate problems.
+**The current audit is `docs/AUDIT-1.10.1.md`** (A-17 through A-27). It covers
+1.9.0 through 1.10.1 and re-validated the matcher on a cold-cache scan of the
+real library, which reproduced every number recorded below. Three findings are
+fixed in 1.10.2 — A-17 (settings-schema guard), A-20 (uncommitted stage
+transactions and unrecorded grid failures), A-21 (a config example that
+silently set `audio_threshold=88`). **Two High findings remain open:**
+
+- **A-18** — image candidate blocking generates 100% of all pairs at the
+  shipped `60.0` threshold and materialises the set (~18 GB at 20 000 images).
+  Needs a banded-LSH scheme and a large-image fixture to measure against.
+- **A-19** — audio's `duration_tolerance` widening (3 s → 120 s, A-14) made
+  the bucket sweep quadratic: 800 files score 205 801 pairs where they should
+  score 6 372. Needs the sorted forward sweep the video path already uses.
+- **A-28** — `close()` does not destroy a Qt window, and collecting the
+  leaked `QMediaPlayer`/`QVideoWidget` objects can abort the process with a
+  native access violation. Reproduced by adding two `MainWindow()`
+  constructions to the test suite (7 of 8 full runs crashed, inside Pillow
+  worker threads in an unrelated test file). Forcing the collection onto the
+  GUI thread makes it *deterministic*, so the obvious fix is not the fix.
+
+Neither A-18 nor A-19 is reachable from the current test library: it holds 22
+images (below the blocking threshold of 250) and no standalone audio at all.
+A-28 is not reachable either, because the shipped GUI keeps one `MainWindow`
+for the life of the process; the exposure to investigate is the dialogs and
+preview panes that are created and dropped while scans run PIL worker threads.
+
+Two lessons worth carrying forward. From the 1.8.0 audit: every Critical
+finding in it existed because detection changes had been validated on curated
+pairs and a fast synthetic suite, never on a full library run. From the
+1.10.1 audit, one level further out: a constant that guards an invariant has
+to be re-derived whenever the invariant moves, and the cheap countermeasure is
+a test that asserts the *relationship* rather than the value.
 
 ## Suggested Prompt for a New Chat
 
 ```text
 Read README.md, docs/USAGE.md, docs/CONFIG.md, docs/STATUS.md,
-docs/AUDIT-1.8.0.md, docs/AUDIT-1.7.0.md, docs/ROADMAP.md, and
+docs/AUDIT-1.10.1.md, docs/AUDIT-1.8.0.md, docs/ROADMAP.md, and
 docs/ANIME_ENCODING_PRESETS.md. Inspect and preserve any existing
 working-tree changes. Verify the test suite, then choose one separately
-scoped deferred item from docs/AUDIT-1.8.0.md (A-12),
-docs/AUDIT-1.7.0.md (F-30), or docs/ROADMAP.md, while keeping the existing
-source-protection rules intact. Any change to detection quality or matching
-cost must be validated with a full scan of the real library, not only with
-the test suite.
+scoped open item — docs/AUDIT-1.10.1.md's A-18 or A-19 (both High, both
+needing a fixture the project does not have yet), a lower-severity finding
+from the same audit, or a deferred feature from docs/ROADMAP.md — while
+keeping the existing source-protection rules intact. Any change to detection
+quality or matching cost must be validated with a full scan of the real
+library, not only with the test suite.
 ```

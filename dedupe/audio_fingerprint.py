@@ -173,7 +173,8 @@ def find_audio_matches(
                 if duration is not None:
                     record.duration = duration
                     cache.upsert_file(record)
-        cache.conn.commit()
+                    cache.commit_periodically()
+        cache.commit()
 
     missing_fingerprint = [record for record in records if record.audio_fingerprint is None]
     if missing_fingerprint:
@@ -185,7 +186,8 @@ def find_audio_matches(
                 if fingerprint:
                     record.audio_fingerprint = fingerprint
                     cache.upsert_file(record)
-        cache.conn.commit()
+                    cache.commit_periodically()
+        cache.commit()
 
     buckets: dict[int, list[FileRecord]] = defaultdict(list)
     for record in records:

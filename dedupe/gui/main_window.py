@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..actions import ActionOutcome, FileAction, FileActionService, OperationStatus
+from ..cli import DEFAULT_CONFIG
 from ..events import ScanEvent, ScanEventType, ScanStage
 from ..models import FileRecord
 from ..name_normalizer import LMSTUDIO_MODEL, LMSTUDIO_URL
@@ -46,9 +47,24 @@ from .result_items import CATEGORY_LABELS, ReviewItem, build_review_items, categ
 from .transcode_dialog import TranscodeDialog
 from .worker import ActionJob, ActionWorker, ScanWorker
 
-# Bump whenever a stored setting changes meaning rather than merely value.
-# 1: pre-F-24 raw-scale thresholds (1.7.8-1.7.9). 2: calibrated scale (A-03).
-SETTINGS_SCHEMA_VERSION = 2
+# Bump whenever a stored threshold's scale, scoring formula, OR shipped default
+# changes - not only when the scale changes. A stored value is restored as-is,
+# so any of those three makes a returning user's saved number mean something
+# different from what they chose, with no symptom except a scan that quietly
+# finds too little.
+#
+# 1: pre-F-24 raw-scale thresholds (1.7.8-1.7.9).
+# 2: calibrated scale (A-03).
+# 3: image and audio re-derived from real evidence - image scoring dropped its
+#    colour blend for a veto (1.9.2, A-06) and audio widened its alignment and
+#    duration gates (1.9.3, A-14). Both changed the default, and neither bumped
+#    this constant at the time; a 1.9.0/1.9.1 profile therefore restored
+#    image=80 and audio=88, the latter measured as missing 16 of 20 confirmed
+#    duplicate pairs (A-17).
+#
+# `tests/test_gui.py` pins the shipped defaults against this number, so
+# changing a default without bumping it fails the suite rather than shipping.
+SETTINGS_SCHEMA_VERSION = 3
 
 
 class MainWindow(QMainWindow):
@@ -166,14 +182,17 @@ class MainWindow(QMainWindow):
         self.workers.setRange(1, 32)
         self.workers.setValue(4)
         settings_layout.addRow("Workers", self.workers)
-        # Calibrated scale (F-24): 0 = indistinguishable from unrelated
-        # content, 100 = identical. See dedupe/cli.py's DEFAULT_CONFIG for
-        # why video/image/audio defaults differ in how they were derived.
-        self.video_threshold = self._threshold_spin(20.0)
-        self.image_threshold = self._threshold_spin(60.0)
-        self.audio_threshold = self._threshold_spin(60.0)
-        self.name_threshold = self._threshold_spin(92.0)
-        self.folder_threshold = self._threshold_spin(50.0)
+        # Read from DEFAULT_CONFIG rather than repeated as literals, so a
+        # re-derived threshold cannot be updated for the CLI and forgotten
+        # here - the same drift A-16 found between the benchmark tool and the
+        # shipped defaults. Calibrated scale (F-24): 0 = indistinguishable
+        # from unrelated content, 100 = identical; see DEFAULT_CONFIG for why
+        # video/image/audio differ in how they were derived.
+        self.video_threshold = self._threshold_spin(float(DEFAULT_CONFIG["video_threshold"]))
+        self.image_threshold = self._threshold_spin(float(DEFAULT_CONFIG["image_threshold"]))
+        self.audio_threshold = self._threshold_spin(float(DEFAULT_CONFIG["audio_threshold"]))
+        self.name_threshold = self._threshold_spin(float(DEFAULT_CONFIG["name_threshold"]))
+        self.folder_threshold = self._threshold_spin(float(DEFAULT_CONFIG["folder_threshold"]))
         settings_layout.addRow("Video threshold", self.video_threshold)
         settings_layout.addRow("Image threshold", self.image_threshold)
         settings_layout.addRow("Audio threshold", self.audio_threshold)

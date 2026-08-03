@@ -110,70 +110,97 @@ def _canonical_key(key: str) -> str:
 
 def _flatten_config(config: dict[str, Any]) -> dict[str, Any]:
     flattened: dict[str, Any] = {}
+    sources: dict[str, str] = {}
+
+    def assign(key: str, value: Any, source: str) -> None:
+        # Several settings have two accepted spellings - `matching.audio` and
+        # `audio.threshold` both mean `audio_threshold`. A config that set both
+        # used to be resolved by document order, silently taking whichever came
+        # last: that is how docs/CONFIG.md's own example shipped an audio
+        # threshold of 88 while the `matching` block above it said 60, which is
+        # the value A-14 measured as missing 16 of 20 confirmed duplicates
+        # (A-21). Agreeing duplicates are harmless and still allowed; a
+        # disagreement is a mistake the user wants to hear about, not one to
+        # guess at.
+        previous = sources.get(key)
+        if previous is not None and flattened[key] != value:
+            raise SystemExit(
+                f"Config sets {key} twice with different values: "
+                f"{previous} = {flattened[key]!r} and {source} = {value!r}. Remove one of them."
+            )
+        flattened[key] = value
+        sources[key] = source
+
     for key, value in config.items():
         canonical = _canonical_key(key)
         if isinstance(value, dict):
             if canonical == "reports":
                 if "html" in value:
-                    flattened["output"] = value["html"]
+                    assign("output", value["html"], f"{key}.html")
                 if "json" in value:
-                    flattened["json_output"] = value["json"]
+                    assign("json_output", value["json"], f"{key}.json")
             elif canonical == "names":
                 for nested_key, nested_value in value.items():
-                    flattened[_canonical_key(nested_key)] = nested_value
+                    assign(_canonical_key(nested_key), nested_value, f"{key}.{nested_key}")
             elif canonical == "video":
                 for nested_key, nested_value in value.items():
                     nested = _canonical_key(nested_key)
+                    source = f"{key}.{nested_key}"
                     if nested == "skip":
-                        flattened["skip_video"] = nested_value
+                        assign("skip_video", nested_value, source)
                     elif nested in {"duration_ratio", "max_duration_ratio"}:
-                        flattened["max_video_duration_ratio"] = nested_value
+                        assign("max_video_duration_ratio", nested_value, source)
                     elif nested in {"duration_delta", "max_duration_delta"}:
-                        flattened["max_video_duration_delta"] = nested_value
+                        assign("max_video_duration_delta", nested_value, source)
                     else:
-                        flattened[nested] = nested_value
+                        assign(nested, nested_value, source)
             elif canonical == "images":
                 for nested_key, nested_value in value.items():
                     nested = _canonical_key(nested_key)
+                    source = f"{key}.{nested_key}"
                     if nested == "skip":
-                        flattened["skip_images"] = nested_value
+                        assign("skip_images", nested_value, source)
                     elif nested == "threshold":
-                        flattened["image_threshold"] = nested_value
+                        assign("image_threshold", nested_value, source)
                     elif nested in {"max_candidates", "max_image_candidates"}:
-                        flattened["max_image_candidates"] = nested_value
+                        assign("max_image_candidates", nested_value, source)
                     else:
-                        flattened[f"images_{nested}"] = nested_value
+                        assign(f"images_{nested}", nested_value, source)
             elif canonical == "audio":
                 for nested_key, nested_value in value.items():
                     nested = _canonical_key(nested_key)
+                    source = f"{key}.{nested_key}"
                     if nested == "skip":
-                        flattened["skip_audio"] = nested_value
+                        assign("skip_audio", nested_value, source)
                     elif nested == "threshold":
-                        flattened["audio_threshold"] = nested_value
+                        assign("audio_threshold", nested_value, source)
                     else:
-                        flattened[f"audio_{nested}"] = nested_value
+                        assign(f"audio_{nested}", nested_value, source)
             elif canonical == "matching":
                 for nested_key, nested_value in value.items():
                     nested = _canonical_key(nested_key)
+                    source = f"{key}.{nested_key}"
                     if nested in {"video", "video_similarity"}:
-                        flattened["video_threshold"] = nested_value
+                        assign("video_threshold", nested_value, source)
                     elif nested in {"image", "images", "image_similarity"}:
-                        flattened["image_threshold"] = nested_value
+                        assign("image_threshold", nested_value, source)
                     elif nested in {"audio", "audio_similarity"}:
-                        flattened["audio_threshold"] = nested_value
+                        assign("audio_threshold", nested_value, source)
                     elif nested in {"folder", "folder_similarity"}:
-                        flattened["folder_threshold"] = nested_value
+                        assign("folder_threshold", nested_value, source)
                     elif nested in {"name", "name_similarity"}:
-                        flattened["name_threshold"] = nested_value
+                        assign("name_threshold", nested_value, source)
                     else:
-                        flattened[nested] = nested_value
+                        assign(nested, nested_value, source)
             elif canonical == "cache" and "path" in value:
-                flattened["cache"] = value["path"]
+                assign("cache", value["path"], f"{key}.path")
             else:
                 for nested_key, nested_value in value.items():
-                    flattened[f"{canonical}_{_canonical_key(nested_key)}"] = nested_value
+                    assign(f"{canonical}_{_canonical_key(nested_key)}", nested_value, f"{key}.{nested_key}")
         else:
-            flattened[canonical] = value
+            assign(canonical, value, key)
+    # Deliberately not routed through `assign`: this is a derived override of
+    # an explicit setting, not a second spelling of it.
     if flattened.get("ai_names") is False:
         flattened["name_provider"] = "none"
     return flattened

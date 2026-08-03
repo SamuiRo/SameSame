@@ -10,6 +10,13 @@ VIDEO_FINGERPRINT_VERSION = 3
 # invalidate for different reasons: bump this when the cadence or the sample
 # layout changes, not when the proportional fingerprint does.
 GRID_FINGERPRINT_VERSION = 2
+# Stored in `grid_fingerprint_version` when a grid build was attempted and
+# failed, so an unreadable file is not re-decoded on every subsequent scan -
+# each attempt is a full decode under a 600 s timeout (A-20). Negating the
+# current version means bumping the version also retries past failures, and a
+# file whose size or mtime changes fails `hydrate_if_current` outright, so an
+# edited or repaired file is retried regardless.
+GRID_FINGERPRINT_FAILED = -GRID_FINGERPRINT_VERSION
 # 1: one perceptual hash plus the average colour. 2: eight dihedral hashes of
 # the border-trimmed image, plus its trimmed average colour (A-15).
 IMAGE_FINGERPRINT_VERSION = 2

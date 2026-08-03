@@ -214,7 +214,8 @@ def find_image_matches(
                     record.image_fingerprint = fingerprint
                     record.image_fingerprint_version = IMAGE_FINGERPRINT_VERSION
                     cache.upsert_file(record)
-        cache.conn.commit()
+                    cache.commit_periodically()
+        cache.commit()
 
     candidates = [record for record in records if record.image_fingerprint is not None]
     matches: list[ImageMatch] = []

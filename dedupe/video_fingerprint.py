@@ -12,7 +12,13 @@ from pathlib import Path
 
 from . import process
 from .cache import Cache
-from .models import GRID_FINGERPRINT_VERSION, VIDEO_FINGERPRINT_VERSION, FileRecord, VideoMatch
+from .models import (
+    GRID_FINGERPRINT_FAILED,
+    GRID_FINGERPRINT_VERSION,
+    VIDEO_FINGERPRINT_VERSION,
+    FileRecord,
+    VideoMatch,
+)
 from .progress import cancellable_executor, check_cancelled, tqdm
 
 try:
@@ -491,7 +497,8 @@ def find_video_matches(
                 if duration is not None:
                     record.duration = duration
                     cache.upsert_file(record)
-        cache.conn.commit()
+                    cache.commit_periodically()
+        cache.commit()
 
     missing_fingerprint = [record for record in records if record.duration is not None and record.fingerprint is None]
     if missing_fingerprint:
@@ -504,7 +511,8 @@ def find_video_matches(
                     record.fingerprint = fingerprint
                     record.fingerprint_version = VIDEO_FINGERPRINT_VERSION
                     cache.upsert_file(record)
-        cache.conn.commit()
+                    cache.commit_periodically()
+        cache.commit()
         excluded = sum(1 for record in missing_fingerprint if not record.fingerprint)
         if excluded:
             LOGGER.warning(
@@ -520,7 +528,12 @@ def find_video_matches(
     missing_grid = [
         record
         for record in records
-        if record.duration is not None and record.fingerprint and not record.grid_fingerprint
+        if record.duration is not None
+        and record.fingerprint
+        and not record.grid_fingerprint
+        # A file whose grid could not be built is marked rather than left
+        # blank, so it is not re-decoded on every scan (A-20).
+        and record.grid_fingerprint_version != GRID_FINGERPRINT_FAILED
     ]
     if missing_grid:
         with cancellable_executor(workers) as executor:
@@ -531,8 +544,15 @@ def find_video_matches(
                 if grid:
                     record.grid_fingerprint = grid
                     record.grid_fingerprint_version = GRID_FINGERPRINT_VERSION
-                    cache.upsert_file(record)
-        cache.conn.commit()
+                else:
+                    record.grid_fingerprint_version = GRID_FINGERPRINT_FAILED
+                cache.upsert_file(record)
+                # Committed as the stage runs, not once at the end: this is the
+                # longest operation the product performs and it reads the whole
+                # library, so a cancel or a crash at minute 25 of 26 must not
+                # discard all of it (A-20).
+                cache.commit_periodically()
+        cache.commit()
 
     # Sort by duration and sweep forward from each record: ratio and delta to
     # a later (equal-or-longer) candidate only ever grow as duration

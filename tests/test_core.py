@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -479,6 +480,151 @@ class CoreTests(unittest.TestCase):
                 hydrated = FileRecord(base / "video.mp4", base, 100, 1, "video")
                 self.assertTrue(cache.hydrate_if_current(hydrated))
             self.assertIsNone(hydrated.fingerprint)
+
+    def test_cancelling_the_grid_stage_keeps_the_grids_already_built(self) -> None:
+        # A-20: every fingerprinting stage used to commit exactly once, after
+        # it finished. The alignment-grid build is the longest operation the
+        # product performs - 26 minutes for the real library, reading every
+        # byte of it - so a cancel at minute 25 discarded all of it, while
+        # docs/STATUS.md advertised that cancellation "retains already
+        # committed cache work". Measured before the fix: 0 grids survived.
+        from unittest.mock import patch
+
+        from dedupe.events import CancellationToken, ScanCancelled, ScanStage
+        from dedupe.progress import progress_scope
+        from dedupe.video_fingerprint import find_video_matches
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cache_path = base / "cache.sqlite3"
+            records = [
+                FileRecord(base / f"ep{index:02d}.mkv", base, 100 + index, 1, f"ep{index:02d}") for index in range(40)
+            ]
+            for index, record in enumerate(records):
+                record.duration = 600.0 + index
+                record.fingerprint = [index] * 15
+
+            cancellation = CancellationToken()
+            built = 0
+
+            def stub_grid(path: Path, duration: float, ffmpeg: str) -> list[int]:
+                nonlocal built
+                built += 1
+                if built == 20:
+                    cancellation.cancel()
+                return [1, 2, 3, 4]
+
+            with Cache(cache_path) as cache:
+                with patch("dedupe.video_fingerprint.fingerprint_video_grid", stub_grid):
+                    # Zero interval so every consumed record commits; the point
+                    # under test is that the stage commits at all before it ends.
+                    with patch("dedupe.cache.COMMIT_INTERVAL_SECONDS", 0.0):
+                        with progress_scope(
+                            stage=ScanStage.VIDEO_MATCHING,
+                            callback=None,
+                            cancellation=cancellation,
+                            show_terminal=False,
+                        ):
+                            with self.assertRaises(ScanCancelled):
+                                find_video_matches(
+                                    records, cache, threshold=20.0, ffmpeg="ffmpeg", ffprobe="ffprobe", workers=1
+                                )
+
+                # Read through a second connection: only committed rows are
+                # visible, which is exactly the property being asserted.
+                probe = sqlite3.connect(cache_path)
+                try:
+                    survived = probe.execute(
+                        "SELECT COUNT(*) FROM files WHERE grid_fingerprint IS NOT NULL"
+                    ).fetchone()[0]
+                finally:
+                    probe.close()
+
+            self.assertGreater(survived, 0, "a cancelled grid stage must keep the grids it already paid for")
+
+    def test_a_failed_grid_build_is_recorded_and_not_retried(self) -> None:
+        # A-20: a file whose grid cannot be built used to leave the column
+        # blank, so every later scan re-attempted it - a fresh full decode
+        # under a 600 s timeout, forever.
+        from unittest.mock import patch
+
+        from dedupe.models import GRID_FINGERPRINT_FAILED
+        from dedupe.video_fingerprint import find_video_matches
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cache_path = base / "cache.sqlite3"
+            record = FileRecord(base / "broken.mkv", base, 100, 1, "broken")
+            record.duration = 600.0
+            record.fingerprint = [0] * 15
+            attempts = 0
+
+            def failing_grid(path: Path, duration: float, ffmpeg: str) -> None:
+                nonlocal attempts
+                attempts += 1
+                return None
+
+            with Cache(cache_path) as cache:
+                with patch("dedupe.video_fingerprint.fingerprint_video_grid", failing_grid):
+                    find_video_matches([record], cache, threshold=20.0, ffmpeg="ffmpeg", ffprobe="ffprobe", workers=1)
+                    self.assertEqual(attempts, 1)
+                    self.assertEqual(record.grid_fingerprint_version, GRID_FINGERPRINT_FAILED)
+
+                    # The marker is persisted, so a fresh scan of an unchanged
+                    # file does not pay for the decode again.
+                    hydrated = FileRecord(base / "broken.mkv", base, 100, 1, "broken")
+                    self.assertTrue(cache.hydrate_if_current(hydrated))
+                    self.assertEqual(hydrated.grid_fingerprint_version, GRID_FINGERPRINT_FAILED)
+                    self.assertIsNone(hydrated.grid_fingerprint)
+
+                    find_video_matches([hydrated], cache, threshold=20.0, ffmpeg="ffmpeg", ffprobe="ffprobe", workers=1)
+                    self.assertEqual(attempts, 1, "a recorded grid failure must not be retried")
+
+    def test_config_rejects_a_threshold_set_twice_with_different_values(self) -> None:
+        # A-21: `matching.audio` and `audio.threshold` are two spellings of one
+        # setting, and _flatten_config resolved them by document order. That is
+        # how docs/CONFIG.md's own example shipped audio_threshold=88 under a
+        # `matching` block that said 60 - the value A-14 measured as missing 16
+        # of 20 confirmed duplicate pairs.
+        from dedupe.cli import _flatten_config
+
+        with self.assertRaises(SystemExit) as raised:
+            _flatten_config({"matching": {"audio": 60}, "audio": {"threshold": 88}})
+        self.assertIn("audio_threshold", str(raised.exception))
+
+        # Agreeing duplicates are not an error - only a disagreement is.
+        self.assertEqual(
+            _flatten_config({"matching": {"audio": 60}, "audio": {"threshold": 60}})["audio_threshold"], 60
+        )
+
+    def test_documented_config_examples_use_the_shipped_thresholds(self) -> None:
+        # The prose example in docs/CONFIG.md is copied by users; it drifted
+        # from the shipped defaults once already (A-21). Parse every JSON block
+        # in the documentation and check what it actually resolves to.
+        from dedupe.cli import DEFAULT_CONFIG, _flatten_config
+
+        text = (Path(__file__).resolve().parents[1] / "docs" / "CONFIG.md").read_text(encoding="utf-8")
+        blocks = re.findall(r"```json\n(.*?)```", text, re.DOTALL)
+        self.assertTrue(blocks, "expected JSON examples in docs/CONFIG.md")
+        checked = 0
+        for index, block in enumerate(blocks):
+            try:
+                parsed = json.loads(block)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            flattened = _flatten_config(parsed)
+            for key in ("video_threshold", "image_threshold", "audio_threshold"):
+                if key in flattened:
+                    checked += 1
+                    self.assertEqual(
+                        float(flattened[key]),
+                        float(DEFAULT_CONFIG[key]),
+                        f"docs/CONFIG.md JSON block {index} resolves {key} to {flattened[key]}, "
+                        f"not the shipped default {DEFAULT_CONFIG[key]}",
+                    )
+        self.assertGreater(checked, 0)
 
     def test_cache_vacuum_removes_rows_for_missing_files_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

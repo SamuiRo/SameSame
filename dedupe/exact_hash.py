@@ -119,7 +119,8 @@ def find_exact_duplicates(records: list[FileRecord], cache: Cache, workers: int 
                     record.partial_hash = value
                     record.partial_hash_algo = computed_algo
                     cache.upsert_file(record)
-        cache.conn.commit()
+                    cache.commit_periodically()
+        cache.commit()
 
     by_size_partial: dict[tuple[int, str], list[FileRecord]] = defaultdict(list)
     for group in by_size.values():
@@ -146,7 +147,10 @@ def find_exact_duplicates(records: list[FileRecord], cache: Cache, workers: int 
                     record.full_hash = value
                     record.full_hash_algo = computed_algo
                     cache.upsert_file(record)
-        cache.conn.commit()
+                    # Full hashing reads every candidate byte, so this stage is
+                    # long on a large library too, for the same reason (A-20).
+                    cache.commit_periodically()
+        cache.commit()
 
     by_full: dict[str, list[FileRecord]] = defaultdict(list)
     for record in records:

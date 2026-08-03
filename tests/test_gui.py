@@ -79,29 +79,73 @@ class GuiSmokeTests(unittest.TestCase):
         QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, "")
         self._settings_dir.cleanup()
 
+    def test_shipped_defaults_are_pinned_to_the_settings_schema_version(self) -> None:
+        # A-17: the schema guard failed twice not because it was wrong but
+        # because nothing connected it to the thing it guards - 1.9.2 and
+        # 1.9.3 re-derived the image and audio thresholds and neither bumped
+        # it, so a 1.9.0/1.9.1 profile restored image=80 and audio=88.
+        #
+        # This asserts the *relationship*: the defaults recorded here must
+        # match what the package actually ships. Changing a default without
+        # bumping SETTINGS_SCHEMA_VERSION (and adding a row here) fails, which
+        # is the only cheap way to make the connection impossible to forget.
+        from dedupe.cli import DEFAULT_CONFIG
+        from dedupe.gui.main_window import SETTINGS_SCHEMA_VERSION
+
+        defaults_by_schema = {
+            3: {
+                "video_threshold": 20.0,
+                "image_threshold": 60.0,
+                "audio_threshold": 60.0,
+                "folder_threshold": 50.0,
+                "name_threshold": 92.0,
+            },
+        }
+        self.assertIn(
+            SETTINGS_SCHEMA_VERSION,
+            defaults_by_schema,
+            "SETTINGS_SCHEMA_VERSION changed without recording the defaults it ships with.",
+        )
+        for key, expected in defaults_by_schema[SETTINGS_SCHEMA_VERSION].items():
+            self.assertEqual(
+                DEFAULT_CONFIG[key],
+                expected,
+                f"{key} changed without bumping SETTINGS_SCHEMA_VERSION - a stored "
+                f"value from the previous release would be restored on the new scale (A-17).",
+            )
+
     def test_thresholds_from_an_older_schema_are_not_restored(self) -> None:
-        # A-03: 1.7.8/1.7.9 stored thresholds on the pre-F-24 raw scale. If
-        # 85 came back on today's calibrated scale, video matching would find
-        # nothing and never say why - so an older schema must fall back to
-        # current defaults. Everything else still restores.
+        # A-03: 1.7.8/1.7.9 stored thresholds on the pre-F-24 raw scale, and
+        # restoring 85 on today's calibrated scale made video matching find
+        # nothing without ever saying why.
+        #
+        # A-17: this now stores schema *2* rather than nothing. Schema 2 is not
+        # an ancient profile - it is 1.9.0/1.9.1, the immediately preceding
+        # releases, whose image=80 and audio=88 were correct when written and
+        # are wrong now (A-06 replaced the image formula; A-14 measured 88 as
+        # missing 16 of 20 confirmed duplicate pairs). It is deliberately the
+        # newest rejected schema, since the old schema-0 case is covered by the
+        # same `>=` comparison. Everything else still restores.
         from PySide6.QtCore import QSettings
 
+        from dedupe.cli import DEFAULT_CONFIG
         from dedupe.gui.main_window import MainWindow
 
         settings = QSettings()
+        settings.setValue("schema_version", 2)
         settings.beginGroup("scan")
         settings.setValue("video_threshold", 85.0)
-        settings.setValue("image_threshold", 90.0)
-        settings.setValue("audio_threshold", 94.0)
+        settings.setValue("image_threshold", 80.0)
+        settings.setValue("audio_threshold", 88.0)
         settings.setValue("workers", 7)
         settings.endGroup()
         settings.sync()
 
         window = MainWindow()
         try:
-            self.assertNotEqual(window.video_threshold.value(), 85.0)
-            self.assertNotEqual(window.image_threshold.value(), 90.0)
-            self.assertNotEqual(window.audio_threshold.value(), 94.0)
+            self.assertEqual(window.video_threshold.value(), DEFAULT_CONFIG["video_threshold"])
+            self.assertEqual(window.image_threshold.value(), DEFAULT_CONFIG["image_threshold"])
+            self.assertEqual(window.audio_threshold.value(), DEFAULT_CONFIG["audio_threshold"])
             self.assertEqual(window.workers.value(), 7)
         finally:
             window.close()

@@ -16,16 +16,47 @@ from .models import (
 )
 
 
+# How long a fingerprinting stage may hold uncommitted work. `upsert_file`
+# does not commit, and each stage used to commit exactly once, at the end - so
+# the alignment-grid build, the longest operation the product performs (26
+# minutes for the real library, reading every byte of it), was a single open
+# transaction for its whole duration and a cancel kept nothing (A-20). The
+# interval is time-based rather than a file count because per-file cost varies
+# by orders of magnitude: one 4 GB remux can outlast a hundred small files.
+COMMIT_INTERVAL_SECONDS = 30.0
+
+
 class Cache:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = connect(path)
         self.conn.row_factory = sqlite3.Row
+        self._last_commit = time.monotonic()
         self.init_schema()
 
     def close(self) -> None:
         self.conn.close()
+
+    def commit(self) -> None:
+        """Commit now and restart the periodic-commit clock."""
+        self.conn.commit()
+        self._last_commit = time.monotonic()
+
+    def commit_periodically(self, interval: float | None = None) -> bool:
+        """Commit if `interval` seconds have passed since the last commit.
+
+        Called from the loop that consumes completed futures - always the main
+        thread, never a worker - so it needs no locking of its own. Returns
+        whether it committed, which the tests assert on. The interval is read
+        at call time rather than bound as a default so tests can shorten it.
+        """
+        if interval is None:
+            interval = COMMIT_INTERVAL_SECONDS
+        if time.monotonic() - self._last_commit < interval:
+            return False
+        self.commit()
+        return True
 
     def __enter__(self) -> "Cache":
         return self

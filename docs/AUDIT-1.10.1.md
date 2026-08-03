@@ -272,6 +272,64 @@ futures, or every few seconds) so cancellation keeps what has been paid for;
 and persist a negative result for a failed grid so it is not re-attempted
 until the file changes.
 
+### A-28 · Undestroyed Qt windows can abort the process when they are collected
+
+Found while fixing A-17, by adding two `MainWindow()` constructions to
+`tests/test_gui.py` — a change that should have been inert.
+
+`close()` hides a window; it does not destroy it. The GUI suite builds 18
+`MainWindow` instances and closes all of them, so 18 windows survive, each
+holding the two `QMediaPlayer` / `QAudioOutput` / `QVideoWidget` sets its
+preview pane creates. They are freed only when CPython eventually collects
+them — on whatever thread happens to be collecting.
+
+Adding two more turned that from latent into frequent:
+
+```
+pre-change  suite, 8 consecutive full runs:  8 pass, 0 crash
++2 windows, suite, 8 consecutive full runs:  1 pass, 7 crash
+```
+
+The crash is a **Windows fatal exception: access violation**, and it lands in
+`tests/test_images.py` — a file that has nothing to do with Qt:
+
+```
+Thread A: PIL/Image.py load <- transpose <- rotate
+          <- image_fingerprint._orientations   (a PIL worker thread)
+Thread B: Garbage-collecting
+          PIL/Image.py convert <- video_fingerprint.phash   (another worker)
+Extension modules: PIL._imaging, ..., PySide6.QtMultimedia, ...
+```
+
+That is shiboken finalizing Qt multimedia objects on a PIL fingerprinting
+worker thread. Destroying Qt objects off the GUI thread is undefined
+behaviour.
+
+The obvious countermeasure — force the collection onto the GUI thread in
+`tearDown` — was tried and **made it deterministic**: 10 of 10 runs aborted,
+now inside `gc.collect()` in `tearDown` itself. So the problem is not only
+*which thread* finalizes these objects; finalizing them at all, in the state
+`close()` leaves them in, is unsafe. That result is worth recording precisely
+because it refutes the fix that looks right.
+
+**What is proven and what is not.** Proven: leaked, closed `MainWindow`
+objects can abort this process when collected. Not proven: that the shipped
+GUI does this in ordinary use — its single `MainWindow` lives for the life of
+the process, which is very likely why no user has hit it. The exposure worth
+investigating is the objects that *are* created and dropped repeatedly while
+PIL worker threads run: `TranscodeDialog`, `JournalDialog`, and the preview
+panes' media players.
+
+Not fixed here, deliberately: the diagnosis is solid but the fix is a Qt
+object-lifetime change in GUI code, which is a different piece of work from
+the three findings this pass was scoped to. The 1.10.2 tests were reworked to
+add no new windows, so the suite is exactly as stable as it was before.
+
+**Fix:** give `MainWindow` (and the dialogs) deterministic destruction —
+`WA_DeleteOnClose` or an explicit `deleteLater()` after `comparison.stop()` —
+and establish why a stopped player is still unsafe to finalize. Then add the
+two windows back and confirm the suite survives repeated full runs.
+
 ---
 
 ## Medium
@@ -494,17 +552,18 @@ saying why.
 
 | # | Work | Severity | Status |
 | --- | --- | --- | --- |
-| A-17 | Bump `SETTINGS_SCHEMA_VERSION`; state the bump rule; test a same-schema stale value | High | Open |
+| A-17 | Bump `SETTINGS_SCHEMA_VERSION`; state the bump rule; test a same-schema stale value | High | **Done in 1.10.2** |
 | A-18 | Replace image blocking with a scheme that is selective at a 12-bit radius; stop materialising the pair set | High | Open |
 | A-19 | Give audio the video path's sorted sweep; drop the `seen` set | High | Open |
-| A-20 | Commit periodically inside long stages; record failed grid builds | High | Open |
-| A-21 | Fix `docs/CONFIG.md`'s nested example; make duplicate threshold keys an error | Medium | Open |
+| A-20 | Commit periodically inside long stages; record failed grid builds | High | **Done in 1.10.2** |
+| A-21 | Fix `docs/CONFIG.md`'s nested example; make duplicate threshold keys an error | Medium | **Done in 1.10.2** |
 | A-22 | Read the audio duration tolerance from the matcher; finish A-08 for images | Medium | Open |
 | A-23 | Remove the trim cliff by keeping both descriptors; measure against the negatives | Medium | Open |
 | A-24 | Parallelise the video pair loop (record as a known ceiling if deferred) | Low | Open |
 | A-25 | Refresh the stale numbers in `STATUS.md` and `THRESHOLDS.md` | Low | Open |
 | A-26 | Remove `GRID_MISSING_SAMPLE` and its test, or make the producer emit it | Low | Open |
 | A-27 | Document why video keeps the coarse stride audio dropped | Low | Open |
+| A-28 | Give Qt windows/dialogs deterministic destruction; find why a stopped player is unsafe to finalize | High | Open (found while fixing A-17) |
 
 ## Full-library validation
 
@@ -563,6 +622,71 @@ here that the matcher itself is sound — but it is a *coverage* instrument, and
 this library covers one medium, one scale, and the happy path. Pair it with a
 large-image fixture, a standalone-audio fixture, and a cancellation run, or
 the next Critical will again be in a branch nothing executed.
+
+## Resolution of A-17, A-20 and A-21 — 1.10.2
+
+Three of the eleven findings this audit opened with are fixed, and a twelfth (A-28) was found while fixing them. Each shipped with a regression test
+that was **confirmed to fail against the pre-fix code**, because a test written
+after the fact proves nothing unless it is shown to catch the thing it names.
+
+**A-17.** `SETTINGS_SCHEMA_VERSION` is `3`, so a 1.9.0-1.10.1 profile falls back
+to current defaults instead of restoring `image=80` / `audio=88`. Two changes
+make the omission hard to repeat: the GUI now reads its threshold defaults from
+`DEFAULT_CONFIG` instead of repeating them as literals (the drift-killing
+pattern A-16 already applied to the benchmark tool), and
+`test_shipped_defaults_are_pinned_to_the_settings_schema_version` pins the
+shipped defaults *to the schema number*, so changing a default without bumping
+it fails the suite. The constant's comment now states the rule as three
+triggers — scale, formula, **or default** — since it was the third that was
+missed twice.
+
+**A-20.** `Cache.commit_periodically()` commits at most every 30 s; every
+fingerprinting stage (exact partial/full hashes, video durations, video
+fingerprints, alignment grids, image fingerprints, audio durations and
+fingerprints) calls it as it consumes completed futures. The interval is
+time-based, not a file count, because per-file cost varies by orders of
+magnitude. A failed grid build now stores `GRID_FINGERPRINT_FAILED`
+(`-GRID_FINGERPRINT_VERSION`) rather than leaving the column blank, so an
+unreadable file is not re-decoded on every scan; negating the version means a
+version bump retries past failures, and a changed size or mtime fails
+`hydrate_if_current` outright, so a repaired file is retried anyway.
+
+**A-21.** The `docs/CONFIG.md` example says `60`. More usefully,
+`_flatten_config` no longer resolves two spellings of one setting by document
+order — a config that sets `matching.audio` and `audio.threshold` to
+*different* values now exits with both sources named. Agreeing duplicates are
+still accepted. A second test parses every JSON block in `docs/CONFIG.md` and
+asserts what it actually resolves to, so the prose cannot drift from the
+shipped defaults again.
+
+Verified after the fixes:
+
+| Check | Result |
+| --- | --- |
+| `python -m pytest -q` | **152 passed, 14 subtests** (7 new regressions) |
+| Same tests against pre-fix code | **4 of 4 fail** as intended |
+| `ruff check .` / `ruff format --check .` | clean |
+| `mypy dedupe` | 33 errors — unchanged baseline |
+| Full `TestLib` rescan | 100.3 s, **every result section byte-identical** |
+
+The last row is the point: these are durability and configuration fixes, and
+detection was expected not to move. It did not — exact groups, video, image and
+audio matches, folder pairs, name hints and content clusters all compare equal
+to the pre-fix scan.
+
+A-18 and A-19 remain open. Both need a fixture the project does not have yet
+(a large image corpus; a standalone-audio library at scale), which is precisely
+the gap the validation section above describes.
+
+**A-28 was found by doing this work**, not by reading code: two extra
+`MainWindow()` constructions in the A-17 test turned a latent Qt object-
+lifetime bug into a process abort in 7 of 8 full-suite runs, in an unrelated
+test file. It is written up above with the evidence, including the fix that
+looked obviously right and made the crash deterministic instead. The 1.10.2
+tests were reworked to add no new windows — the reworked A-17 regression
+reuses the window the existing schema test already builds, and now pins the
+*newest rejected* schema (2) rather than the oldest, so it tests the fix that
+actually shipped. The suite runs 10 of 10 clean.
 
 ## The recurring lesson, one level further out
 
