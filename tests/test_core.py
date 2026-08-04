@@ -597,6 +597,42 @@ class CoreTests(unittest.TestCase):
             _flatten_config({"matching": {"audio": 60}, "audio": {"threshold": 60}})["audio_threshold"], 60
         )
 
+    def test_user_facing_docs_do_not_quote_superseded_thresholds(self) -> None:
+        # A-25: the same drift as A-21, but in prose rather than JSON.
+        # docs/GUI_REFERENCE.md advertised "video 15, image 80, audio 88" long
+        # after all three were re-derived, and docs/THRESHOLDS.md carried a
+        # copy-pasteable benchmark command that passed them explicitly.
+        #
+        # Every superseded default is a number a user might paste into a
+        # config and then wonder why matching went quiet, so they are banned
+        # from the docs people are meant to copy from. The audit files are
+        # deliberately excluded: their whole job is to record what the old
+        # numbers were and why they moved.
+        from dedupe.cli import DEFAULT_CONFIG
+
+        superseded = {
+            "15": "video, pre-A-02",
+            "80": "image, pre-A-06",
+            "85": "video, pre-F-24",
+            "88": "audio, pre-A-14",
+            "90": "image, pre-F-24",
+            "94": "audio, pre-F-24",
+        }
+        current = {str(int(DEFAULT_CONFIG[f"{medium}_threshold"])) for medium in ("video", "image", "audio")}
+        superseded = {value: why for value, why in superseded.items() if value not in current}
+
+        docs = Path(__file__).resolve().parents[1]
+        pages = [docs / "README.md", *(docs / "docs" / name for name in ("CONFIG.md", "USAGE.md", "GUI_REFERENCE.md"))]
+        offenders = []
+        for page in pages:
+            for number, line in enumerate(page.read_text(encoding="utf-8").splitlines(), start=1):
+                if "threshold" not in line.lower():
+                    continue
+                for value, why in superseded.items():
+                    if re.search(rf"`{value}`", line):
+                        offenders.append(f"{page.name}:{number} quotes `{value}` ({why}) on a threshold line")
+        self.assertEqual(offenders, [], "\n".join(offenders))
+
     def test_documented_config_examples_use_the_shipped_thresholds(self) -> None:
         # The prose example in docs/CONFIG.md is copied by users; it drifted
         # from the shipped defaults once already (A-21). Parse every JSON block

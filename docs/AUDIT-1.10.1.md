@@ -602,7 +602,7 @@ saying why.
 | A-22 | Read the audio duration tolerance from the matcher; finish A-08 for images | Medium | Open |
 | A-23 | Remove the trim cliff by keeping both descriptors; measure against the negatives | Medium | Open |
 | A-24 | Parallelise the video pair loop (record as a known ceiling if deferred) | Low | Open |
-| A-25 | Refresh the stale numbers in `STATUS.md` and `THRESHOLDS.md` | Low | Open |
+| A-25 | Refresh the stale numbers in `STATUS.md` and `THRESHOLDS.md` | Low | **Done in 1.10.3** |
 | A-26 | Remove `GRID_MISSING_SAMPLE` and its test, or make the producer emit it | Low | Open |
 | A-27 | Document why video keeps the coarse stride audio dropped | Low | Open |
 | A-28 | Give Qt windows/dialogs deterministic destruction; find why a stopped player is unsafe to finalize | High | Open (found while fixing A-17) |

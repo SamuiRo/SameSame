@@ -6,7 +6,7 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.10.2`. Stages A through E, and Stage F
+The current package version is `1.10.3`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -231,15 +231,18 @@ quarantine-first action.
 
 ## Verification Completed
 
-The snapshot below is from the `1.7.0` release verification. For the fixes
-made since then (Stages A-E of the forward-looking audit), see the
-per-stage "Full suite: N passed" lines and regression-test names in
-`docs/AUDIT-1.7.0.md` — as of the last Stage E pass the suite contains 120
-tests plus 7 subtests, all passing, with `ruff check`/`ruff format --check`
-clean and a documented 37-error `mypy` baseline.
+**Current, as of `1.10.3`:** the suite is **151 tests plus 14 subtests**, all
+passing under both `unittest` and pytest in the project-local Python 3.11.9
+virtual environment, with `ruff check` / `ruff format --check` clean and a
+documented **33-error** `mypy` baseline.
 
-- All 95 pass under both `unittest` and pytest in the project-local Python
-  3.11.9 virtual environment with all runtime/dev dependencies installed.
+The itemised list below describes what that coverage verifies. It was written
+at the `1.7.0` release and the individual entries still hold, but treat the
+counts above — not any number inside the list — as current (A-25).
+
+- Service coverage verifies structured events, warnings, failure reporting,
+  cooperative cancellation/cache preservation, review metadata, and stable
+  GUI progress without constructing terminal progress locks in Qt workers.
 - Service coverage verifies structured events, warnings, failure reporting,
   cooperative cancellation/cache preservation, review metadata, and stable
   GUI progress without constructing terminal progress locks in Qt workers.
@@ -271,8 +274,8 @@ clean and a documented 37-error `mypy` baseline.
   and zero misses on all three media at the shipped defaults, guarded by
   `tests/test_benchmark_integration.py` (added in 1.10.1 after the tool
   was found to have rotted unnoticed — see A-16).
-- Package builds produce both the `samesame-1.7.0` source archive and
-  universal wheel (current package version: `1.9.0`).
+- Package builds produce both a source archive and a universal wheel; the
+  build was last exercised end to end at `1.6.6` (see `docs/AUDIT.md`).
 - A recursive CLI test confirms that a resized/recompressed JPEG in a nested
   folder matches its PNG source and appears in HTML/JSON and folder clusters.
 - Candidate blocking was checked against generated passing pairs without
@@ -283,15 +286,17 @@ clean and a documented 37-error `mypy` baseline.
   changed in both formula and cost. Treat them as history, not as a current
   baseline — the live evidence is the real-library measurement below and the
   per-medium derivations in `docs/AUDIT-1.8.0.md` (A-02, A-06, A-14).
-- A full 276-video / 97.5 GB real library scan (`S:\Daedalus\Kiroku\TestLib`)
-  takes 114 s warm and yields 129 video matches, 14 exact groups, and 61
-  folder pairs at the
-  `20.0` default. On 4 workers the one-time alignment-grid build takes
-  **26 minutes** (it reads every file once, so it is disk-bandwidth-bound)
-  and a warm-cache rescan takes **105 seconds**. The pre-1.9.0 matcher would
-  have needed ~39 hours for the same scan (`docs/AUDIT-1.8.0.md`, A-01).
-  This supersedes the earlier "59-file collection in about 20 seconds" note,
-  which predated the alignment work entirely.
+- A full 298-file / 276-video / 97.5 GB real library scan
+  (`S:\Daedalus\Kiroku\TestLib`) yields 129 video matches, 14 exact groups,
+  61 folder pairs and 4 name hints at the `20.0` default. Re-measured for the
+  1.10.1 audit from a completely cold cache: **2192 s end to end** (36.5 min),
+  of which the one-time alignment-grid build is about **28 minutes** on 4
+  workers — it reads every byte of the library, so it is disk-bandwidth-bound.
+  A warm-cache rescan is **105 s**, and reproduces the cold results exactly.
+  The pre-1.9.0 matcher would have needed ~39 hours for the same scan
+  (`docs/AUDIT-1.8.0.md`, A-01). This supersedes both the earlier "59-file
+  collection in about 20 seconds" note and the "114 s warm" figure that sat
+  alongside the 105 s one (A-25).
 
 ## Development Environment
 
@@ -371,7 +376,7 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.10.2`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.10.3`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:

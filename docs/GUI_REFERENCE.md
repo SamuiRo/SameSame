@@ -1,6 +1,6 @@
 # Desktop Interface Reference
 
-This page documents the SameSame `1.10.2` desktop interface button by button.
+This page documents the SameSame `1.10.3` desktop interface button by button.
 The GUI is launched with `samesame-gui` and contains three main tabs:
 **Duplicate review**, **Video compression**, and **Folder consolidation**.
 
@@ -33,7 +33,7 @@ transcode are disabled until that operation finishes safely.
 | **Name provider** | Selects local heuristics, automatic Anthropic fallback, Anthropic, or LM Studio title normalization. |
 | **LM Studio URL / model** | Configures the local OpenAI-compatible server when LM Studio is selected. |
 | **Workers** | Sets background worker threads for the scan. |
-| **Video / Image / Audio / Name / Folder threshold** | Sets the minimum match confidence for the corresponding evidence type. Video/image/audio use a calibrated scale where `0` means indistinguishable from unrelated content and `100` means identical (see `docs/THRESHOLDS.md`) - not a naive "percent similar," so their defaults (video `15`, image `80`, audio `88`) look very different from each other and from name/folder's plain percentage scales. |
+| **Video / Image / Audio / Name / Folder threshold** | Sets the minimum match confidence for the corresponding evidence type. Video/image/audio use a calibrated scale where `0` means indistinguishable from unrelated content and `100` means identical (see `docs/THRESHOLDS.md`) - not a naive "percent similar." Defaults: video `20` (A-02), image `60` (A-06), audio `60` (A-14) — each derived from real measured evidence, and all three on the same calibrated scale, unlike name/folder which are plain percentages (name `92`, folder `50`). |
 | **Skip video fingerprints** | Skips FFmpeg video sampling. Exact hashes and other enabled media stages still run. |
 | **Skip image fingerprints** | Skips perceptual image matching. |
 | **Skip audio fingerprints** | Skips FFmpeg Chromaprint audio matching. |

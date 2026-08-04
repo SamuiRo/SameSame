@@ -24,16 +24,17 @@ score linearly so `50` raw maps to `0` and `100` raw stays `100`:
 calibrated = max(0, (raw - 50) / 50 * 100)
 ```
 
-This is applied to the video, image (structure component only - the color
-component is a direct RGB distance with no noise floor and is left alone),
-and audio similarity scores wherever they are reported or compared against a
-user-supplied threshold. It is *not* applied to internal raw-scale
-comparisons: `find_video_matches` decalibrates the incoming threshold once
-and does all of its comparisons on the raw scale, calibrating only the final
-score. See `calibrate_similarity`'s docstring for the full reasoning.
+This is applied to the video, image, and audio similarity scores wherever they
+are reported or compared against a user-supplied threshold. For images it is
+applied to the perceptual-structure score, which since A-06 is the *whole*
+score — colour is a veto that can reject a pair, never a term that lifts one,
+so there is no second component to calibrate or leave alone. See "How image
+matching scores" below.
 
-The image path no longer blends colour into the score at all (A-06) - see
-"How image matching scores" below.
+It is *not* applied to internal raw-scale comparisons: `find_video_matches`
+decalibrates the incoming threshold once and does all of its comparisons on
+the raw scale, calibrating only the final score. See `calibrate_similarity`'s
+docstring for the full reasoning.
 
 No fingerprint version bump was needed for this change: the stored
 fingerprint bytes (the phash/Chromaprint values themselves) are unaffected;
@@ -237,9 +238,15 @@ samesame-benchmark `
   --manifest docs\threshold-manifest.example.json `
   --ffmpeg C:\ffmpeg\bin\ffmpeg.exe `
   --ffprobe C:\ffmpeg\bin\ffprobe.exe `
-  --video-threshold 15.0 --image-threshold 80.0 --audio-threshold 88.0 `
   --output threshold-real.json
 ```
+
+The threshold flags default to the shipped values (`DEFAULT_CONFIG`, since
+A-16), so omit them unless you are deliberately probing a different bar. This
+example used to pass `--video-threshold 15.0 --image-threshold 80.0
+--audio-threshold 88.0` explicitly; all three were superseded by A-02, A-06
+and A-14, and copying them today would reproduce the very misses those
+findings measured (A-25).
 
 Manifest paths are relative to the manifest file. Add both known matches and
 hard negatives from the same collection. Do not treat the synthetic baseline
