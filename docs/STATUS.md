@@ -404,12 +404,15 @@ silently set `audio_threshold=88`). **Two High findings remain open:**
 - **A-19** — audio's `duration_tolerance` widening (3 s → 120 s, A-14) made
   the bucket sweep quadratic: 800 files score 205 801 pairs where they should
   score 6 372. Needs the sorted forward sweep the video path already uses.
-- **A-28** — `close()` does not destroy a Qt window, and collecting the
-  leaked `QMediaPlayer`/`QVideoWidget` objects can abort the process with a
-  native access violation. Reproduced by adding two `MainWindow()`
-  constructions to the test suite (7 of 8 full runs crashed, inside Pillow
-  worker threads in an unrelated test file). Forcing the collection onto the
-  GUI thread makes it *deterministic*, so the obvious fix is not the fix.
+- **A-28** — `close()` does not destroy a Qt window, and **one** extra
+  `MainWindow` constructed at one specific point in the GUI test order makes
+  the whole suite abort with a native access violation, inside Pillow worker
+  threads in an unrelated test file. Renamed to sort last, the same test is
+  clean; two plain extra windows appended at the end are clean. So it is
+  position in the accumulated Qt object graph, not window count. Forcing the
+  collection onto the GUI thread makes it *deterministic*, so the obvious fix
+  is not the fix, and four standalone reproductions did not trigger it.
+  `tests/test_gui.py` carries a naming workaround meanwhile.
 
 Neither A-18 nor A-19 is reachable from the current test library: it holds 22
 images (below the blocking threshold of 250) and no standalone audio at all.

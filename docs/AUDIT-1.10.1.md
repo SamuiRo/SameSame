@@ -277,18 +277,34 @@ until the file changes.
 Found while fixing A-17, by adding two `MainWindow()` constructions to
 `tests/test_gui.py` — a change that should have been inert.
 
+> **Correction.** This finding first recorded the trigger as the *number* of
+> windows ("+2 windows → 7 of 8 runs crash"). That was wrong, and a follow-up
+> bisect disproved it. The count is irrelevant; the **position in the test
+> order** is what matters. The corrected mechanism is below. The original
+> reasoning was a plausible story that fit the first measurement, and it
+> survived exactly one experiment designed to test it.
+
 `close()` hides a window; it does not destroy it. The GUI suite builds 18
 `MainWindow` instances and closes all of them, so 18 windows survive, each
 holding the two `QMediaPlayer` / `QAudioOutput` / `QVideoWidget` sets its
 preview pane creates. They are freed only when CPython eventually collects
 them — on whatever thread happens to be collecting.
 
-Adding two more turned that from latent into frequent:
+What the bisect actually established:
 
-```
-pre-change  suite, 8 consecutive full runs:  8 pass, 0 crash
-+2 windows, suite, 8 consecutive full runs:  1 pass, 7 crash
-```
+| Configuration | Full runs |
+| --- | --- |
+| Pre-change suite | 8 pass, 0 crash |
+| The two new tests at their alphabetical positions | 1 pass, 5 crash |
+| **The same two tests renamed to sort last** | **6 pass, 0 crash** |
+| Two *plain* extra windows appended at the end | 6 pass, 0 crash |
+| Only the earlier-sorting of the two, in place | 6 pass, 0 crash |
+| Only the later-sorting one, in place | crashes |
+
+So a single extra window is enough — but only in one slot: immediately after
+`test_similar_video_chain_is_one_review_case_with_working_batch_cleanup`,
+which is the test that drives a `QMediaPlayer` at a `.mkv` containing junk
+bytes and then re-selects those paths after quarantining them.
 
 The crash is a **Windows fatal exception: access violation**, and it lands in
 `tests/test_images.py` — a file that has nothing to do with Qt:
@@ -312,23 +328,49 @@ now inside `gc.collect()` in `tearDown` itself. So the problem is not only
 `close()` leaves them in, is unsafe. That result is worth recording precisely
 because it refutes the fix that looks right.
 
-**What is proven and what is not.** Proven: leaked, closed `MainWindow`
-objects can abort this process when collected. Not proven: that the shipped
-GUI does this in ordinary use — its single `MainWindow` lives for the life of
-the process, which is very likely why no user has hit it. The exposure worth
-investigating is the objects that *are* created and dropped repeatedly while
-PIL worker threads run: `TranscodeDialog`, `JournalDialog`, and the preview
-panes' media players.
+**What reproduction was tried and failed.** Four standalone probes, each run
+several times, all survived:
 
-Not fixed here, deliberately: the diagnosis is solid but the fix is a Qt
-object-lifetime change in GUI code, which is a different piece of work from
-the three findings this pass was scoped to. The 1.10.2 tests were reworked to
-add no new windows, so the suite is exactly as stable as it was before.
+```
+20 MainWindows built + closed + dropped, then gc.collect()          survives
+20 MainWindows, then 60 images fingerprinted on 4 PIL threads       survives
+window -> MediaPane._load_path(junk .mkv) -> close -> new window    survives
+the same with a missing .mkv, and with no media at all              survives
+```
 
-**Fix:** give `MainWindow` (and the dialogs) deterministic destruction —
-`WA_DeleteOnClose` or an explicit `deleteLater()` after `comparison.stop()` —
-and establish why a stopped player is still unsafe to finalize. Then add the
-two windows back and confirm the suite survives repeated full runs.
+So it is not "leaked windows" alone, not "leaked windows plus PIL threads",
+and not the bogus-media path on its own. It needs the accumulated state of
+the full suite — the scan-worker `QThread`s, the transcode queue, the journal
+connections — and only then does one extra window in one position tip it over.
+`MediaPane._load_path` already guards a missing file, so that is not the gap.
+
+**What is proven and what is not.** Proven: at a specific point in this
+process's Qt object graph, constructing one more `MainWindow` leads to a
+native abort later, in unrelated code, and forcing collection onto the GUI
+thread makes it deterministic rather than fixing it. Not proven: any of the
+usual explanations. The count hypothesis is disproved; the "wrong thread"
+hypothesis is disproved by the `gc.collect()` result; the bogus-media
+hypothesis did not reproduce in isolation.
+
+Not fixed here, deliberately, and now for a stronger reason than scope: the
+first plausible fix was refuted by measurement, and the second (deterministic
+destruction) made things worse. Root-causing this means bisecting Qt object
+lifetimes across eighteen tests' accumulated state, which is its own piece of
+work. Guessing at a fix without that would be exactly the mistake this audit
+series keeps recording.
+
+**Practical guard rail meanwhile:** `tests/test_gui.py` carries a note that a
+new `MainWindow`-constructing test should be named to sort *late* in the
+class until this is understood. That is a workaround, not a fix, and it is
+fragile by construction — it depends on alphabetical ordering.
+
+**Fix, when someone takes it:** start from the reproduction recipe above
+(insert a window-constructing test immediately after
+`test_similar_video_chain_...` and run the full suite ~6 times). Bisect by
+removing preceding GUI tests until it stops, which identifies the object
+graph that matters. Only then choose between deterministic destruction,
+detaching the media players earlier, or isolating the GUI suite in its own
+process.
 
 ---
 
@@ -678,10 +720,10 @@ A-18 and A-19 remain open. Both need a fixture the project does not have yet
 (a large image corpus; a standalone-audio library at scale), which is precisely
 the gap the validation section above describes.
 
-**A-28 was found by doing this work**, not by reading code: two extra
-`MainWindow()` constructions in the A-17 test turned a latent Qt object-
-lifetime bug into a process abort in 7 of 8 full-suite runs, in an unrelated
-test file. It is written up above with the evidence, including the fix that
+**A-28 was found by doing this work**, not by reading code: one extra
+`MainWindow()` construction, at one specific position in the GUI test order,
+turned a latent Qt object-lifetime bug into a process abort in 5 of 6
+full-suite runs, in an unrelated test file. It is written up above with the evidence, including the fix that
 looked obviously right and made the crash deterministic instead. The 1.10.2
 tests were reworked to add no new windows — the reworked A-17 regression
 reuses the window the existing schema test already builds, and now pins the

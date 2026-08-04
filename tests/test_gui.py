@@ -47,6 +47,23 @@ class ResultItemTests(unittest.TestCase):
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 GUI extra is not installed")
 class GuiSmokeTests(unittest.TestCase):
+    # A-28, unresolved: name a new MainWindow-constructing test so that it
+    # sorts LATE in this class (unittest runs methods alphabetically).
+    #
+    # One extra window placed immediately after
+    # `test_similar_video_chain_is_one_review_case_with_working_batch_cleanup`
+    # makes the *whole suite* abort with a native access violation, inside
+    # Pillow worker threads, over in tests/test_images.py. The same test
+    # renamed to sort last is clean over repeated full runs, and two plain
+    # extra windows appended at the end are clean too - so this is about
+    # position in the accumulated Qt object graph, not about how many windows
+    # exist. `close()` does not destroy a window, and forcing the collection
+    # onto the GUI thread in tearDown makes the abort deterministic rather
+    # than fixing it.
+    #
+    # This is a workaround and it is fragile: it depends on alphabetical
+    # ordering. See docs/AUDIT-1.10.1.md (A-28) for the bisect, the four
+    # standalone reproductions that did NOT trigger it, and where to start.
     @classmethod
     def setUpClass(cls) -> None:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
