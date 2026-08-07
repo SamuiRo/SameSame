@@ -229,6 +229,69 @@ class FileActionTests(unittest.TestCase):
             self.assertTrue(source.exists())
             self.assertIn("blocked by Safe mode", outcome.message)
 
+    def test_emptying_quarantine_frees_the_files_and_ends_their_restorability(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            collection = base / "collection"
+            collection.mkdir()
+            service = self._service(base)
+            quarantined = []
+            for index in range(3):
+                source = collection / "season" / f"episode {index}.mkv"
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_bytes(b"episode payload" * (index + 1))
+                quarantined.append(service.perform(self._record(source, collection), FileAction.QUARANTINE))
+            expected = sum(len(b"episode payload" * (index + 1)) for index in range(3))
+            self.assertEqual(service.quarantine_contents(), (3, expected))
+
+            purge = service.purge_quarantine()
+
+            self.assertEqual(purge.removed, 3)
+            self.assertEqual(purge.freed_bytes, expected)
+            self.assertEqual(purge.failures, ())
+            self.assertEqual(service.quarantine_contents(), (0, 0))
+            for outcome in quarantined:
+                self.assertFalse(outcome.destination.exists())  # type: ignore[union-attr]
+                with self.assertRaises(ValueError):
+                    service.restore(outcome.operation_id)
+            records = {record.operation_id: record for record in service.recent_operations()}
+            for outcome in quarantined:
+                record = records[outcome.operation_id]
+                self.assertFalse(record.reversible)
+                self.assertIsNotNone(record.identity, "the pre-delete identity stays on record")
+            self.assertEqual(
+                [path for path in (base / "quarantine").rglob("*")],
+                [],
+                "emptied subfolders must not be left behind",
+            )
+
+    def test_emptying_quarantine_refuses_a_destination_outside_the_quarantine_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            library = base / "library"
+            library.mkdir()
+            bystander = library / "untouchable.mkv"
+            bystander.write_bytes(b"a file the journal must never reach")
+            service = self._service(base)
+            source = library / "episode.mkv"
+            source.write_bytes(b"episode payload")
+            outcome = service.perform(self._record(source, library), FileAction.QUARANTINE)
+            # Rewrite the journal to point at a file outside the quarantine root,
+            # standing in for a stale row or a hand-edited database.
+            with OperationJournal(service.journal_path) as journal:
+                journal.connection.execute(
+                    "UPDATE operations SET destination = ? WHERE operation_id = ?",
+                    (str(bystander), outcome.operation_id),
+                )
+                journal.connection.commit()
+
+            purge = service.purge_quarantine()
+
+            self.assertEqual(purge.removed, 0)
+            self.assertEqual(len(purge.failures), 1)
+            self.assertIn("Refused to delete outside", purge.failures[0])
+            self.assertTrue(bystander.is_file(), "a path outside quarantine must survive untouched")
+
     def test_permanent_delete_is_blocked_unless_it_was_explicitly_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

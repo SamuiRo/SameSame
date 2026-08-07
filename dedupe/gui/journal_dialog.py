@@ -8,6 +8,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -20,6 +21,7 @@ from ..actions import FileAction, FileActionService, OperationRecord, OperationS
 
 class JournalDialog(QDialog):
     restore_requested = Signal(str)
+    journal_purged = Signal()
 
     def __init__(
         self,
@@ -46,12 +48,20 @@ class JournalDialog(QDialog):
         self.restore_button.clicked.connect(self._restore)
         self.open_quarantine_button = QPushButton("Open quarantine folder")
         self.open_quarantine_button.clicked.connect(self._open_quarantine)
+        self.empty_quarantine_button = QPushButton("Empty quarantine…")
+        self.empty_quarantine_button.setStyleSheet("color: #c62828; font-weight: 600")
+        self.empty_quarantine_button.setToolTip(
+            "Permanently delete every restorable file in the quarantine folder. "
+            "This is what actually frees the space a quarantine move only reserved."
+        )
+        self.empty_quarantine_button.clicked.connect(self._empty_quarantine)
         close_button = QPushButton("Close")
         close_button.clicked.connect(self.close)
         controls = QHBoxLayout()
         controls.addWidget(self.refresh_button)
         controls.addWidget(self.restore_button)
         controls.addWidget(self.open_quarantine_button)
+        controls.addWidget(self.empty_quarantine_button)
         controls.addStretch(1)
         controls.addWidget(close_button)
 
@@ -101,6 +111,49 @@ class JournalDialog(QDialog):
             and not record.source.exists()
         )
         self.restore_button.setEnabled(can_restore)
+        count, _total = FileActionService(self.journal_path, self.quarantine_root).quarantine_contents()
+        self.empty_quarantine_button.setEnabled(count > 0)
+
+    @staticmethod
+    def _format_size(size: int) -> str:
+        value = float(size)
+        for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+            if value < 1024 or unit == "TiB":
+                return f"{value:.1f} {unit}"
+            value /= 1024
+        return f"{value:.1f} TiB"
+
+    def _empty_quarantine(self) -> None:
+        service = FileActionService(self.journal_path, self.quarantine_root)
+        count, total = service.quarantine_contents()
+        if not count:
+            QMessageBox.information(self, "Quarantine is empty", "There is nothing left to delete.")
+            self.refresh()
+            return
+        answer = QMessageBox.warning(
+            self,
+            "Permanently delete everything in quarantine?",
+            f"{count} file(s), {self._format_size(total)}, will be ERASED from\n{self.quarantine_root}\n\n"
+            "Until now these files were only moved, so on a single drive they still occupy their full "
+            "size. Deleting them is what releases that space, and it cannot be undone — every one of them "
+            "stops being restorable.\n\nContinue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        purge = service.purge_quarantine()
+        self.refresh()
+        summary = f"Deleted {purge.removed} file(s) and freed {self._format_size(purge.freed_bytes)}."
+        if purge.failures:
+            QMessageBox.warning(
+                self,
+                "Quarantine partly emptied",
+                summary + "\n\nThese were left behind:\n" + "\n".join(purge.failures[:20]),
+            )
+        else:
+            QMessageBox.information(self, "Quarantine emptied", summary)
+        self.journal_purged.emit()
 
     def _restore(self) -> None:
         record = self._selected_record()

@@ -212,6 +212,7 @@ requeues the row so a different preset can be tried.
 | --- | --- |
 | **Refresh** | Reloads recent operations from SQLite. |
 | **Restore quarantine** | Restores one completed reversible quarantine operation after identity and destination checks. |
+| **Empty quarantine…** | Permanently deletes every restorable file in the quarantine folder, after a confirmation stating the count and total size. This is what actually releases space a quarantine move only reserved on a single drive. Each purged operation keeps its recorded identity but stops being restorable. Only paths the journal itself recorded, and that still live under the configured quarantine root, are touched — anything else is reported as refused and left alone. |
 | **Open quarantine folder** | Opens the configured quarantine root. |
 | **Close** | Closes the journal window. |
 

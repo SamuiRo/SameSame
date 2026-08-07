@@ -4,7 +4,7 @@ import hashlib
 import shutil
 import time
 import uuid
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
 
@@ -20,6 +20,13 @@ from .models import (
     PreparedAction,
 )
 from .preflight import PreflightError, prepare_identity, verify_content, verify_identity
+
+
+@dataclass(frozen=True, slots=True)
+class QuarantinePurge:
+    removed: int
+    freed_bytes: int
+    failures: tuple[str, ...] = ()
 
 
 def _retry_sharing_violation(operation: Callable[[], None], attempts: int = 8, delay: float = 0.25) -> None:
@@ -344,6 +351,76 @@ class FileActionService:
             related_operation_id=original.operation_id,
         )
         return self.execute(request)
+
+    def quarantine_contents(self) -> tuple[int, int]:
+        """Count and total size of the restorable files sitting in quarantine."""
+        root = self.quarantine_root.expanduser().resolve()
+        count = 0
+        total = 0
+        with OperationJournal(self.journal_path) as journal:
+            records = journal.reversible_quarantine()
+        for record in records:
+            destination = record.destination
+            if destination is None:
+                continue
+            resolved = destination.expanduser().resolve()
+            if not resolved.is_relative_to(root) or not resolved.is_file():
+                continue
+            count += 1
+            total += resolved.stat().st_size
+        return count, total
+
+    def purge_quarantine(self) -> QuarantinePurge:
+        """Permanently delete quarantined files, releasing the space they hold.
+
+        Quarantine is a move, so on a single volume it never freed anything —
+        emptying it is what finally does. Only paths the journal itself recorded
+        *and* that still live under the configured quarantine root are touched,
+        so a stale or hand-edited journal entry can never reach into a library.
+        Each purged row keeps its identity and stops being restorable.
+        """
+        root = self.quarantine_root.expanduser().resolve()
+        removed = 0
+        freed = 0
+        failures: list[str] = []
+        with OperationJournal(self.journal_path) as journal:
+            for record in journal.reversible_quarantine():
+                destination = record.destination
+                if destination is None:
+                    continue
+                resolved = destination.expanduser().resolve()
+                if not resolved.is_relative_to(root):
+                    failures.append(f"Refused to delete outside the quarantine folder: {resolved}")
+                    continue
+                if not resolved.is_file():
+                    journal.mark_irreversible(record.operation_id, "Quarantined file is no longer present")
+                    continue
+                size = resolved.stat().st_size
+                try:
+                    _retry_sharing_violation(resolved.unlink)
+                except OSError as exc:
+                    failures.append(f"{resolved}: {exc}")
+                    continue
+                journal.mark_irreversible(record.operation_id, "Quarantined file permanently deleted by a purge")
+                removed += 1
+                freed += size
+        self._remove_empty_quarantine_directories()
+        return QuarantinePurge(removed, freed, tuple(failures))
+
+    def _remove_empty_quarantine_directories(self) -> None:
+        root = self.quarantine_root.expanduser()
+        if not root.is_dir():
+            return
+        directories = sorted(
+            (path for path in root.rglob("*") if path.is_dir()),
+            key=lambda path: len(path.parts),
+            reverse=True,
+        )
+        for directory in directories:
+            try:
+                directory.rmdir()
+            except OSError:
+                continue  # Not empty, or in use; leaving it is harmless.
 
     def recent_operations(self, limit: int = 500) -> list[OperationRecord]:
         with OperationJournal(self.journal_path) as journal:

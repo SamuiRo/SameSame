@@ -504,6 +504,55 @@ class GuiSmokeTests(unittest.TestCase):
             tab.close()
             self.application.processEvents()
 
+    def test_journal_dialog_empties_quarantine_after_an_explicit_confirmation(self) -> None:
+        from unittest.mock import patch
+
+        from PySide6.QtWidgets import QMessageBox
+
+        from dedupe.actions import FileAction, FileActionService
+        from dedupe.gui.journal_dialog import JournalDialog
+        from dedupe.models import FileRecord
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            collection = base / "collection"
+            collection.mkdir()
+            source = collection / "episode.mkv"
+            source.write_bytes(b"episode payload")
+            stat = source.stat()
+            service = FileActionService(base / "journal.sqlite3", base / "quarantine")
+            outcome = service.perform(
+                FileRecord(source.resolve(), collection.resolve(), stat.st_size, stat.st_mtime, source.stem),
+                FileAction.QUARANTINE,
+            )
+            quarantined = outcome.destination
+            self.assertTrue(quarantined and quarantined.is_file())
+
+            dialog = JournalDialog(base / "journal.sqlite3", base / "quarantine")
+            try:
+                self.assertTrue(dialog.empty_quarantine_button.isEnabled())
+
+                # Declining must change nothing at all.
+                with patch.object(QMessageBox, "warning", return_value=QMessageBox.StandardButton.No):
+                    dialog._empty_quarantine()
+                self.assertTrue(quarantined and quarantined.is_file(), "a declined purge must not delete")
+
+                purged: list[bool] = []
+                dialog.journal_purged.connect(lambda: purged.append(True))
+                with (
+                    patch.object(QMessageBox, "warning", return_value=QMessageBox.StandardButton.Yes),
+                    patch.object(QMessageBox, "information"),
+                ):
+                    dialog._empty_quarantine()
+
+                self.assertFalse(quarantined and quarantined.exists())
+                self.assertEqual(purged, [True])
+                self.assertFalse(dialog.empty_quarantine_button.isEnabled(), "nothing left to empty")
+                self.assertEqual(service.quarantine_contents(), (0, 0))
+            finally:
+                dialog.close()
+                self.application.processEvents()
+
     def test_name_hints_allow_review_decisions_but_disable_file_mutation(self) -> None:
         from dedupe.gui.main_window import MainWindow
         from dedupe.metadata import basic_media_metadata

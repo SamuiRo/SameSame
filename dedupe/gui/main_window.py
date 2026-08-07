@@ -994,6 +994,7 @@ class MainWindow(QMainWindow):
         if self._journal_dialog is None:
             dialog = JournalDialog(self._journal_path(), self._quarantine_root(), self)
             dialog.restore_requested.connect(self._request_restore)
+            dialog.journal_purged.connect(self._load_review_decisions)
             dialog.finished.connect(self._journal_closed)
             self._journal_dialog = dialog
         self._journal_dialog.refresh()

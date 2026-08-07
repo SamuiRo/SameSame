@@ -108,6 +108,26 @@ class OperationJournal:
         ).fetchone()
         return self._from_row(row) if row is not None else None
 
+    def reversible_quarantine(self) -> list[OperationRecord]:
+        """Every quarantine operation whose file is still meant to be recoverable."""
+        rows = self.connection.execute(
+            """
+            SELECT * FROM operations
+            WHERE action = ? AND status = ? AND reversible = 1 AND destination IS NOT NULL
+            ORDER BY requested_at
+            """,
+            (FileAction.QUARANTINE.value, OperationStatus.COMPLETED.value),
+        ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def mark_irreversible(self, operation_id: str, message: str) -> None:
+        """Record that a quarantined file is gone, without losing its identity."""
+        self.connection.execute(
+            "UPDATE operations SET reversible = 0, message = ? WHERE operation_id = ?",
+            (message, operation_id),
+        )
+        self.connection.commit()
+
     def recent(self, limit: int = 500) -> list[OperationRecord]:
         rows = self.connection.execute(
             "SELECT * FROM operations ORDER BY requested_at DESC LIMIT ?",

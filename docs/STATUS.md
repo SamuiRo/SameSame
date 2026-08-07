@@ -6,7 +6,7 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.12.0`. Stages A through E, and Stage F
+The current package version is `1.13.0`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -166,6 +166,10 @@ Implemented:
 - persistent SQLite operation journal (WAL mode, shared busy timeout) with
   requested/completed/failed states;
 - journal-driven restore for completed quarantine operations;
+- a confirmed quarantine purge that permanently deletes the quarantined files
+  and marks their operations irreversible while keeping their recorded
+  identities, refusing any journalled destination that does not resolve inside
+  the configured quarantine root (A-32);
 - cluster-level batch quarantine (any content-backed category, not just
   exact groups) that preserves the selected keeper;
 - background file actions and explicit confirmation flows;
@@ -254,7 +258,7 @@ quarantine-first action.
 
 ## Verification Completed
 
-**Current, as of `1.12.0`:** the suite is **171 tests plus 27 subtests**, all
+**Current, as of `1.13.0`:** the suite is **174 tests plus 27 subtests**, all
 passing under both `unittest` and pytest in the project-local Python 3.11.9
 virtual environment, with `ruff check` / `ruff format --check` clean and a
 documented **33-error** `mypy` baseline.
@@ -363,7 +367,8 @@ ffprobe -version
 - Unsafe recycle operations depend on operating-system behavior and are not
   automatically restorable. They are blocked by default; use quarantine when rollback matters.
 - Restore is available only while the quarantined file still matches its
-  journaled identity and the original path remains free.
+  journaled identity and the original path remains free. Emptying the
+  quarantine ends restorability for everything it deletes.
 - Hardware presets require compatible NVIDIA hardware and drivers; capability
   checks report unavailable devices before a queue starts.
 - Transcoding currently produces MKV only. Promotion of a non-MKV source, and
@@ -403,7 +408,7 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.12.0`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.13.0`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:
