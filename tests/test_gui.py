@@ -445,6 +445,50 @@ class GuiSmokeTests(unittest.TestCase):
                 window.close()
                 self.application.processEvents()
 
+    def test_compression_cleanup_modes_reach_the_queue_and_flag_a_useless_quarantine(self) -> None:
+        from PySide6.QtCore import Qt
+
+        from dedupe.actions import FileAction
+        from dedupe.gui.compression_tab import CompressionTab, CompressionVideo
+
+        tab = CompressionTab()
+        try:
+            # A tab with no parent window must not recurse looking for one.
+            self.assertIsInstance(tab._quarantine_root(), Path)
+
+            self.assertIsNone(tab.cleanup_action(), "originals are kept until the box is ticked")
+            self.assertFalse(tab.cleanup_mode.isEnabled())
+            self.assertIn("kept", tab.cleanup_note.text())
+
+            payloads: list[tuple[object, ...]] = []
+            tab.queue_requested.connect(lambda *args: payloads.append(args))
+            with tempfile.TemporaryDirectory() as tmp:
+                episode = Path(tmp) / "episode.mkv"
+                episode.write_bytes(b"video")
+                tab.folder_path.setText(tmp)
+                tab._add_video(CompressionVideo(episode, episode.stat().st_size, 60.0, "h264", "1280×720"))
+                tab.table.item(0, 0).setCheckState(Qt.CheckState.Checked)
+                # Pin the quarantine root beside the sources so the same-volume
+                # verdict is decided by the test rather than by the host's drives.
+                tab._quarantine_root = lambda: Path(tmp) / "quarantine"  # type: ignore[method-assign]
+
+                tab.recycle_originals.setChecked(True)
+                self.assertTrue(tab.cleanup_mode.isEnabled())
+                self.assertEqual(tab.cleanup_action(), FileAction.QUARANTINE)
+                self.assertIn("frees no space", tab.cleanup_note.text())
+
+                tab.cleanup_mode.setCurrentIndex(tab.cleanup_mode.findData(FileAction.DELETE.value))
+                self.assertEqual(tab.cleanup_action(), FileAction.DELETE)
+                self.assertIn("no restore", tab.cleanup_note.text())
+
+                tab._request_queue()
+
+            self.assertEqual(len(payloads), 1)
+            self.assertEqual(payloads[0][4], FileAction.DELETE, "the chosen mode must reach the queue")
+        finally:
+            tab.close()
+            self.application.processEvents()
+
     def test_name_hints_allow_review_decisions_but_disable_file_mutation(self) -> None:
         from dedupe.gui.main_window import MainWindow
         from dedupe.metadata import basic_media_metadata

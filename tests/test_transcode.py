@@ -357,6 +357,70 @@ class QueueTests(unittest.TestCase):
             self.assertFalse(source.exists())
             self.assertTrue(outcome.destination.exists())  # type: ignore[union-attr]
 
+    def test_cleanup_only_reports_freed_space_when_the_bytes_actually_leave_the_volume(self) -> None:
+        from dedupe.actions import FileAction
+        from dedupe.transcode.source_cleanup import cleanup_frees_source_space
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sources = [root / "library" / "episode.mkv"]
+            (root / "library").mkdir()
+            sources[0].write_bytes(b"video")
+
+            # A quarantine move inside one volume is a rename: nothing is released.
+            self.assertFalse(cleanup_frees_source_space(FileAction.QUARANTINE, sources, root / "quarantine"))
+            # Recycle and delete release the bytes wherever the quarantine root points.
+            for action in (FileAction.RECYCLE, FileAction.DELETE):
+                with self.subTest(action=action):
+                    self.assertTrue(cleanup_frees_source_space(action, sources, root / "quarantine"))
+            with self.assertRaises(ValueError):
+                cleanup_frees_source_space(FileAction.KEEP, sources, root / "quarantine")
+
+    def test_validated_transcode_can_permanently_delete_its_source_when_enabled(self) -> None:
+        from dedupe.actions import FileAction, FileActionService, OperationStatus
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.mkv"
+            output = root / "source.encoded.mkv"
+            source.write_bytes(b"original video")
+            output.write_bytes(b"encoded")
+            stat = source.stat()
+            result = TranscodeResult(
+                "job",
+                JobStatus.COMPLETED,
+                source,
+                output,
+                None,
+                "anime_x265_balanced",
+                input_size=stat.st_size,
+                output_size=output.stat().st_size,
+                validation=ValidationResult(True, output_info=media(output, size=output.stat().st_size)),
+                input_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+                input_modified_at=stat.st_mtime,
+            )
+            journal = root / "journal.sqlite3"
+            arguments = {
+                "action": FileAction.DELETE,
+                "journal_path": journal,
+                "quarantine_root": root / "quarantine",
+                "collection_root": root,
+            }
+
+            refused = cleanup_transcode_source(result, **arguments)  # type: ignore[arg-type]
+            self.assertEqual(refused.status, OperationStatus.FAILED)
+            self.assertTrue(source.exists(), "delete must stay blocked without the explicit opt-in")
+
+            outcome = cleanup_transcode_source(result, allow_permanent_delete=True, **arguments)  # type: ignore[arg-type]
+
+            self.assertEqual(outcome.status, OperationStatus.COMPLETED)
+            self.assertFalse(source.exists())
+            self.assertFalse(outcome.reversible)
+            self.assertTrue(output.is_file(), "the encoded output must survive its source cleanup")
+            self.assertEqual(
+                FileActionService(journal, root / "quarantine").recent_operations()[0].action, FileAction.DELETE
+            )
+
     def test_validated_transcode_can_identity_check_and_recycle_its_source(self) -> None:
         from dedupe.actions import FileAction, FileActionService, OperationStatus
 

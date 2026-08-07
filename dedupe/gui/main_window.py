@@ -1048,7 +1048,7 @@ class MainWindow(QMainWindow):
         preset_value: object,
         output_value: object,
         root_value: object,
-        recycle_originals: bool,
+        cleanup_value: object,
     ) -> None:
         if (
             self._scan_thread is not None
@@ -1069,7 +1069,8 @@ class MainWindow(QMainWindow):
         paths = [Path(str(path)) for path in paths_value]
         output_dir = Path(str(output_value)) if isinstance(output_value, Path) else None
         collection_root = Path(str(root_value)) if isinstance(root_value, Path) else None
-        self._show_transcode(paths, preset_value, output_dir, collection_root, recycle_originals)
+        cleanup = cleanup_value if isinstance(cleanup_value, FileAction) else None
+        self._show_transcode(paths, preset_value, output_dir, collection_root, cleanup)
 
     def _show_transcode(
         self,
@@ -1077,13 +1078,13 @@ class MainWindow(QMainWindow):
         preset: object | None = None,
         output_dir: Path | None = None,
         collection_root: Path | None = None,
-        recycle_originals: bool = False,
+        cleanup_action: FileAction | None = None,
     ) -> None:
         selected_preset = preset if isinstance(preset, TranscodePreset) else None
         if self._transcode_dialog is not None:
             self._transcode_dialog.add_paths(paths, selected_preset)
             self._transcode_dialog.set_output_dir(output_dir)
-            self._transcode_dialog.set_auto_recycle_originals(recycle_originals)
+            self._transcode_dialog.set_cleanup_action(cleanup_action)
             self._transcode_dialog.set_allow_unsafe_recycle(self.allow_unsafe_recycle.isChecked())
             if collection_root is not None:
                 for path in paths:
@@ -1107,7 +1108,7 @@ class MainWindow(QMainWindow):
             collection_roots=roots,
             initial_preset=selected_preset,
             initial_output_dir=output_dir,
-            auto_recycle_originals=recycle_originals,
+            initial_cleanup_action=cleanup_action,
             allow_unsafe_recycle=self.allow_unsafe_recycle.isChecked(),
             parent=self,
         )

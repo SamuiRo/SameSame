@@ -1,9 +1,11 @@
 # Usage Guide
 
-This guide describes SameSame `1.10.4`. The current application provides a
+This guide describes SameSame `1.11.0`. The current application provides a
 report-only CLI and an optional desktop review interface with explicit,
 journaled quarantine/recycle actions and a transcoding queue. There is no
-permanent-delete command.
+permanent-delete command, and duplicate review cannot delete at all; the one
+place that can is post-compression cleanup, where permanent delete is an
+explicitly chosen, separately confirmed mode.
 
 For a button-by-button description of both tabs and every dialog, see the
 [Desktop interface reference](GUI_REFERENCE.md).
@@ -279,8 +281,8 @@ time, and a newly calculated SHA-256 identity, then verifies quarantined output
 again. Quarantine preserves the collection-relative path, handles name
 collisions, and can be restored from the operation journal. Unsafe recycle uses
 the operating-system recycle integration; SameSame cannot verify or restore its
-result. Folder and name-only hints never enable file mutation. Permanent deletion
-is not implemented.
+result. Folder and name-only hints never enable file mutation. Duplicate review
+offers no permanent delete; that exists only as a compression cleanup mode.
 
 ## Folder Consolidation
 

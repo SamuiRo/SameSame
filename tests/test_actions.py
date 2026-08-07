@@ -229,6 +229,51 @@ class FileActionTests(unittest.TestCase):
             self.assertTrue(source.exists())
             self.assertIn("blocked by Safe mode", outcome.message)
 
+    def test_permanent_delete_is_blocked_unless_it_was_explicitly_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source = base / "episode.mkv"
+            source.write_bytes(b"content")
+
+            outcome = self._service(base).perform(self._record(source, base), FileAction.DELETE)
+
+            self.assertEqual(outcome.status, OperationStatus.FAILED)
+            self.assertTrue(source.exists(), "a blocked delete must leave the file alone")
+            self.assertIn("not explicitly enabled", outcome.message)
+
+    def test_permanent_delete_erases_the_file_and_journals_it_as_irreversible(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source = base / "episode.mkv"
+            source.write_bytes(b"content")
+            service = FileActionService(base / "journal.sqlite3", base / "quarantine", allow_permanent_delete=True)
+
+            outcome = service.perform(self._record(source, base), FileAction.DELETE)
+
+            self.assertEqual(outcome.status, OperationStatus.COMPLETED)
+            self.assertFalse(source.exists())
+            self.assertFalse(outcome.reversible)
+            self.assertIsNone(outcome.destination, "a deleted file has nowhere to come back from")
+            record = service.recent_operations()[0]
+            self.assertEqual(record.action, FileAction.DELETE)
+            self.assertIsNotNone(record.identity, "the pre-delete identity must stay on record")
+            with self.assertRaises(ValueError):
+                service.restore(outcome.operation_id)
+
+    def test_permanent_delete_refuses_a_file_that_changed_since_the_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source = base / "episode.mkv"
+            source.write_bytes(b"content")
+            service = FileActionService(base / "journal.sqlite3", base / "quarantine", allow_permanent_delete=True)
+            request = service.prepare(self._record(source, base), FileAction.DELETE)
+            source.write_bytes(b"different content entirely")
+
+            outcome = service.execute(request)
+
+            self.assertEqual(outcome.status, OperationStatus.FAILED)
+            self.assertTrue(source.exists(), "an unrecognised file must never be erased")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -31,10 +31,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..actions import FileAction
 from ..scanner import VIDEO_EXTENSIONS
 from ..transcode.models import MediaInfo
 from ..transcode.presets import PRESETS, TranscodePreset
 from ..transcode.probe import ProbeError, probe_media
+from ..transcode.source_cleanup import cleanup_frees_source_space
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,7 +191,7 @@ class CompressionFolderWorker(QObject):
 
 
 class CompressionTab(QWidget):
-    queue_requested = Signal(object, object, object, object, bool)
+    queue_requested = Signal(object, object, object, object, object)
     busy_changed = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -315,14 +317,88 @@ class CompressionTab(QWidget):
         output_layout.addWidget(self.output_button)
         layout.addWidget(output_group)
 
-        self.recycle_originals = QCheckBox("Remove originals after compression (safe quarantine by default)")
+        cleanup_group = QGroupBox("After a validated compression")
+        cleanup_layout = QVBoxLayout(cleanup_group)
+        self.recycle_originals = QCheckBox("Remove each original")
         self.recycle_originals.setStyleSheet("color: #c62828; font-weight: 600")
         self.recycle_originals.setToolTip(
-            "Only validated outputs trigger cleanup. OS Recycle requires the separate unsafe setting in Duplicate review."
+            "Only a validated output that is actually smaller than its source triggers cleanup."
         )
-        layout.addWidget(self.recycle_originals)
+        self.recycle_originals.toggled.connect(self._cleanup_changed)
+        self.cleanup_mode = QComboBox()
+        # Store the plain enum *value*: Qt hands user data back across the
+        # QVariant boundary as a bare string, so an enum member put in here does
+        # not come out as one, and findData() would never match it either.
+        self.cleanup_mode.addItem("Quarantine — reversible through the journal", FileAction.QUARANTINE.value)
+        self.cleanup_mode.addItem("Operating-system Recycle Bin", FileAction.RECYCLE.value)
+        self.cleanup_mode.addItem("Delete permanently — cannot be undone", FileAction.DELETE.value)
+        self.cleanup_mode.currentIndexChanged.connect(self._cleanup_changed)
+        self.cleanup_note = QLabel()
+        self.cleanup_note.setWordWrap(True)
+        cleanup_layout.addWidget(self.recycle_originals)
+        cleanup_layout.addWidget(self.cleanup_mode)
+        cleanup_layout.addWidget(self.cleanup_note)
+        layout.addWidget(cleanup_group)
+        self._cleanup_changed()
         layout.addStretch(1)
         return panel
+
+    def cleanup_action(self) -> FileAction | None:
+        """Return the cleanup the user asked for, or None to keep every original."""
+        if not self.recycle_originals.isChecked():
+            return None
+        try:
+            return FileAction(str(self.cleanup_mode.currentData()))
+        except ValueError:
+            return FileAction.QUARANTINE
+
+    def _quarantine_root(self) -> Path:
+        window = self.window()
+        # `window()` returns the tab itself when it has no parent window, and
+        # this method is the one it would find — never call back into it.
+        getter = getattr(window, "_quarantine_root", None) if window is not self else None
+        if callable(getter):
+            root = getter()
+            if isinstance(root, Path):
+                return root
+        return Path.home() / "SameSame Quarantine"
+
+    def _cleanup_changed(self, *_args: object) -> None:
+        """Explain, before the queue runs, whether this cleanup will free any space."""
+        action = self.cleanup_action()
+        self.cleanup_mode.setEnabled(self.recycle_originals.isChecked())
+        if action is None:
+            self.cleanup_note.setStyleSheet("color: palette(mid)")
+            self.cleanup_note.setText("Every original is kept. Outputs are written alongside them.")
+            return
+        if action == FileAction.DELETE:
+            self.cleanup_note.setStyleSheet("color: #c62828; font-weight: 600")
+            self.cleanup_note.setText(
+                "Originals are erased as each file finishes. Space is released immediately and "
+                "there is no restore — not from the journal and not from the Recycle Bin."
+            )
+            return
+        if action == FileAction.RECYCLE:
+            self.cleanup_note.setStyleSheet("color: #b06000")
+            self.cleanup_note.setText(
+                "Space is released only once the Recycle Bin is emptied, and Windows deletes "
+                "immediately when the bin is disabled for that drive."
+            )
+            return
+        sources = [video.path for video in self._videos] or [Path(self.folder_path.text().strip() or ".")]
+        if cleanup_frees_source_space(action, sources, self._quarantine_root()):
+            self.cleanup_note.setStyleSheet("color: palette(mid)")
+            self.cleanup_note.setText(
+                f"Originals move to {self._quarantine_root()}, on another drive, so this frees space here."
+            )
+        else:
+            self.cleanup_note.setStyleSheet("color: #b06000; font-weight: 600")
+            self.cleanup_note.setText(
+                f"Quarantine ({self._quarantine_root()}) is on the same drive as these videos, so moving "
+                "originals there frees no space at all — the run will end with less free space than it "
+                "started. Choose another quarantine folder in Duplicate review, or pick a mode above "
+                "that actually releases the bytes."
+            )
 
     def _build_video_panel(self) -> QVBoxLayout:
         layout = QVBoxLayout()
@@ -450,6 +526,9 @@ class CompressionTab(QWidget):
         self._worker = None
         self._set_loading(False)
         self._update_summary()
+        # Only now are the real source paths known, so the quarantine
+        # same-volume verdict can be recomputed against them.
+        self._cleanup_changed()
 
     def cancel_loading(self) -> None:
         if self._worker is not None:
@@ -561,7 +640,7 @@ class CompressionTab(QWidget):
             self._selected_preset(),
             output_dir,
             root,
-            self.recycle_originals.isChecked(),
+            self.cleanup_action(),
         )
 
     @staticmethod

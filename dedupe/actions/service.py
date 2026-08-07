@@ -10,7 +10,15 @@ from typing import Callable
 
 from ..models import FileRecord
 from .journal import OperationJournal
-from .models import ActionOutcome, FileAction, FileIdentity, OperationRecord, OperationStatus, PreparedAction
+from .models import (
+    MUTATING_ACTIONS,
+    ActionOutcome,
+    FileAction,
+    FileIdentity,
+    OperationRecord,
+    OperationStatus,
+    PreparedAction,
+)
 from .preflight import PreflightError, prepare_identity, verify_content, verify_identity
 
 
@@ -33,11 +41,13 @@ class FileActionService:
         *,
         recycle: Callable[[str], None] | None = None,
         allow_unsafe_recycle: bool = False,
+        allow_permanent_delete: bool = False,
     ) -> None:
         self.journal_path = journal_path
         self.quarantine_root = quarantine_root
         self._recycle = recycle
         self.allow_unsafe_recycle = allow_unsafe_recycle
+        self.allow_permanent_delete = allow_permanent_delete
 
     def prepare(
         self,
@@ -48,7 +58,7 @@ class FileActionService:
     ) -> PreparedAction:
         if action == FileAction.RESTORE:
             raise ValueError("Use restore() for quarantine restoration")
-        identity = prepare_identity(record) if action in {FileAction.QUARANTINE, FileAction.RECYCLE} else None
+        identity = prepare_identity(record) if action in MUTATING_ACTIONS else None
         request = PreparedAction(
             operation_id=uuid.uuid4().hex,
             action=action,
@@ -218,6 +228,28 @@ class FileActionService:
                         OperationStatus.COMPLETED,
                         request.source,
                         message="File sent to the operating-system recycle bin",
+                        group_id=request.group_id,
+                    )
+                elif request.action == FileAction.DELETE:
+                    if request.identity is None:
+                        raise PreflightError("Permanent delete request is missing preflight identity")
+                    if not self.allow_permanent_delete:
+                        raise RuntimeError(
+                            "Permanent delete is blocked because it was not explicitly enabled for this "
+                            "operation; use quarantine when rollback matters"
+                        )
+                    # The identity check is the only safeguard left: there is no
+                    # destination to verify afterwards and no journal restore.
+                    verify_identity(request.source, request.identity)
+                    _retry_sharing_violation(lambda: request.source.unlink())
+                    if request.source.exists():
+                        raise RuntimeError(f"Delete returned but the source still exists: {request.source}")
+                    outcome = ActionOutcome(
+                        request.operation_id,
+                        request.action,
+                        OperationStatus.COMPLETED,
+                        request.source,
+                        message="File permanently deleted; this operation cannot be undone",
                         group_id=request.group_id,
                     )
                 elif request.action == FileAction.RESTORE:

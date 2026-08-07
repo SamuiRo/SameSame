@@ -10,7 +10,13 @@ class FileAction(str, Enum):
     IGNORE = "ignore"
     QUARANTINE = "quarantine"
     RECYCLE = "recycle"
+    DELETE = "delete"
     RESTORE = "restore"
+
+
+#: Actions that remove a file from its original path and therefore require a
+#: verified pre-action identity. DELETE is the only one with no way back.
+MUTATING_ACTIONS = frozenset({FileAction.QUARANTINE, FileAction.RECYCLE, FileAction.DELETE})
 
 
 class OperationStatus(str, Enum):

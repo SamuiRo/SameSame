@@ -36,7 +36,15 @@ from ..transcode.models import (
 )
 from ..transcode.presets import PRESETS, TranscodePreset
 from ..transcode.promotion import PromotionResult
+from ..transcode.source_cleanup import cleanup_frees_source_space
 from .worker import TranscodeCapabilityWorker, TranscodePromotionWorker, TranscodeWorker
+
+
+_CLEANUP_PAST_TENSE = {
+    FileAction.QUARANTINE: "quarantined",
+    FileAction.RECYCLE: "recycled",
+    FileAction.DELETE: "deleted",
+}
 
 
 class TranscodeDialog(QDialog):
@@ -54,7 +62,7 @@ class TranscodeDialog(QDialog):
         collection_roots: dict[str, Path] | None = None,
         initial_preset: TranscodePreset | None = None,
         initial_output_dir: Path | None = None,
-        auto_recycle_originals: bool = False,
+        initial_cleanup_action: FileAction | None = None,
         allow_unsafe_recycle: bool = False,
         parent: QWidget | None = None,
     ) -> None:
@@ -86,7 +94,7 @@ class TranscodeDialog(QDialog):
             self._install_preset(initial_preset)
         if initial_output_dir is not None:
             self.output_dir.setText(str(initial_output_dir))
-        self.recycle_originals.setChecked(auto_recycle_originals)
+        self.set_cleanup_action(initial_cleanup_action)
         self._add_paths(paths)
         self._check_capability()
 
@@ -107,9 +115,24 @@ class TranscodeDialog(QDialog):
         if not self.is_busy:
             self.output_dir.setText(str(output_dir) if output_dir is not None else "")
 
-    def set_auto_recycle_originals(self, enabled: bool) -> None:
-        if not self.is_busy:
-            self.recycle_originals.setChecked(enabled)
+    def cleanup_action(self) -> FileAction | None:
+        """Return the cleanup the user asked for, or None to keep every original."""
+        if not self.recycle_originals.isChecked():
+            return None
+        try:
+            return FileAction(str(self.cleanup_mode.currentData()))
+        except ValueError:
+            return FileAction.QUARANTINE
+
+    def set_cleanup_action(self, action: FileAction | None) -> None:
+        if self.is_busy:
+            return
+        self.recycle_originals.setChecked(action is not None)
+        if action is not None:
+            index = self.cleanup_mode.findData(action.value)
+            if index >= 0:
+                self.cleanup_mode.setCurrentIndex(index)
+        self._update_cleanup_label()
 
     def set_allow_unsafe_recycle(self, enabled: bool) -> None:
         if self.is_busy:
@@ -171,8 +194,22 @@ class TranscodeDialog(QDialog):
         output_row.addWidget(self.add_files_button)
         output_row.addWidget(self.remove_button)
 
-        self.recycle_originals = QCheckBox()
+        cleanup_row = QHBoxLayout()
+        self.recycle_originals = QCheckBox("Remove each original after its output validates")
         self.recycle_originals.setStyleSheet("color: #c62828; font-weight: 600")
+        self.recycle_originals.toggled.connect(self._update_cleanup_label)
+        self.cleanup_mode = QComboBox()
+        # Plain enum values only — see CompressionTab for why the member itself
+        # does not survive the QVariant round trip.
+        self.cleanup_mode.addItem("Quarantine — reversible", FileAction.QUARANTINE.value)
+        self.cleanup_mode.addItem("Recycle Bin", FileAction.RECYCLE.value)
+        self.cleanup_mode.addItem("Delete permanently", FileAction.DELETE.value)
+        self.cleanup_mode.currentIndexChanged.connect(self._update_cleanup_label)
+        self.cleanup_label = QLabel()
+        self.cleanup_label.setWordWrap(True)
+        cleanup_row.addWidget(self.recycle_originals)
+        cleanup_row.addWidget(self.cleanup_mode)
+        cleanup_row.addWidget(self.cleanup_label, 1)
         self._update_cleanup_label()
 
         self.table = QTableWidget(0, 6)
@@ -226,7 +263,7 @@ class TranscodeDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addLayout(settings)
         layout.addLayout(output_row)
-        layout.addWidget(self.recycle_originals)
+        layout.addLayout(cleanup_row)
         layout.addWidget(self.table, 1)
         layout.addWidget(self.details)
         layout.addLayout(controls)
@@ -234,19 +271,41 @@ class TranscodeDialog(QDialog):
         self._set_queue_running(False)
         self._selection_changed()
 
-    def _update_cleanup_label(self) -> None:
-        if self.allow_unsafe_recycle:
-            self.recycle_originals.setText(
-                "Move each original to OS Recycle Bin after validation (may permanently delete)"
-            )
-            self.recycle_originals.setToolTip(
-                "Windows may permanently delete when Recycle Bin is disabled or unavailable."
-            )
+    def _queued_sources(self) -> list[Path]:
+        return [
+            Path(str(self.table.item(row, 0).data(Qt.ItemDataRole.UserRole))) for row in range(self.table.rowCount())
+        ]
+
+    def _update_cleanup_label(self, *_args: object) -> None:
+        enabled = self.recycle_originals.isChecked()
+        self.cleanup_mode.setEnabled(enabled and not self.is_busy)
+        # OS recycle stays behind the same red opt-in that governs it in
+        # Duplicate review; without it the mode falls back to quarantine.
+        recycle_index = self.cleanup_mode.findData(FileAction.RECYCLE.value)
+        model_item = self.cleanup_mode.model().item(recycle_index)
+        if model_item is not None:
+            model_item.setEnabled(self.allow_unsafe_recycle)
+        if not self.allow_unsafe_recycle and self.cleanup_mode.currentIndex() == recycle_index:
+            self.cleanup_mode.setCurrentIndex(self.cleanup_mode.findData(FileAction.QUARANTINE.value))
+        action = self.cleanup_action()
+        if action is None:
+            self.cleanup_label.setStyleSheet("color: palette(mid)")
+            self.cleanup_label.setText("Every original is kept.")
+            return
+        if action == FileAction.DELETE:
+            self.cleanup_label.setStyleSheet("color: #c62828; font-weight: 600")
+            self.cleanup_label.setText("Erased on completion — no journal restore, no Recycle Bin.")
+            return
+        if action == FileAction.RECYCLE:
+            self.cleanup_label.setStyleSheet("color: #b06000")
+            self.cleanup_label.setText("Windows may delete immediately when the bin is disabled.")
+            return
+        if cleanup_frees_source_space(action, self._queued_sources(), self.quarantine_root):
+            self.cleanup_label.setStyleSheet("color: palette(mid)")
+            self.cleanup_label.setText("Restorable through the journal; quarantine is on another drive.")
         else:
-            self.recycle_originals.setText("Move each original to SameSame Quarantine after successful validation")
-            self.recycle_originals.setToolTip(
-                "Safe default: validated originals remain restorable through the operation journal."
-            )
+            self.cleanup_label.setStyleSheet("color: #b06000; font-weight: 600")
+            self.cleanup_label.setText("Quarantine is on the same drive — this frees no space.")
 
     @staticmethod
     def _key(path: Path) -> str:
@@ -275,6 +334,9 @@ class TranscodeDialog(QDialog):
         self.start_button.setEnabled(
             self._externally_enabled and self.table.rowCount() > 0 and self._capability_available()
         )
+        # New sources can sit on a different drive than the ones already queued,
+        # which changes whether quarantine would free anything.
+        self._update_cleanup_label()
 
     def _choose_files(self) -> None:
         filenames, _selected = QFileDialog.getOpenFileNames(self, "Add videos to transcode")
@@ -397,17 +459,19 @@ class TranscodeDialog(QDialog):
             self._launch_queue(requests)
 
     def _launch_queue(self, requests: list[TranscodeRequest]) -> None:
+        cleanup = self.cleanup_action()
         thread = QThread(self)
         worker = TranscodeWorker(
             requests,
             self.ffmpeg,
             self.ffprobe,
-            recycle_originals=self.recycle_originals.isChecked(),
+            recycle_originals=cleanup is not None,
             journal_path=self.journal_path,
             quarantine_root=self.quarantine_root,
             collection_roots=self.collection_roots,
-            source_cleanup_action=(FileAction.RECYCLE if self.allow_unsafe_recycle else FileAction.QUARANTINE),
+            source_cleanup_action=cleanup or FileAction.QUARANTINE,
             allow_unsafe_recycle=self.allow_unsafe_recycle,
+            allow_permanent_delete=cleanup == FileAction.DELETE,
         )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -427,23 +491,46 @@ class TranscodeDialog(QDialog):
         thread.start()
 
     def _confirm_recycle_originals(self) -> bool:
-        if not self.recycle_originals.isChecked():
+        action = self.cleanup_action()
+        if action is None:
             return True
-        if self.allow_unsafe_recycle:
+        preamble = (
+            "Only a validated output that is actually smaller than its source triggers cleanup, and every "
+            "original is identity-checked by SHA-256 immediately beforehand.\n\n"
+        )
+        if action == FileAction.DELETE:
+            answer = QMessageBox.warning(
+                self,
+                "Permanently delete every original?",
+                f"{preamble}Each original will then be ERASED. This cannot be undone: there is no journal "
+                "restore and nothing reaches the Recycle Bin. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+        elif action == FileAction.RECYCLE:
             answer = QMessageBox.warning(
                 self,
                 "Recycle originals after compression?",
-                "WARNING: Windows may permanently delete every original if Recycle Bin is disabled or unavailable. "
-                "SameSame cannot verify or restore these items. Continue?",
+                f"{preamble}WARNING: Windows may permanently delete every original if Recycle Bin is disabled "
+                "or unavailable. SameSame cannot verify or restore these items. Continue?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
         else:
+            space = (
+                ""
+                if cleanup_frees_source_space(action, self._queued_sources(), self.quarantine_root)
+                else (
+                    f"\n\nNote: the quarantine folder ({self.quarantine_root}) is on the same drive as these "
+                    "videos, so moving originals there releases no space. The run will finish with less free "
+                    "space than it started, because the new outputs are added on the same drive."
+                )
+            )
             answer = QMessageBox.question(
                 self,
                 "Quarantine originals after compression?",
-                "Each original will be moved to SameSame Quarantine only after output validation and an identity "
-                "check. The operation will be journaled and restorable. Continue?",
+                f"{preamble}Each original will be moved to SameSame Quarantine. The operation is journaled "
+                f"and restorable.{space}\n\nContinue?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
@@ -496,7 +583,7 @@ class TranscodeDialog(QDialog):
         self._source_actions[key] = value
         row = self._row_for_path(value.source)
         if row >= 0:
-            action_label = "recycled" if value.action == FileAction.RECYCLE else "quarantined"
+            action_label = _CLEANUP_PAST_TENSE.get(value.action, value.action.value)
             status = (
                 f"Completed; original {action_label}"
                 if value.status == OperationStatus.COMPLETED
@@ -512,7 +599,7 @@ class TranscodeDialog(QDialog):
         self._source_actions[self._key(source)] = message
         row = self._row_for_path(source)
         if row >= 0:
-            action_label = "recycle" if self.allow_unsafe_recycle else "quarantine"
+            action_label = (self.cleanup_action() or FileAction.QUARANTINE).value
             self.table.item(row, 2).setText(f"Completed; original {action_label} failed")
         self.status_label.setText(f"Original was kept: {message}")
         self._selection_changed()
@@ -536,6 +623,7 @@ class TranscodeDialog(QDialog):
         self.preset_combo.setEnabled(not running)
         self.output_dir.setEnabled(not running)
         self.recycle_originals.setEnabled(not running)
+        self.cleanup_mode.setEnabled(not running and self.recycle_originals.isChecked())
         self.start_button.setEnabled(
             self._externally_enabled and not running and self.table.rowCount() > 0 and self._capability_available()
         )

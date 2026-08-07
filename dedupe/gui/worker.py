@@ -234,6 +234,7 @@ class TranscodeWorker(QObject):
         collection_roots: dict[str, Path] | None = None,
         source_cleanup_action: FileAction = FileAction.QUARANTINE,
         allow_unsafe_recycle: bool = False,
+        allow_permanent_delete: bool = False,
     ) -> None:
         super().__init__()
         self.requests = requests
@@ -245,6 +246,7 @@ class TranscodeWorker(QObject):
         self.collection_roots = collection_roots or {}
         self.source_cleanup_action = source_cleanup_action
         self.allow_unsafe_recycle = allow_unsafe_recycle
+        self.allow_permanent_delete = allow_permanent_delete
         self.cancellation = CancellationToken()
 
     @Slot()
@@ -269,6 +271,7 @@ class TranscodeWorker(QObject):
                     quarantine_root=self.quarantine_root,
                     collection_root=self.collection_roots.get(key),
                     allow_unsafe_recycle=self.allow_unsafe_recycle,
+                    allow_permanent_delete=self.allow_permanent_delete,
                 )
                 self.source_action.emit(outcome)
             except Exception as exc:  # noqa: BLE001 - preserve the successful output and report cleanup failure.

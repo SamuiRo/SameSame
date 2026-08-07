@@ -161,7 +161,9 @@ The preset dropdown contains the four presets from
 | --- | --- |
 | **Output → Browse…** | Selects one output directory. Blank means beside each source. |
 | Video checkbox in the table | Explicitly includes the row in the queue. |
-| **Remove originals after compression (safe quarantine by default)** | After validated output, uses reversible Quarantine by default. It uses unsafe OS Recycle only when that separate setting is enabled in Duplicate review. |
+| **Remove each original** | Enables post-compression cleanup. Only a validated output that is genuinely smaller than its source ever triggers it, and each original is SHA-256 identity-checked immediately beforehand. |
+| Cleanup mode | Chooses **Quarantine** (default, reversible through the journal), **Recycle Bin** (still requires the red unsafe opt-in in Duplicate review), or **Delete permanently** (irreversible; no journal restore). |
+| Cleanup note | States what the chosen mode will actually do to free space, and warns when the quarantine folder is on the same drive as the videos — that move is a rename, so it releases nothing and the run ends with less free space than it started. |
 | **Open compression queue with checked videos** | Opens the queue with the checked paths, selected preset, output folder, collection root, and cleanup policy. |
 
 ## Transcode queue dialog
@@ -174,7 +176,7 @@ The preset dropdown contains the four presets from
 | **Output folder…** | Changes the output directory. Blank keeps outputs beside their sources. |
 | **Add videos…** | Adds supported individual video files without duplicating existing rows. |
 | **Remove selected** | Removes selected queue rows only; it does not touch source files. |
-| Cleanup checkbox | Uses SameSame Quarantine in Safe mode or clearly labels unsafe OS Recycle when enabled. |
+| Cleanup checkbox and mode | Mirrors the compression tab's selection: quarantine, Recycle Bin, or permanent delete, each with its own start confirmation. Recycle stays disabled until the unsafe opt-in in Duplicate review is enabled. |
 | **Start queue** | Runs pending jobs sequentially. Existing successful jobs are skipped. |
 | **Cancel** | Stops the active FFmpeg process and marks remaining queued jobs skipped. |
 | **Retry failed** | Requeues failed, cancelled, or skipped rows. |
