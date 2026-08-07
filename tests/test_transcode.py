@@ -251,6 +251,77 @@ class RunnerAndValidationTests(unittest.TestCase):
 
 
 class QueueTests(unittest.TestCase):
+    def test_an_output_that_is_not_smaller_is_discarded_and_the_source_is_kept(self) -> None:
+        from dedupe.transcode.models import EncoderCapability, RunnerResult
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "already-efficient.mkv"
+            source.write_bytes(b"x" * 1000)
+            output = root / "already-efficient.encoded.mkv"
+
+            def encode(plan: TranscodePlan, **_kwargs: object) -> RunnerResult:
+                plan.temporary_path.write_bytes(b"y" * 4000)
+                return RunnerResult(JobStatus.COMPLETED, 0, 1.0)
+
+            queue = TranscodeQueue(ffmpeg=sys.executable, ffprobe=sys.executable)
+            with (
+                patch.object(queue, "capability", return_value=EncoderCapability("libx265", True, True)),
+                patch("dedupe.transcode.queue.probe_media", return_value=media(source, size=1000)),
+                patch("dedupe.transcode.queue.run_transcode", side_effect=encode),
+                patch(
+                    "dedupe.transcode.queue.validate_output",
+                    side_effect=lambda plan, **_k: ValidationResult(
+                        True,
+                        warnings=("Output is not smaller than the source",),
+                        output_info=media(plan.temporary_path, size=4000),
+                    ),
+                ),
+            ):
+                result = queue._run_one(
+                    TranscodeRequest(source, output, "anime_x265_balanced"),
+                    CancellationToken(),
+                )
+
+            self.assertEqual(result.status, JobStatus.SKIPPED)
+            self.assertIn("not smaller than the source", result.message)
+            self.assertEqual((result.input_size, result.output_size), (1000, 4000))
+            self.assertTrue(source.is_file(), "a discarded encode must never touch its source")
+            self.assertFalse(output.exists(), "an output larger than the source must never be committed")
+            self.assertFalse(any(root.glob("*.part.mkv")), "the temporary encode must be removed")
+
+    def test_source_cleanup_refuses_every_job_that_did_not_complete(self) -> None:
+        from dedupe.actions import FileAction
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.mkv"
+            source.write_bytes(b"original video")
+            stat = source.stat()
+            for status in (JobStatus.SKIPPED, JobStatus.FAILED, JobStatus.CANCELLED):
+                result = TranscodeResult(
+                    "job",
+                    status,
+                    source,
+                    root / "source.encoded.mkv",
+                    None,
+                    "anime_x265_balanced",
+                    input_size=stat.st_size,
+                    output_size=stat.st_size * 4,
+                    validation=ValidationResult(True, output_info=media(source, size=stat.st_size * 4)),
+                    input_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+                    input_modified_at=stat.st_mtime,
+                )
+                with self.subTest(status=status), self.assertRaises(ValueError):
+                    cleanup_transcode_source(
+                        result,
+                        action=FileAction.QUARANTINE,
+                        journal_path=root / "journal.sqlite3",
+                        quarantine_root=root / "quarantine",
+                        collection_root=root,
+                    )
+                self.assertTrue(source.is_file())
+
     def test_validated_transcode_uses_reversible_quarantine_in_safe_mode(self) -> None:
         from dedupe.actions import FileAction, OperationStatus
 

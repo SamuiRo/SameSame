@@ -186,6 +186,13 @@ The details pane compares input/output duration, stream counts, chapters, size,
 savings, validation warnings, and source-cleanup outcome. Encoding never writes
 over the source file.
 
+A job whose encode came out **no smaller than its source** is reported as
+`Skipped`, not `Completed`: the encode is deleted instead of committed, and the
+source is never eligible for cleanup. Without that rule a library holding
+already-efficient files could lose originals while using *more* disk than
+before. The size column reads `larger; encode discarded`, and `Retry failed`
+requeues the row so a different preset can be tried.
+
 ## Operation journal dialog
 
 | Control | Purpose |

@@ -477,9 +477,11 @@ class TranscodeDialog(QDialog):
             self.table.item(row, 3).setText("100.00%" if value.status == JobStatus.COMPLETED else "—")
             self.table.item(row, 4).setText(str(value.output_path))
             if value.output_size:
-                self.table.item(row, 5).setText(
-                    f"{value.input_size:,} → {value.output_size:,} bytes ({value.savings_percent:.1f}% saved)"
-                )
+                if value.status == JobStatus.SKIPPED and value.output_size >= value.input_size:
+                    summary = f"{value.input_size:,} → {value.output_size:,} bytes (larger; encode discarded)"
+                else:
+                    summary = f"{value.input_size:,} → {value.output_size:,} bytes ({value.savings_percent:.1f}% saved)"
+                self.table.item(row, 5).setText(summary)
         self.status_label.setText(f"{value.input_path.name}: {value.status.value} — {value.message}")
         self._selection_changed()
 

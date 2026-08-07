@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from dedupe.transcode.models import JobStatus, TranscodeRequest
+from dedupe.transcode.presets import TranscodePreset
 from dedupe.transcode.probe import probe_media
 from dedupe.transcode.queue import TranscodeQueue
 
@@ -104,6 +105,55 @@ class TranscodeIntegrationTests(unittest.TestCase):
                 self.assertEqual(after.stream_count(kind), before.stream_count(kind))
             self.assertEqual(after.chapter_count, before.chapter_count)
             self.assertTrue(results[0].log_path and results[0].log_path.is_file())
+
+    def test_an_already_efficient_source_is_skipped_instead_of_growing_on_disk(self) -> None:
+        """Re-encoding an x265 source at CRF 0 can only inflate it; nothing may be committed."""
+        assert FFMPEG is not None
+        assert FFPROBE is not None
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "already-x265.mkv"
+            subprocess.run(
+                [
+                    FFMPEG,
+                    "-hide_banner",
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=size=320x180:rate=12:duration=2",
+                    "-c:v",
+                    "libx265",
+                    "-crf",
+                    "40",
+                    "-preset",
+                    "veryfast",
+                    "-pix_fmt",
+                    "yuv420p",
+                    str(source),
+                ],
+                check=True,
+                timeout=120,
+            )
+            source_size = source.stat().st_size
+            inflating = TranscodePreset(
+                "test_inflate",
+                "Inflating",
+                "libx265",
+                ("-c:v", "libx265", "-crf", "0", "-preset", "medium", "-pix_fmt", "yuv420p10le"),
+            )
+            output = root / "encoded.mkv"
+            queue = TranscodeQueue(ffmpeg=FFMPEG, ffprobe=FFPROBE)
+            results = queue.run([TranscodeRequest(source, output, inflating.preset_id, inflating)])
+
+            self.assertEqual(results[0].status, JobStatus.SKIPPED, results[0].message)
+            self.assertGreater(results[0].output_size, source_size)
+            self.assertTrue(source.is_file(), "the source must be kept")
+            self.assertEqual(source.stat().st_size, source_size, "the source must be untouched")
+            self.assertFalse(output.exists(), "the inflated encode must not be committed")
+            self.assertFalse(any(root.glob("*.part.mkv")))
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.10.3`. Stages A through E, and Stage F
+The current package version is `1.10.4`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -191,6 +191,9 @@ Implemented:
   broader video extensions, and visible rows even when metadata probing fails;
 - optional post-encode cleanup that defaults to reversible quarantine and acts
   only after output validation and source SHA-256 identity verification;
+- a hard size gate ahead of that cleanup: an encode that is not smaller than its
+  source is deleted rather than committed and its job is reported as skipped, so
+  the source stays untouched and is never handed to cleanup (A-29);
 - duplicate-review batch cleanup checklist with quick select-all-except-current,
   quarantine/recycle actions, all-files warnings, per-file identity checks, and journaling.
 - third desktop Folder consolidation tab with editable final title names,
@@ -205,7 +208,9 @@ Implemented:
 The scanner CLI remains report-only. The desktop interface modifies a source only
 after an explicit quarantine confirmation, or an unsafe recycle opt-in, and a successful identity
 preflight. There is no permanent-delete action. Encoding always creates and
-validates a new MKV and keeps the original; promotion is a later explicit,
+validates a new MKV and keeps the original; an encode that comes out no smaller
+than its source is discarded and reported as skipped, so an already-efficient
+file can never be traded for a larger one; promotion is a later explicit,
 quarantine-first action.
 
 ## Supported Behavior
@@ -231,7 +236,7 @@ quarantine-first action.
 
 ## Verification Completed
 
-**Current, as of `1.10.3`:** the suite is **151 tests plus 14 subtests**, all
+**Current, as of `1.10.4`:** the suite is **154 tests plus 17 subtests**, all
 passing under both `unittest` and pytest in the project-local Python 3.11.9
 virtual environment, with `ruff check` / `ruff format --check` clean and a
 documented **33-error** `mypy` baseline.
@@ -376,7 +381,7 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.10.3`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.10.4`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:

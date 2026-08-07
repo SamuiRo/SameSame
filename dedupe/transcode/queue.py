@@ -172,6 +172,32 @@ class TranscodeQueue:
                     input_info=input_info,
                     input_modified_at=input_modified_at,
                 )
+            encoded_size = plan.temporary_path.stat().st_size
+            if encoded_size >= input_size:
+                # Discard before hashing the source: an encode that did not shrink
+                # the file is worthless, and committing it would cost disk space
+                # while making the source eligible for post-encode cleanup.
+                if not self.keep_temporary_on_failure:
+                    _cleanup(plan.temporary_path)
+                return TranscodeResult(
+                    job_id=plan.job_id,
+                    status=JobStatus.SKIPPED,
+                    input_path=plan.input_path,
+                    output_path=plan.output_path,
+                    log_path=plan.log_path,
+                    preset_id=request.preset_id,
+                    message=(
+                        f"Output is not smaller than the source ({encoded_size:,} >= {input_size:,} bytes); "
+                        "the encode was discarded and the source kept"
+                    ),
+                    input_size=input_size,
+                    output_size=encoded_size,
+                    elapsed_seconds=runner.elapsed_seconds,
+                    validation=validation,
+                    warnings=validation.warnings,
+                    input_info=input_info,
+                    input_modified_at=input_modified_at,
+                )
             source_stat = plan.input_path.stat()
             if source_stat.st_size != input_size or abs(source_stat.st_mtime - input_modified_at) > 0.000001:
                 if not self.keep_temporary_on_failure:

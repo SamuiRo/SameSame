@@ -68,5 +68,5 @@ def validate_output(
             errors.append(f"Cannot decode the first output video frame: {exc}")
 
     if output_info.size >= plan.input_info.size:
-        warnings.append("Output is not smaller than the source; the original was kept")
+        warnings.append("Output is not smaller than the source")
     return ValidationResult(not errors, tuple(errors), tuple(warnings), output_info)

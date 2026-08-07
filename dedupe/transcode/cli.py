@@ -152,7 +152,10 @@ def main(argv: list[str] | None = None) -> int:
         return 130
     if token.is_cancelled:
         return 130
-    return 0 if all(result.status == JobStatus.COMPLETED for result in results) else 1
+    # A skip past this point can only mean "the encode did not shrink the file",
+    # which is a legitimate no-op rather than a failure: every cancellation-driven
+    # skip has already returned 130 above.
+    return 0 if all(result.status in {JobStatus.COMPLETED, JobStatus.SKIPPED} for result in results) else 1
 
 
 if __name__ == "__main__":
