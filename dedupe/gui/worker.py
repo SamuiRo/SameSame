@@ -16,6 +16,7 @@ from ..transcode.models import TranscodeRequest
 from ..transcode.presets import TranscodePreset, get_preset
 from ..transcode.promotion import promote_transcode
 from ..transcode.queue import TranscodeQueue
+from ..transcode.replacement import replace_source_with_transcode
 from ..transcode.source_cleanup import cleanup_transcode_source
 
 
@@ -220,6 +221,7 @@ class TranscodeWorker(QObject):
     failed = Signal(str)
     source_action = Signal(object)
     source_action_failed = Signal(str, str)
+    replaced = Signal(object)
     finished = Signal()
 
     def __init__(
@@ -235,6 +237,7 @@ class TranscodeWorker(QObject):
         source_cleanup_action: FileAction = FileAction.QUARANTINE,
         allow_unsafe_recycle: bool = False,
         allow_permanent_delete: bool = False,
+        replace_sources: bool = False,
     ) -> None:
         super().__init__()
         self.requests = requests
@@ -247,6 +250,7 @@ class TranscodeWorker(QObject):
         self.source_cleanup_action = source_cleanup_action
         self.allow_unsafe_recycle = allow_unsafe_recycle
         self.allow_permanent_delete = allow_permanent_delete
+        self.replace_sources = replace_sources
         self.cancellation = CancellationToken()
 
     @Slot()
@@ -263,16 +267,25 @@ class TranscodeWorker(QObject):
                 self.source_action_failed.emit(str(result.input_path), "Operation journal is unavailable")
                 return
             key = str(result.input_path.expanduser().resolve())
+            arguments = {
+                "journal_path": self.journal_path,
+                "quarantine_root": self.quarantine_root,
+                "collection_root": self.collection_roots.get(key),
+                "allow_unsafe_recycle": self.allow_unsafe_recycle,
+                "allow_permanent_delete": self.allow_permanent_delete,
+            }
             try:
-                outcome = cleanup_transcode_source(
-                    result,
-                    action=self.source_cleanup_action,
-                    journal_path=self.journal_path,
-                    quarantine_root=self.quarantine_root,
-                    collection_root=self.collection_roots.get(key),
-                    allow_unsafe_recycle=self.allow_unsafe_recycle,
-                    allow_permanent_delete=self.allow_permanent_delete,
-                )
+                if self.replace_sources:
+                    replacement = replace_source_with_transcode(
+                        result, cleanup_action=self.source_cleanup_action, **arguments
+                    )
+                    self.replaced.emit(replacement)
+                    if replacement.cleanup is not None:
+                        self.source_action.emit(replacement.cleanup)
+                    if not replacement.success:
+                        self.source_action_failed.emit(str(result.input_path), replacement.message)
+                    return
+                outcome = cleanup_transcode_source(result, action=self.source_cleanup_action, **arguments)
                 self.source_action.emit(outcome)
             except Exception as exc:  # noqa: BLE001 - preserve the successful output and report cleanup failure.
                 self.source_action_failed.emit(str(result.input_path), str(exc))

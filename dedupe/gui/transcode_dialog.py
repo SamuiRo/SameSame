@@ -30,12 +30,14 @@ from ..transcode.models import (
     EncoderCapability,
     JobStatus,
     MediaInfo,
+    OutputLayout,
     TranscodeProgress,
     TranscodeRequest,
     TranscodeResult,
 )
 from ..transcode.presets import PRESETS, TranscodePreset
 from ..transcode.promotion import PromotionResult
+from ..transcode.replacement import ReplacementResult
 from ..transcode.source_cleanup import cleanup_frees_source_space
 from .worker import TranscodeCapabilityWorker, TranscodePromotionWorker, TranscodeWorker
 
@@ -63,6 +65,7 @@ class TranscodeDialog(QDialog):
         initial_preset: TranscodePreset | None = None,
         initial_output_dir: Path | None = None,
         initial_cleanup_action: FileAction | None = None,
+        initial_output_layout: OutputLayout = OutputLayout.BESIDE,
         allow_unsafe_recycle: bool = False,
         parent: QWidget | None = None,
     ) -> None:
@@ -83,9 +86,12 @@ class TranscodeDialog(QDialog):
         self._promotion_worker: TranscodePromotionWorker | None = None
         self._results: dict[str, TranscodeResult] = {}
         self._source_actions: dict[str, ActionOutcome | str] = {}
+        self._replacements: dict[str, ReplacementResult] = {}
         self._close_when_finished = False
         self._externally_enabled = True
         self._custom_presets: dict[str, TranscodePreset] = {}
+        self._output_layout = initial_output_layout
+        self._source_root = next(iter(collection_roots.values()), None) if collection_roots else None
 
         self.setWindowTitle("SameSame · Transcode queue")
         self.resize(1120, 650)
@@ -95,6 +101,7 @@ class TranscodeDialog(QDialog):
         if initial_output_dir is not None:
             self.output_dir.setText(str(initial_output_dir))
         self.set_cleanup_action(initial_cleanup_action)
+        self.set_output_layout(initial_output_layout)
         self._add_paths(paths)
         self._check_capability()
 
@@ -114,6 +121,14 @@ class TranscodeDialog(QDialog):
     def set_output_dir(self, output_dir: Path | None) -> None:
         if not self.is_busy:
             self.output_dir.setText(str(output_dir) if output_dir is not None else "")
+
+    def set_output_layout(self, layout: OutputLayout) -> None:
+        if self.is_busy:
+            return
+        self._output_layout = layout
+        self.output_dir.setEnabled(layout != OutputLayout.REPLACE)
+        self.browse_output_button.setEnabled(layout != OutputLayout.REPLACE)
+        self._update_cleanup_label()
 
     def cleanup_action(self) -> FileAction | None:
         """Return the cleanup the user asked for, or None to keep every original."""
@@ -417,7 +432,13 @@ class TranscodeDialog(QDialog):
                 continue
             if not retry_only and previous is not None and previous.status == JobStatus.COMPLETED:
                 continue
-            output = default_output_path(source, preset_id, output_dir)
+            output = default_output_path(
+                source,
+                preset_id,
+                output_dir,
+                layout=self._output_layout,
+                source_root=self.collection_roots.get(self._key(source)) or self._source_root,
+            )
             if self._key(output) in allocated_outputs:
                 for index in range(2, 10_000):
                     candidate = output.with_name(f"{output.stem} ({index}){output.suffix}")
@@ -472,6 +493,7 @@ class TranscodeDialog(QDialog):
             source_cleanup_action=cleanup or FileAction.QUARANTINE,
             allow_unsafe_recycle=self.allow_unsafe_recycle,
             allow_permanent_delete=cleanup == FileAction.DELETE,
+            replace_sources=self._output_layout == OutputLayout.REPLACE and cleanup is not None,
         )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -480,6 +502,7 @@ class TranscodeDialog(QDialog):
         worker.failed.connect(self._transcode_failed)
         worker.source_action.connect(self._source_action_result)
         worker.source_action_failed.connect(self._source_action_failed)
+        worker.replaced.connect(self._source_replaced)
         worker.finished.connect(worker.deleteLater)
         worker.finished.connect(thread.quit)
         thread.finished.connect(self._queue_finished)
@@ -592,6 +615,20 @@ class TranscodeDialog(QDialog):
             self.table.item(row, 2).setText(status)
         self.status_label.setText(value.message)
         self.journal_changed.emit()
+        self._selection_changed()
+
+    def _source_replaced(self, value: object) -> None:
+        if not isinstance(value, ReplacementResult):
+            return
+        self._replacements[self._key(value.source_path)] = value
+        row = self._row_for_path(value.source_path)
+        if row >= 0:
+            self.table.item(row, 4).setText(str(value.target_path if value.success else value.encoded_path))
+            if value.success:
+                self.table.item(row, 2).setText("Replaced in place")
+        self.status_label.setText(value.message)
+        if value.needs_attention:
+            QMessageBox.critical(self, "Replacement needs attention", value.message)
         self._selection_changed()
 
     def _source_action_failed(self, path: str, message: str) -> None:

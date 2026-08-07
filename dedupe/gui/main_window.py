@@ -38,6 +38,7 @@ from ..models import FileRecord
 from ..name_normalizer import LMSTUDIO_MODEL, LMSTUDIO_URL
 from ..report import write_html_report, write_json_report
 from ..service import ScanOptions, ScanResult
+from ..transcode.models import OutputLayout
 from ..transcode.presets import TranscodePreset
 from .compression_tab import CompressionTab
 from .consolidation_tab import ConsolidationTab
@@ -1069,8 +1070,10 @@ class MainWindow(QMainWindow):
         paths = [Path(str(path)) for path in paths_value]
         output_dir = Path(str(output_value)) if isinstance(output_value, Path) else None
         collection_root = Path(str(root_value)) if isinstance(root_value, Path) else None
-        cleanup = cleanup_value if isinstance(cleanup_value, FileAction) else None
-        self._show_transcode(paths, preset_value, output_dir, collection_root, cleanup)
+        cleanup_choice, layout_choice = cleanup_value if isinstance(cleanup_value, tuple) else (cleanup_value, None)
+        cleanup = cleanup_choice if isinstance(cleanup_choice, FileAction) else None
+        layout = layout_choice if isinstance(layout_choice, OutputLayout) else OutputLayout.BESIDE
+        self._show_transcode(paths, preset_value, output_dir, collection_root, cleanup, layout)
 
     def _show_transcode(
         self,
@@ -1079,12 +1082,14 @@ class MainWindow(QMainWindow):
         output_dir: Path | None = None,
         collection_root: Path | None = None,
         cleanup_action: FileAction | None = None,
+        output_layout: OutputLayout = OutputLayout.BESIDE,
     ) -> None:
         selected_preset = preset if isinstance(preset, TranscodePreset) else None
         if self._transcode_dialog is not None:
             self._transcode_dialog.add_paths(paths, selected_preset)
             self._transcode_dialog.set_output_dir(output_dir)
             self._transcode_dialog.set_cleanup_action(cleanup_action)
+            self._transcode_dialog.set_output_layout(output_layout)
             self._transcode_dialog.set_allow_unsafe_recycle(self.allow_unsafe_recycle.isChecked())
             if collection_root is not None:
                 for path in paths:
@@ -1109,6 +1114,7 @@ class MainWindow(QMainWindow):
             initial_preset=selected_preset,
             initial_output_dir=output_dir,
             initial_cleanup_action=cleanup_action,
+            initial_output_layout=output_layout,
             allow_unsafe_recycle=self.allow_unsafe_recycle.isChecked(),
             parent=self,
         )

@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from dedupe.events import CancellationToken
 from dedupe.transcode.capabilities import check_encoder_capability
-from dedupe.transcode.command_builder import PlanError, build_plan
+from dedupe.transcode.command_builder import PlanError, build_plan, default_output_path
 from dedupe.transcode.models import (
     JobStatus,
     MediaInfo,
@@ -116,6 +116,79 @@ class PresetAndPlanTests(unittest.TestCase):
                 build_plan(info, existing, PRESETS["anime_x265_max"], ffmpeg=sys.executable)
             with self.assertRaises(PlanError):
                 build_plan(info, root / "output.mp4", PRESETS["anime_x265_max"], ffmpeg=sys.executable)
+
+
+class OutputLayoutTests(unittest.TestCase):
+    def test_beside_layout_keeps_the_preset_suffix_and_flat_output_folder(self) -> None:
+        from dedupe.transcode.models import OutputLayout
+
+        source = Path("S:/library/show/s01/episode.mkv")
+        self.assertEqual(
+            default_output_path(source, "anime_x265_balanced", layout=OutputLayout.BESIDE),
+            Path("S:/library/show/s01/episode.anime_x265_balanced.mkv"),
+        )
+        self.assertEqual(
+            default_output_path(source, "anime_x265_balanced", Path("F:/out"), layout=OutputLayout.BESIDE),
+            Path("F:/out/episode.anime_x265_balanced.mkv"),
+        )
+
+    def test_mirror_layout_rebuilds_the_tree_and_keeps_original_names(self) -> None:
+        from dedupe.transcode.models import OutputLayout
+
+        root = Path("S:/library")
+        for relative in ("show/s01/episode.mkv", "show/s02/episode.mkv", "other.mp4"):
+            with self.subTest(relative=relative):
+                self.assertEqual(
+                    default_output_path(
+                        root / relative,
+                        "anime_x265_balanced",
+                        Path("F:/out"),
+                        layout=OutputLayout.MIRROR,
+                        source_root=root,
+                    ),
+                    Path("F:/out") / Path(relative).parent / f"{Path(relative).stem}.mkv",
+                )
+
+    def test_mirror_layout_stays_flat_for_a_file_outside_the_loaded_root(self) -> None:
+        from dedupe.transcode.models import OutputLayout
+
+        self.assertEqual(
+            default_output_path(
+                Path("R:/elsewhere/stray.mkv"),
+                "anime_x265_balanced",
+                Path("F:/out"),
+                layout=OutputLayout.MIRROR,
+                source_root=Path("S:/library"),
+            ),
+            Path("F:/out/stray.mkv"),
+        )
+
+    def test_replace_layout_stages_beside_the_source_and_targets_its_own_path(self) -> None:
+        from dedupe.transcode.command_builder import replacement_target
+        from dedupe.transcode.models import OutputLayout
+
+        for name, target_name in (("episode.mkv", "episode.mkv"), ("episode.avi", "episode.mkv")):
+            with self.subTest(name=name):
+                source = Path("S:/library/show") / name
+                staged = default_output_path(source, "anime_x265_balanced", layout=OutputLayout.REPLACE)
+                self.assertEqual(staged, Path("S:/library/show/episode.samesame-new.mkv"))
+                self.assertNotEqual(staged, source, "the staging name must never collide with the source")
+                self.assertEqual(replacement_target(source), Path("S:/library/show") / target_name)
+
+    def test_mirroring_onto_the_source_itself_falls_back_to_the_suffixed_name(self) -> None:
+        from dedupe.transcode.models import OutputLayout
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "episode.mkv"
+            source.write_bytes(b"video")
+
+            output = default_output_path(
+                source, "anime_x265_balanced", root, layout=OutputLayout.MIRROR, source_root=root
+            )
+
+            self.assertNotEqual(output.resolve(), source.resolve())
+            self.assertEqual(output.name, "episode.anime_x265_balanced.mkv")
 
 
 class ProbeAndCapabilityTests(unittest.TestCase):

@@ -159,7 +159,8 @@ The preset dropdown contains the four presets from
 
 | Other control | Purpose |
 | --- | --- |
-| **Output → Browse…** | Selects one output directory. Blank means beside each source. |
+| Output layout | **Replace each original in place** (default) gives every result its original's exact path and name, so the folder tree is unchanged and only the sizes drop; a non-MKV source keeps its name and gains the `.mkv` extension. **Mirror the folder tree** recreates the subfolder structure under a chosen output folder with original filenames — the only layout that can write to another drive. **Beside each source** keeps the old `<original>.<preset>.mkv` naming so both files sit together. |
+| **Output → Browse…** | Selects the output folder for the mirror layout. Disabled while replacing in place, since results go back where their sources were. |
 | Video checkbox in the table | Explicitly includes the row in the queue. |
 | **Remove each original** | Enables post-compression cleanup. Only a validated output that is genuinely smaller than its source ever triggers it, and each original is SHA-256 identity-checked immediately beforehand. |
 | Cleanup mode | Chooses **Quarantine** (default, reversible through the journal), **Recycle Bin** (still requires the red unsafe opt-in in Duplicate review), or **Delete permanently** (irreversible; no journal restore). |
@@ -187,6 +188,16 @@ The preset dropdown contains the four presets from
 The details pane compares input/output duration, stream counts, chapters, size,
 savings, validation warnings, and source-cleanup outcome. Encoding never writes
 over the source file.
+
+Replacing in place requires a cleanup mode and forces the checkbox on: the
+encode cannot take the source's path while the source is still there. The encode
+is staged as `<name>.samesame-new.mkv` beside its source, and only after the
+source is cleaned up does it move onto the final path and re-verify its SHA-256.
+If that move fails after a quarantine, the original is restored automatically;
+after a recycle or a permanent delete there is nothing to restore, so the queue
+reports loudly that the validated encode under its staging name is now the only
+copy. A successful replacement also removes its FFmpeg log, which is named after
+the staging file; a failed one keeps the log.
 
 A job whose encode came out **no smaller than its source** is reported as
 `Skipped`, not `Completed`: the encode is deleted instead of committed, and the

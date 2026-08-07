@@ -450,13 +450,24 @@ class GuiSmokeTests(unittest.TestCase):
 
         from dedupe.actions import FileAction
         from dedupe.gui.compression_tab import CompressionTab, CompressionVideo
+        from dedupe.transcode.models import OutputLayout
 
         tab = CompressionTab()
         try:
             # A tab with no parent window must not recurse looking for one.
             self.assertIsInstance(tab._quarantine_root(), Path)
 
-            self.assertIsNone(tab.cleanup_action(), "originals are kept until the box is ticked")
+            # Replacing in place is the default, and it owns the cleanup switch:
+            # there is nowhere for the encode to go while the source is there.
+            self.assertEqual(tab.output_layout(), OutputLayout.REPLACE)
+            self.assertTrue(tab.recycle_originals.isChecked())
+            self.assertFalse(tab.recycle_originals.isEnabled())
+            self.assertFalse(tab.output_dir.isEnabled())
+
+            tab.output_layout_combo.setCurrentIndex(tab.output_layout_combo.findData(OutputLayout.BESIDE.value))
+            self.assertTrue(tab.recycle_originals.isEnabled())
+            tab.recycle_originals.setChecked(False)
+            self.assertIsNone(tab.cleanup_action(), "originals are kept when the box is cleared")
             self.assertFalse(tab.cleanup_mode.isEnabled())
             self.assertIn("kept", tab.cleanup_note.text())
 
@@ -484,7 +495,11 @@ class GuiSmokeTests(unittest.TestCase):
                 tab._request_queue()
 
             self.assertEqual(len(payloads), 1)
-            self.assertEqual(payloads[0][4], FileAction.DELETE, "the chosen mode must reach the queue")
+            self.assertEqual(
+                payloads[0][4],
+                (FileAction.DELETE, OutputLayout.BESIDE),
+                "the chosen cleanup mode and layout must both reach the queue",
+            )
         finally:
             tab.close()
             self.application.processEvents()

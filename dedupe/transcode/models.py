@@ -16,6 +16,21 @@ class JobStatus(str, Enum):
     SKIPPED = "skipped"
 
 
+class OutputLayout(str, Enum):
+    """Where a finished encode ends up, and under what name."""
+
+    #: Take over the source's own path and name. The encode is staged beside the
+    #: source and moved into place only after the source has been cleaned up, so
+    #: this layout requires a cleanup action.
+    REPLACE = "replace"
+    #: Rebuild the source tree under a chosen output folder, keeping every
+    #: original filename. The only layout that can put outputs on another drive.
+    MIRROR = "mirror"
+    #: Write `<stem>.<preset_id>.mkv` next to the source (or into a single flat
+    #: output folder). Keeps both files side by side for comparison.
+    BESIDE = "beside"
+
+
 @dataclass(frozen=True, slots=True)
 class TranscodeRequest:
     input_path: Path

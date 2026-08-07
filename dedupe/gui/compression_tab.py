@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 
 from ..actions import FileAction
 from ..scanner import VIDEO_EXTENSIONS
-from ..transcode.models import MediaInfo
+from ..transcode.models import MediaInfo, OutputLayout
 from ..transcode.presets import PRESETS, TranscodePreset
 from ..transcode.probe import ProbeError, probe_media
 from ..transcode.source_cleanup import cleanup_frees_source_space
@@ -308,13 +308,24 @@ class CompressionTab(QWidget):
         layout.addWidget(preset_group)
 
         output_group = QGroupBox("Output")
-        output_layout = QHBoxLayout(output_group)
+        output_group_layout = QVBoxLayout(output_group)
+        self.output_layout_combo = QComboBox()
+        self.output_layout_combo.addItem("Replace each original in place", OutputLayout.REPLACE.value)
+        self.output_layout_combo.addItem("Mirror the folder tree into an output folder", OutputLayout.MIRROR.value)
+        self.output_layout_combo.addItem("Beside each source, preset name suffix", OutputLayout.BESIDE.value)
+        self.output_layout_combo.currentIndexChanged.connect(self._layout_changed)
+        output_group_layout.addWidget(self.output_layout_combo)
+        output_row = QHBoxLayout()
         self.output_dir = QLineEdit()
         self.output_dir.setPlaceholderText("Beside each source")
         self.output_button = QPushButton("Browse…")
         self.output_button.clicked.connect(self._choose_output)
-        output_layout.addWidget(self.output_dir, 1)
-        output_layout.addWidget(self.output_button)
+        output_row.addWidget(self.output_dir, 1)
+        output_row.addWidget(self.output_button)
+        output_group_layout.addLayout(output_row)
+        self.output_note = QLabel()
+        self.output_note.setWordWrap(True)
+        output_group_layout.addWidget(self.output_note)
         layout.addWidget(output_group)
 
         cleanup_group = QGroupBox("After a validated compression")
@@ -339,9 +350,48 @@ class CompressionTab(QWidget):
         cleanup_layout.addWidget(self.cleanup_mode)
         cleanup_layout.addWidget(self.cleanup_note)
         layout.addWidget(cleanup_group)
-        self._cleanup_changed()
+        # Runs last: it reaches back into the cleanup controls built just above.
+        self._layout_changed()
         layout.addStretch(1)
         return panel
+
+    def output_layout(self) -> OutputLayout:
+        try:
+            return OutputLayout(str(self.output_layout_combo.currentData()))
+        except ValueError:
+            return OutputLayout.BESIDE
+
+    def _layout_changed(self, *_args: object) -> None:
+        layout = self.output_layout()
+        needs_folder = layout == OutputLayout.MIRROR
+        self.output_dir.setEnabled(layout != OutputLayout.REPLACE)
+        self.output_button.setEnabled(layout != OutputLayout.REPLACE)
+        if layout == OutputLayout.REPLACE:
+            # Replacing means the source has to go; there is nowhere else for
+            # the encode to live, so cleanup is part of the layout, not a choice.
+            self.recycle_originals.setChecked(True)
+            self.recycle_originals.setEnabled(False)
+            self.output_note.setStyleSheet("color: palette(mid)")
+            self.output_note.setText(
+                "Each result takes its original's exact path and name. Folder structure is untouched, and "
+                "the original is removed as part of the swap — a non-MKV source keeps its name but gains "
+                "the .mkv extension."
+            )
+        else:
+            self.recycle_originals.setEnabled(True)
+            if needs_folder and not self.output_dir.text().strip():
+                self.output_note.setStyleSheet("color: #b06000")
+                self.output_note.setText("Choose an output folder — without one, results land beside each source.")
+            elif needs_folder:
+                self.output_note.setStyleSheet("color: palette(mid)")
+                self.output_note.setText(
+                    "Subfolders are recreated under the output folder and originals keep their names. "
+                    "Point this at another drive to actually free space here."
+                )
+            else:
+                self.output_note.setStyleSheet("color: palette(mid)")
+                self.output_note.setText("Results are named <original>.<preset>.mkv so both files sit side by side.")
+        self._cleanup_changed()
 
     def cleanup_action(self) -> FileAction | None:
         """Return the cleanup the user asked for, or None to keep every original."""
@@ -632,15 +682,16 @@ class CompressionTab(QWidget):
         videos = self._checked_videos()
         if not videos:
             return
+        layout = self.output_layout()
         output_value = self.output_dir.text().strip()
-        output_dir = Path(output_value).expanduser() if output_value else None
+        output_dir = Path(output_value).expanduser() if output_value and layout != OutputLayout.REPLACE else None
         root = Path(self.folder_path.text()).expanduser().resolve()
         self.queue_requested.emit(
             [video.path for video in videos],
             self._selected_preset(),
             output_dir,
             root,
-            self.cleanup_action(),
+            (self.cleanup_action(), layout),
         )
 
     @staticmethod

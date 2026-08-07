@@ -4,8 +4,12 @@ import uuid
 from pathlib import Path
 
 from ..video_fingerprint import resolve_binary
-from .models import MediaInfo, TranscodePlan
+from .models import MediaInfo, OutputLayout, TranscodePlan
 from .presets import TranscodePreset
+
+#: Marks an encode that is staged in the source's own folder while waiting to
+#: take the source's place. It never survives a finished REPLACE job.
+REPLACE_STAGING_SUFFIX = ".samesame-new"
 
 
 class PlanError(RuntimeError):
@@ -23,9 +27,41 @@ def _log_path(output_path: Path) -> Path:
     raise PlanError(f"Cannot allocate a diagnostic log path for {output_path}")
 
 
-def default_output_path(input_path: Path, preset_id: str, output_dir: Path | None = None) -> Path:
-    directory = output_dir.expanduser() if output_dir is not None else input_path.parent
-    return directory / f"{input_path.stem}.{preset_id}.mkv"
+def replacement_target(input_path: Path) -> Path:
+    """The path a REPLACE job finally occupies: the source's own, as an MKV."""
+    source = input_path.expanduser()
+    return source if source.suffix.casefold() == ".mkv" else source.with_suffix(".mkv")
+
+
+def default_output_path(
+    input_path: Path,
+    preset_id: str,
+    output_dir: Path | None = None,
+    *,
+    layout: OutputLayout = OutputLayout.BESIDE,
+    source_root: Path | None = None,
+) -> Path:
+    source = input_path.expanduser()
+    if layout == OutputLayout.REPLACE:
+        # Staged beside the source: the real destination is occupied until the
+        # source is cleaned up, and build_plan refuses to aim at an existing file.
+        return source.with_name(f"{source.stem}{REPLACE_STAGING_SUFFIX}.mkv")
+    if layout == OutputLayout.MIRROR and output_dir is not None:
+        relative = Path()
+        if source_root is not None:
+            try:
+                relative = source.resolve().parent.relative_to(source_root.expanduser().resolve())
+            except ValueError:
+                # Outside the loaded root (added by hand, say): keep it flat
+                # rather than inventing a tree the user never asked for.
+                relative = Path()
+        mirrored = output_dir.expanduser() / relative / f"{source.stem}.mkv"
+        # Mirroring can land on the source itself when the output folder is the
+        # source folder; fall back to the suffixed name instead of failing.
+        if mirrored.expanduser().resolve() != source.resolve():
+            return mirrored
+    directory = output_dir.expanduser() if output_dir is not None else source.parent
+    return directory / f"{source.stem}.{preset_id}.mkv"
 
 
 def build_plan(

@@ -6,7 +6,7 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.11.0`. Stages A through E, and Stage F
+The current package version is `1.12.0`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -194,6 +194,12 @@ Implemented:
 - a hard size gate ahead of that cleanup: an encode that is not smaller than its
   source is deleted rather than committed and its job is reported as skipped, so
   the source stays untouched and is never handed to cleanup (A-29);
+- three output layouts: in-place replacement (the default, giving every result
+  its source's exact path and name), a mirrored tree under a chosen output
+  folder with original filenames, and the original beside-the-source naming.
+  Replacement stages the encode next to its source and moves it onto the final
+  path only after cleanup succeeds, re-verifying SHA-256 after the move and
+  restoring the original when the move fails and the cleanup was reversible;
 - three selectable cleanup modes — reversible quarantine (the default), the
   operating-system Recycle Bin (still gated by the red unsafe opt-in), and
   permanent delete — each confirmed on its own terms before the queue starts;
@@ -248,7 +254,7 @@ quarantine-first action.
 
 ## Verification Completed
 
-**Current, as of `1.11.0`:** the suite is **154 tests plus 17 subtests**, all
+**Current, as of `1.12.0`:** the suite is **171 tests plus 27 subtests**, all
 passing under both `unittest` and pytest in the project-local Python 3.11.9
 virtual environment, with `ruff check` / `ruff format --check` clean and a
 documented **33-error** `mypy` baseline.
@@ -360,8 +366,9 @@ ffprobe -version
   journaled identity and the original path remains free.
 - Hardware presets require compatible NVIDIA hardware and drivers; capability
   checks report unavailable devices before a queue starts.
-- Transcoding currently produces MKV only. Promotion of a non-MKV source uses
-  the same stem with an `.mkv` extension and refuses an occupied destination.
+- Transcoding currently produces MKV only. Promotion of a non-MKV source, and
+  in-place replacement of one, use the same stem with an `.mkv` extension and
+  refuse an occupied destination.
 - A promoted source remains in quarantine, but journal restore is intentionally
   unavailable while the promoted file occupies its original path.
 
@@ -396,7 +403,7 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.11.0`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.12.0`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:
