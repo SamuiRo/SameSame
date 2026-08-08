@@ -6,7 +6,7 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.13.0`. Stages A through E, and Stage F
+The current package version is `1.13.1`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -193,6 +193,11 @@ Implemented:
   the existing capability checks, source-preserving queue, and output validation.
 - cycle-safe, unlimited-depth folder traversal with linked-directory support,
   broader video extensions, and visible rows even when metadata probing fails;
+- every ffmpeg/ffprobe subprocess call forces UTF-8 text decoding instead of
+  the OS locale codepage, so non-ASCII paths and metadata (e.g. Cyrillic
+  filenames on a non-UTF-8 Windows locale) can no longer make "Load videos"
+  abort partway through with a silently `None` stdout and an unrelated-looking
+  `TypeError` (A-33);
 - optional post-encode cleanup that defaults to reversible quarantine and acts
   only after output validation and source SHA-256 identity verification;
 - a hard size gate ahead of that cleanup: an encode that is not smaller than its
@@ -258,7 +263,7 @@ quarantine-first action.
 
 ## Verification Completed
 
-**Current, as of `1.13.0`:** the suite is **174 tests plus 27 subtests**, all
+**Current, as of `1.13.1`:** the suite is **180 tests plus 27 subtests**, all
 passing under both `unittest` and pytest in the project-local Python 3.11.9
 virtual environment, with `ruff check` / `ruff format --check` clean and a
 documented **33-error** `mypy` baseline.
