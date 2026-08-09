@@ -812,4 +812,10 @@ class TranscodeDialog(QDialog):
             self.request_close()
             event.ignore()
             return
+        # reject() (not a bare event.accept()) is what makes QDialog emit
+        # `finished`, which is how MainWindow._transcode_closed() learns to
+        # drop its reference. Without it, WA_DeleteOnClose still destroys the
+        # C++ object here, but MainWindow keeps a stale Python wrapper around
+        # it and later reuses it, raising a shiboken RuntimeError.
+        self.reject()
         event.accept()

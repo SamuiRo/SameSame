@@ -6,7 +6,7 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.13.1`. Stages A through E, and Stage F
+The current package version is `1.13.2`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -198,6 +198,12 @@ Implemented:
   filenames on a non-UTF-8 Windows locale) can no longer make "Load videos"
   abort partway through with a silently `None` stdout and an unrelated-looking
   `TypeError` (A-33);
+- the transcode queue dialog's close handler now goes through `reject()`
+  instead of accepting the close event directly, so `finished` always fires
+  before `WA_DeleteOnClose` destroys it; MainWindow's held reference is
+  reliably cleared, instead of surviving as a stale wrapper around an
+  already-deleted dialog that raised a shiboken `RuntimeError` the next time
+  "Open compression queue" tried to reuse it (A-34);
 - optional post-encode cleanup that defaults to reversible quarantine and acts
   only after output validation and source SHA-256 identity verification;
 - a hard size gate ahead of that cleanup: an encode that is not smaller than its
@@ -263,7 +269,7 @@ quarantine-first action.
 
 ## Verification Completed
 
-**Current, as of `1.13.1`:** the suite is **180 tests plus 27 subtests**, all
+**Current, as of `1.13.2`:** the suite is **181 tests plus 27 subtests**, all
 passing under both `unittest` and pytest in the project-local Python 3.11.9
 virtual environment, with `ruff check` / `ruff format --check` clean and a
 documented **33-error** `mypy` baseline.

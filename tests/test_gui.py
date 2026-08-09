@@ -708,6 +708,61 @@ class GuiSmokeTests(unittest.TestCase):
                 dialog.close()
                 self.application.processEvents()
 
+    def test_closing_transcode_dialog_emits_finished_so_the_stale_reference_is_dropped(self) -> None:
+        # MainWindow keeps its own TranscodeDialog reference alive across
+        # "Open compression queue" calls and only drops it (main_window.py's
+        # _transcode_closed) when `finished` fires. WA_DeleteOnClose destroys
+        # the dialog's C++ object as soon as its close event is accepted,
+        # regardless of `finished` - so a closeEvent override that calls
+        # event.accept() directly, without going through reject()/accept(),
+        # destroys the widget while MainWindow is never told to forget it.
+        # The next "Open compression queue" then reuses that stale reference
+        # and hits a shiboken RuntimeError on the (already-deleted)
+        # preset_combo. Regression test for that closeEvent contract.
+        from unittest.mock import patch
+
+        from PySide6.QtCore import QEventLoop, QTimer
+        from PySide6.QtWidgets import QDialog
+
+        from dedupe.gui.transcode_dialog import TranscodeDialog
+        from dedupe.transcode.models import EncoderCapability
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "episode.mkv"
+            source.write_bytes(b"source-video")
+            with patch(
+                "dedupe.gui.worker.check_encoder_capability",
+                return_value=EncoderCapability("libx265", True, True),
+            ):
+                dialog = TranscodeDialog(
+                    [source],
+                    ffmpeg="ffmpeg",
+                    ffprobe="ffprobe",
+                    journal_path=root / "journal.sqlite3",
+                    quarantine_root=root / "quarantine",
+                )
+                event_loop = QEventLoop()
+                poll = QTimer()
+                poll.timeout.connect(lambda: event_loop.quit() if dialog._capability_thread is None else None)
+                timeout = QTimer()
+                timeout.setSingleShot(True)
+                timeout.timeout.connect(event_loop.quit)
+                poll.start(5)
+                timeout.start(5_000)
+                event_loop.exec()
+                poll.stop()
+                self.assertTrue(timeout.isActive(), "capability check timed out")
+                timeout.stop()
+
+            finished_results: list[int] = []
+            dialog.finished.connect(finished_results.append)
+
+            dialog.close()
+            self.application.processEvents()
+
+            self.assertEqual(finished_results, [QDialog.DialogCode.Rejected])
+
     def test_background_gui_transcode_queue_completes_without_blocking(self) -> None:
         ffmpeg = shutil.which(os.environ.get("SAMESAME_TEST_FFMPEG", "ffmpeg"))
         ffprobe = shutil.which(os.environ.get("SAMESAME_TEST_FFPROBE", "ffprobe"))
