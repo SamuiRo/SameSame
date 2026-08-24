@@ -48,7 +48,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "refresh_images": False,
     "refresh_audio": False,
     "refresh_names": False,
-    "max_image_candidates": 250,
+    # Tile size for the batched image comparison, not a selectivity filter
+    # (A-18): every image is compared against every other, in tiles this
+    # large per side, so memory stays bounded on large libraries.
+    "max_image_candidates": 4000,
     "max_video_duration_ratio": DEFAULT_MAX_DURATION_RATIO,
     "max_video_duration_delta": DEFAULT_MAX_DURATION_DELTA,
     "inspect_cache": False,

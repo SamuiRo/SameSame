@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,7 +12,9 @@ from dedupe.cli import main
 from dedupe.exact_hash import find_exact_duplicates
 from dedupe.folder_compare import build_cluster_assignments
 from dedupe.image_fingerprint import (
+    ORIENTATION_COUNT,
     PIL_AVAILABLE,
+    _popcount64,
     fingerprint_image,
     find_image_matches,
     image_similarity,
@@ -19,6 +22,11 @@ from dedupe.image_fingerprint import (
 )
 from dedupe.models import FileRecord, NormalizedName
 from dedupe.scanner import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, normalize_extensions
+
+try:
+    import numpy as np
+except ImportError:  # pragma: no cover - numpy is a hard dependency, guarded for safety only
+    np = None  # type: ignore[assignment]
 
 if PIL_AVAILABLE:
     from PIL import Image, ImageDraw, ImageEnhance
@@ -354,6 +362,93 @@ class ImageFingerprintTests(unittest.TestCase):
             self.assertTrue(report["folder_pairs"][0]["matched"][0]["content_backed"])
             self.assertEqual(report["folder_pairs"][0]["matched"][0]["level"], "image")
             self.assertIn("Similar images", html_report.read_text(encoding="utf-8"))
+
+
+@unittest.skipUnless(PIL_AVAILABLE, "Pillow is required for image fingerprint tests")
+class ImageBatchComparisonTests(unittest.TestCase):
+    """A-18: the bit-blocking candidate prefilter had no selectivity at the
+    shipped threshold (generating ~100% of all pairs from 1200 images up) and
+    still paid the cost of building that near-total set. It is replaced by a
+    tiled numpy comparison of every pair, verified below equivalent to the
+    pairwise `image_similarity` it replaces - not merely "no test failed",
+    since these tests are checked to fail against a broken batch comparator.
+    """
+
+    def _random_records(self, count: int, seed: int) -> list[FileRecord]:
+        rng = random.Random(seed)
+        records = []
+        for index in range(count):
+            fingerprint = [rng.getrandbits(64) for _ in range(ORIENTATION_COUNT)]
+            fingerprint += [rng.randint(0, 255) for _ in range(3)]
+            record = FileRecord(
+                path=Path(f"/fake/img_{index}.png"),
+                root=Path("/fake"),
+                size=100,
+                mtime=0.0,
+                raw_name=f"img_{index}",
+            )
+            record.image_fingerprint = fingerprint
+            records.append(record)
+        return records
+
+    def _brute_force_matches(self, records: list[FileRecord], threshold: float) -> set[tuple[str, str, float]]:
+        expected = set()
+        for left_index in range(len(records)):
+            for right_index in range(left_index + 1, len(records)):
+                left, right = records[left_index], records[right_index]
+                if left.full_hash and left.full_hash == right.full_hash:
+                    continue
+                similarity = image_similarity(left.image_fingerprint, right.image_fingerprint)
+                if similarity >= threshold:
+                    pair = sorted((left.path_key, right.path_key))
+                    expected.add((pair[0], pair[1], round(similarity, 2)))
+        return expected
+
+    def test_batched_comparison_matches_pairwise_image_similarity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            for threshold, tile in ((60.0, 7), (60.0, 200), (85.0, 11), (0.0, 50), (100.0, 50)):
+                with self.subTest(threshold=threshold, tile=tile):
+                    records = self._random_records(140, seed=hash((threshold, tile)) & 0xFFFFFFFF)
+                    expected = self._brute_force_matches(records, threshold)
+                    with Cache(base / f"cache-{threshold}-{tile}.sqlite3") as cache:
+                        matches = find_image_matches(
+                            records, cache, threshold=threshold, workers=1, max_candidates=tile
+                        )
+                    actual = {(match.left, match.right, match.similarity) for match in matches}
+                    self.assertEqual(actual, expected)
+
+    def test_exact_hash_pairs_are_excluded_even_when_perceptually_similar(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            records = self._random_records(30, seed=1)
+            records[3].full_hash = records[9].full_hash = "same-hash"
+            records[9].image_fingerprint = list(records[3].image_fingerprint)
+            with Cache(Path(tmp) / "cache.sqlite3") as cache:
+                matches = find_image_matches(records, cache, threshold=0.0, workers=1, max_candidates=5)
+            pairs = {(match.left, match.right) for match in matches}
+            self.assertNotIn(
+                tuple(sorted((records[3].path_key, records[9].path_key))),
+                pairs,
+            )
+
+    def test_malformed_fingerprint_length_is_skipped_not_crashed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            records = self._random_records(10, seed=2)
+            records[4].image_fingerprint = records[4].image_fingerprint[:-1]
+            with Cache(Path(tmp) / "cache.sqlite3") as cache:
+                matches = find_image_matches(records, cache, threshold=0.0, workers=1, max_candidates=3)
+            touched = {records[4].path_key} & ({m.left for m in matches} | {m.right for m in matches})
+            self.assertEqual(touched, set())
+
+
+@unittest.skipUnless(PIL_AVAILABLE and np is not None, "numpy and Pillow are required")
+class PopcountTests(unittest.TestCase):
+    def test_popcount64_matches_int_bit_count(self) -> None:
+        rng = random.Random(0)
+        values = [rng.getrandbits(64) for _ in range(500)] + [0, 2**64 - 1, 1, 1 << 63]
+        expected = [value.bit_count() for value in values]
+        actual = _popcount64(np.array(values, dtype=np.uint64)).tolist()
+        self.assertEqual(actual, expected)
 
 
 if __name__ == "__main__":

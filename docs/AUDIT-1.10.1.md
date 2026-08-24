@@ -750,3 +750,97 @@ the value: that blocking rejects most unrelated pairs at whatever
 `image_threshold` currently is; that the audio sweep compares O(n) pairs per
 file at whatever tolerance is currently set; that a stored setting written by
 the previous release still means what it says.
+
+## Resolution of A-18 — 1.14.0
+
+A-18 needed exactly what it said it needed: a large real image collection to
+measure against. The user supplied one for this work - a real 54,102-image
+personal library (local, not in the repository; path withheld since its
+contents are personal). It replaces the "neither reachable from the current
+test library" caveat this audit closed with.
+
+**The fix is not a better LSH scheme.** The band width the old scheme needed
+is forced by the Hamming radius itself: at the shipped `image_threshold`
+(raw distance tolerance 12 of 64 bits), guaranteeing no false negative needs
+13 bands of ~5 bits each (pigeonhole: radius+1 bands), and a 5-bit band has
+only 32 possible values - so on any library above a few hundred images, every
+band collides for most of it, whatever the band count. No banding scheme
+fixes that; it is a property of comparing at a 12-bit radius over 64 bits,
+not a bug in how the bands were sized. So `_candidate_pairs` and its block
+index are gone. Every image is compared against every other, which is what
+the old scheme was doing anyway once it collided - but now with numpy: hashes
+and colours for every candidate are loaded once into `(n, 8)`/`(n, 3)` arrays,
+compared in tiles bounded by `max_image_candidates` (repurposed from a
+selectivity threshold to a tile size, default raised `250` → `4000`), and a
+vectorized 64-bit SWAR popcount (portable to any numpy version; `numpy.bitwise_count`
+needs 2.0+) replaces one `int.bit_count()` call per orientation per pair.
+`numpy>=1.24` is now a hard dependency.
+
+Measured on 54,000 synthetic fingerprints (uniformly random - the adversarial
+case a real library's correlated hashes should only do better against) at the
+shipped `image_threshold=60.0`:
+
+| | Old (A-18) | New |
+| --- | --- | --- |
+| Candidate pairs generated | ~100% of all (~1.46 billion), materialised as a `set` of tuples | none materialised - scored directly per tile |
+| Estimated memory | ~18 GB (A-18's estimate, for the pair set alone) | **917 MB peak**, tiled and released between tiles |
+| Full `n²` comparison time | not measured - A-18 could not get this far before memory became the blocker | **368 s** (single-threaded; the comparison stage is not currently parallelized) |
+
+368 s for an exhaustive comparison that used to be unusable is the headline
+result; it is not fast in absolute terms (~3.5 s per 4000×4000 tile - the
+per-tile cost was not profiled further given the size of the win already in
+hand), and a future pass could look at whether restructuring the
+per-orientation popcount loop into one batched `(m, k, 8)` call trades that
+time for more peak memory. `max_image_candidates` remains the knob for that
+trade if a constrained machine needs a smaller tile.
+
+**Confirmed on the real library, cold cache, 16 workers**, and by accident at
+the *old* tile size (the run was started before `max_image_candidates`'s
+default was raised, so it measures the new algorithm at `250` - itself
+evidence it is not sensitive to the tile choice): 54,121 files scanned,
+54,056 of them images. Image comparison completed in **118 s** across 23,653
+tiles and found **63,853 image matches** - a real duplicate-heavy personal
+collection, not a synthetic corpus with none to find. Fingerprinting
+(A-35, below) took the other ~37 minutes of the combined ~39m25s
+fingerprinting-plus-comparison stage. The process did not run out of memory
+at any point. Full pipeline, including the unrelated name-hint and folder
+stages this work did not touch: **~50 minutes end to end**, where A-18's own
+estimate for a library little more than a third this size was an unrecoverable
+~18 GB.
+
+**A second, larger bottleneck surfaced while chasing this one (A-35): fingerprint
+*generation*, not comparison, dominates a real scan.** Profiled on the same
+library: `fingerprint_image()` averaged ~430 ms/image, and 45% of that was PIL
+resizing/rotating the *full-resolution* image eight times - once per dihedral
+view - even though every view is immediately shrunk to a 32×32 hash grid
+inside `phash()`. `_orientations()` now runs on a grid shrunk once beforehand
+instead, cutting measured per-image cost to ~171 ms (2.5x) end to end. This
+is bit-identical to the old fingerprint for width-preserving views (0°/180°,
+mirroring - 0 mismatches over 300 real images) but not for 90°/270° views of
+a non-square source: PIL's resize does not commute exactly with a 90-degree
+rotation for non-square input (a rounding property of its resampling, not a
+logic bug), measured at up to 2 of 64 bits different on ~4% of those views.
+That is far inside every matching margin this project has measured (A-06,
+A-15), so it was accepted rather than chased further, and
+`IMAGE_FINGERPRINT_VERSION` moved `2` → `3` to force a one-time recompute -
+existing caches are not silently reinterpreted.
+
+Both fixes are covered by `tests/test_images.py`: `ImageBatchComparisonTests`
+checks the batched comparator against brute-force `image_similarity` across
+five threshold/tile combinations plus the exact-hash-exclusion and malformed
+-fingerprint-length paths, and `PopcountTests` checks `_popcount64` against
+`int.bit_count()` on 500 random values plus the 0/max/single-bit edges. Each
+was confirmed to fail against a deliberately sabotaged implementation before
+being accepted, per this project's standing rule for regression tests.
+
+Verified after the fixes:
+
+| Check | Result |
+| --- | --- |
+| `python -m pytest -q` | **185 passed, 32 subtests** (4 new tests, 5 new subtests) |
+| `ruff check .` / `ruff format --check .` | clean |
+| `mypy dedupe` | 32 errors - one fewer than the 33-error baseline, no new errors |
+| Full scan of the 54,102-image library, cold cache | see `docs/STATUS.md` |
+
+A-18 is closed. A-19 (audio's quadratic bucket sweep) remains open and
+unaffected by this work - it is a different matcher with its own fixture gap.

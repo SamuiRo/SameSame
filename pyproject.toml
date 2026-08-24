@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "samesame"
-version = "1.13.2"
+version = "1.14.0"
 description = "CLI and optional desktop tool for finding exact and similar media files."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,7 +29,8 @@ dependencies = [
   "xxhash>=3.5.0",
   "Pillow>=10.4.0",
   "tqdm>=4.66.0",
-  "PyYAML>=6.0.0"
+  "PyYAML>=6.0.0",
+  "numpy>=1.24.0"
 ]
 
 [project.optional-dependencies]

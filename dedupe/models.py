@@ -18,8 +18,17 @@ GRID_FINGERPRINT_VERSION = 2
 # edited or repaired file is retried regardless.
 GRID_FINGERPRINT_FAILED = -GRID_FINGERPRINT_VERSION
 # 1: one perceptual hash plus the average colour. 2: eight dihedral hashes of
-# the border-trimmed image, plus its trimmed average colour (A-15).
-IMAGE_FINGERPRINT_VERSION = 2
+# the border-trimmed image, plus its trimmed average colour (A-15). 3: the
+# eight dihedral views are generated from one shrink-to-hash-grid pass instead
+# of eight full-resolution rotations each independently resized, which
+# measured 9x faster on a real 54k-image library and is the dominant per-file
+# fingerprinting cost at that scale (A-35). Bit-identical for width-preserving
+# views (0/180 degrees and mirroring); the 90/270-degree views of a non-square
+# image can differ by up to 2 of 64 bits from the old value, a PIL
+# resize/rotate rounding property rather than a logic difference - measured
+# on 300 real images: 0 mismatches at 0/180, ~4% of 90/270 views affected, all
+# by 1-2 bits. That is far inside every real matching margin (A-06, A-15).
+IMAGE_FINGERPRINT_VERSION = 3
 
 
 @dataclass(slots=True)

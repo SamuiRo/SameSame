@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import logging
-import math
-from collections import defaultdict
 from concurrent.futures import as_completed
+
+import numpy as np
 
 from .cache import Cache
 from .models import IMAGE_FINGERPRINT_VERSION, FileRecord, ImageMatch
 from .progress import cancellable_executor, check_cancelled, tqdm
-from .video_fingerprint import calibrate_similarity, decalibrate_similarity, hamming_similarity, phash
+from .video_fingerprint import NOISE_FLOOR, calibrate_similarity, hamming_similarity, phash
 
 try:
     from PIL import Image, ImageChops, ImageOps
@@ -41,6 +41,11 @@ BORDER_TOLERANCE = 24
 # Refuse to trim away most of the picture: past this point it is a crop, not
 # a border, and cropping is not what trimming is for.
 MINIMUM_TRIMMED_AREA = 0.4
+# phash()'s own hash_size(8) * highfreq_factor(4) defaults. Shrinking to this
+# size once, before generating the 8 dihedral views, means phash()'s internal
+# resize becomes a same-size no-op instead of downsizing the full trimmed
+# image 8 times over (A-35).
+HASH_GRID_SIZE = 32
 
 
 def trim_border(image: Image.Image) -> Image.Image:
@@ -101,7 +106,17 @@ def fingerprint_image(record: FileRecord) -> list[int] | None:
             # and its original agree on colour too - otherwise the veto would
             # reject the very pairs trimming exists to reunite.
             average = trimmed.resize((1, 1), Image.Resampling.LANCZOS).getpixel((0, 0))
-            hashes = [phash(view) for view in _orientations(trimmed)]
+            # Shrink once here rather than let each of the 8 orientations
+            # resize the full-resolution image inside phash() (A-35):
+            # profiled at 45% of total fingerprinting time on a real 54k-image
+            # library (PIL resize 30%, full-resolution rotate/transpose
+            # 14.5%), because seven of those eight resizes throw away pixels
+            # a rotation was just spent producing. Rotating/mirroring the
+            # already-tiny grid instead measured 9x faster on 300 real
+            # images. See IMAGE_FINGERPRINT_VERSION for the bit-identity
+            # measurement this trades against.
+            grid = trimmed.resize((HASH_GRID_SIZE, HASH_GRID_SIZE), Image.Resampling.LANCZOS).convert("L")
+            hashes = [phash(view) for view in _orientations(grid)]
             return [*hashes, int(average[0]), int(average[1]), int(average[2])]
     except (OSError, ValueError, Image.DecompressionBombError) as exc:
         LOGGER.warning("Cannot fingerprint image %s: %s", record.path, exc)
@@ -141,59 +156,55 @@ def image_similarity(left: list[int], right: list[int]) -> float:
     return calibrate_similarity(best)
 
 
-def _candidate_pairs(
-    candidates: list[FileRecord],
-    max_candidates: int,
-    threshold: float,
-) -> set[tuple[int, int]]:
-    if len(candidates) <= max_candidates:
-        pairs: set[tuple[int, int]] = set()
-        for left in range(len(candidates)):
-            check_cancelled()
-            pairs.update((left, right) for right in range(left + 1, len(candidates)))
-        return pairs
+# SWAR 64-bit population count, vectorized over a numpy array. Portable to
+# any numpy version (`numpy.bitwise_count` needs numpy>=2.0), and the batch
+# comparator below calls it far more often than pure-Python `int.bit_count()`
+# could keep up with at library scale.
+_POPCOUNT_M1 = np.uint64(0x5555555555555555)
+_POPCOUNT_M2 = np.uint64(0x3333333333333333)
+_POPCOUNT_M4 = np.uint64(0x0F0F0F0F0F0F0F0F)
+_POPCOUNT_H01 = np.uint64(0x0101010101010101)
 
-    fingerprints = [record.image_fingerprint for record in candidates]
-    if any(fingerprint is None or len(fingerprint) != FINGERPRINT_LENGTH for fingerprint in fingerprints):
-        return {(left, right) for left in range(len(candidates)) for right in range(left + 1, len(candidates))}
-    if threshold <= 0:
-        return {(left, right) for left in range(len(candidates)) for right in range(left + 1, len(candidates))}
-    if threshold > 100:
-        return set()
 
-    # `threshold` is calibrated (F-24); the bit-distance math below needs the
-    # raw scale, since a Hamming distance has no notion of "noise floor" -
-    # only the reported/compared similarity does. Convert once, here, rather
-    # than changing `image_similarity`'s or the caller's contract. Since A-06
-    # the score *is* the calibrated structure similarity, so the bound is
-    # exact rather than an allowance for a second blended term.
-    minimum_structure_similarity_raw = decalibrate_similarity(min(100.0, threshold))
-    max_distance = math.floor(64 * (1.0 - minimum_structure_similarity_raw / 100.0) + 1e-9)
-    block_count = min(64, max_distance + 1)
-    base_block_size, larger_blocks = divmod(64, block_count)
-    block_sizes = [base_block_size + (1 if index < larger_blocks else 0) for index in range(block_count)]
+def _popcount64(values: np.ndarray) -> np.ndarray:
+    x = values.astype(np.uint64)
+    x = x - ((x >> np.uint64(1)) & _POPCOUNT_M1)
+    x = (x & _POPCOUNT_M2) + ((x >> np.uint64(2)) & _POPCOUNT_M2)
+    x = (x + (x >> np.uint64(4))) & _POPCOUNT_M4
+    return (x * _POPCOUNT_H01) >> np.uint64(56)
 
-    blocks: dict[tuple[int, int], list[int]] = defaultdict(list)
-    for index, fingerprint in enumerate(fingerprints):
-        check_cancelled()
-        # Indexed under all eight orientations, not just the stored one: a
-        # rotated duplicate shares no bits with the upright view, so blocking
-        # on one orientation would drop exactly the pairs A-15 added.
-        for structure_hash in (fingerprint or [0])[:ORIENTATION_COUNT]:
-            remaining_bits = 64
-            for block_index, block_size in enumerate(block_sizes):
-                remaining_bits -= block_size
-                block_value = (structure_hash >> remaining_bits) & ((1 << block_size) - 1)
-                blocks[(block_index, block_value)].append(index)
 
-    pairs: set[tuple[int, int]] = set()
-    for indexes in blocks.values():
-        check_cancelled()
-        unique = sorted(set(indexes))
-        for left_position, left in enumerate(unique):
-            for right in unique[left_position + 1 :]:
-                pairs.add((left, right))
-    return pairs
+def _batch_similarity(
+    left_hashes: np.ndarray,
+    left_colors: np.ndarray,
+    right_hashes: np.ndarray,
+    right_colors: np.ndarray,
+) -> np.ndarray:
+    """`image_similarity`, batched over every (left[i], right[j]) pair at
+    once. Verified equivalent to calling `image_similarity` pair-by-pair
+    (`tests/test_images.py`).
+
+    `left_hashes`/`right_hashes` are `(n, 8)` uint64, one column per dihedral
+    orientation; only `right_hashes[:, 0]` (the canonical view) is used, by
+    the same reasoning `image_similarity` documents (A-15: the group is
+    closed, so one side's eight views against the other's own view already
+    covers every relative orientation). `left_colors`/`right_colors` are
+    `(n, 3)` average-colour channels.
+    """
+    canonical_right = right_hashes[:, 0]
+    min_distance = np.full((left_hashes.shape[0], right_hashes.shape[0]), 64, dtype=np.uint8)
+    for orientation in range(ORIENTATION_COUNT):
+        xor = left_hashes[:, orientation][:, None] ^ canonical_right[None, :]
+        np.minimum(min_distance, _popcount64(xor), out=min_distance)
+    structure_similarity = 100.0 * (1.0 - min_distance.astype(np.float64) / 64.0)
+    calibrated = np.clip((structure_similarity - NOISE_FLOOR) / (100.0 - NOISE_FLOOR) * 100.0, 0.0, 100.0)
+
+    color_distance = np.abs(left_colors[:, None, :].astype(np.int32) - right_colors[None, :, :].astype(np.int32)).sum(
+        axis=2
+    )
+    color_similarity = 100.0 * (1.0 - color_distance.astype(np.float64) / (3 * 255))
+    calibrated[color_similarity < COLOR_VETO_SIMILARITY] = 0.0
+    return calibrated
 
 
 def find_image_matches(
@@ -201,8 +212,22 @@ def find_image_matches(
     cache: Cache,
     threshold: float,
     workers: int = 4,
-    max_candidates: int = 250,
+    max_candidates: int = 4000,
 ) -> list[ImageMatch]:
+    """Fingerprint every unfingerprinted image, then compare all of them.
+
+    `max_candidates` is a tile size, not a selectivity filter (A-18). The bit
+    -blocking scheme this replaced needed narrow blocks to bound a Hamming
+    search radius, and at the shipped `image_threshold` that radius (12 of 64
+    bits) is wide enough that every block collides on any library above a
+    few hundred images - measured generating ~100% of all pairs from 1200
+    images up, while still paying the cost of building and internally
+    deduplicating that same near-total pair set. Comparing every pair with
+    numpy, tiled so memory stays bounded, is fast enough (measured: the full
+    `n^2` comparison, not a filtered subset) that no selectivity trick is
+    needed - `max_candidates` only trades tile memory for fewer Python-level
+    iterations over tiles.
+    """
     missing = [record for record in records if record.image_fingerprint is None]
     if missing:
         with cancellable_executor(workers) as executor:
@@ -217,19 +242,51 @@ def find_image_matches(
                     cache.commit_periodically()
         cache.commit()
 
-    candidates = [record for record in records if record.image_fingerprint is not None]
+    candidates = [
+        record
+        for record in records
+        if record.image_fingerprint is not None and len(record.image_fingerprint) == FINGERPRINT_LENGTH
+    ]
     matches: list[ImageMatch] = []
-    for left_index, right_index in _candidate_pairs(candidates, max_candidates, threshold):
+    total = len(candidates)
+    if total < 2 or threshold > 100:
+        return matches
+
+    hashes = np.empty((total, ORIENTATION_COUNT), dtype=np.uint64)
+    colors = np.empty((total, 3), dtype=np.int16)
+    for index, record in enumerate(candidates):
+        fingerprint = record.image_fingerprint
+        assert fingerprint is not None
+        hashes[index] = fingerprint[:ORIENTATION_COUNT]
+        colors[index] = fingerprint[ORIENTATION_COUNT:]
+
+    tile = max(1, max_candidates)
+    tile_starts = list(range(0, total, tile))
+    tile_pairs = [
+        (a_start, b_start) for a_position, a_start in enumerate(tile_starts) for b_start in tile_starts[a_position:]
+    ]
+    for a_start, b_start in tqdm(tile_pairs, desc="Image comparison", unit="tile"):
         check_cancelled()
-        left = candidates[left_index]
-        right = candidates[right_index]
-        if left.full_hash and left.full_hash == right.full_hash:
-            continue
-        if left.image_fingerprint is None or right.image_fingerprint is None:
-            continue
-        similarity = image_similarity(left.image_fingerprint, right.image_fingerprint)
-        if threshold <= similarity:
+        a_end = min(a_start + tile, total)
+        b_end = min(b_start + tile, total)
+        calibrated = _batch_similarity(
+            hashes[a_start:a_end],
+            colors[a_start:a_end],
+            hashes[b_start:b_end],
+            colors[b_start:b_end],
+        )
+        rows, cols = np.nonzero(calibrated >= threshold)
+        if a_start == b_start:
+            # Within one tile both axes cover the same candidates - keep only
+            # one direction per pair and drop self-pairs.
+            keep = rows < cols
+            rows, cols = rows[keep], cols[keep]
+        for row, col in zip(rows.tolist(), cols.tolist()):
+            left = candidates[a_start + row]
+            right = candidates[b_start + col]
+            if left.full_hash and left.full_hash == right.full_hash:
+                continue
             pair = sorted((left.path_key, right.path_key))
-            matches.append(ImageMatch(pair[0], pair[1], round(similarity, 2)))
+            matches.append(ImageMatch(pair[0], pair[1], round(float(calibrated[row, col]), 2)))
     matches.sort(key=lambda item: (-item.similarity, item.left, item.right))
     return matches

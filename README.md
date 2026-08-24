@@ -1,6 +1,6 @@
 # SameSame
 
-SameSame `1.13.2` finds duplicate and similar media files through a command-line
+SameSame `1.14.0` finds duplicate and similar media files through a command-line
 scanner or an optional desktop review interface. It scans one or more folder
 trees recursively and writes reports for manual review.
 

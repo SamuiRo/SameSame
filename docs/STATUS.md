@@ -6,7 +6,7 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.13.2`. Stages A through E, and Stage F
+The current package version is `1.14.0`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -127,7 +127,9 @@ Implemented:
   (Anthropic requires the `ai` extra: `pip install -e ".[ai]"`);
 - parent-folder context for generic names such as `01 - Episode 1`, preventing
   same-number episodes from unrelated seasons becoming identical name keys;
-- threshold-safe candidate blocking for large image candidate sets;
+- numpy-vectorized, tiled image comparison that scores every candidate pair
+  directly instead of pre-filtering with Hamming-radius blocking, which had
+  no selectivity left at the shipped threshold on a large library (A-18);
 - degenerate-descriptor vetoes on both image and audio: two flat colours
   and two pure tones each produce near-identical descriptors, so pairs
   whose descriptors carry no information are refused rather than scored;
@@ -269,10 +271,11 @@ quarantine-first action.
 
 ## Verification Completed
 
-**Current, as of `1.13.2`:** the suite is **181 tests plus 27 subtests**, all
+**Current, as of `1.14.0`:** the suite is **185 tests plus 32 subtests**, all
 passing under both `unittest` and pytest in the project-local Python 3.11.9
 virtual environment, with `ruff check` / `ruff format --check` clean and a
-documented **33-error** `mypy` baseline.
+**32-error** `mypy` baseline (one fewer than the previously documented 33;
+unrelated to this release).
 
 The itemised list below describes what that coverage verifies. It was written
 at the `1.7.0` release and the individual entries still hold, but treat the
@@ -334,6 +337,19 @@ counts above — not any number inside the list — as current (A-25).
   The pre-1.9.0 matcher would have needed ~39 hours for the same scan
   (`docs/AUDIT-1.8.0.md`, A-01). This supersedes both the earlier "59-file
   collection in about 20 seconds" note and the "114 s warm" figure that sat
+  alongside the 105 s one (A-25).
+- A full 54,102-file real image-library scan (user-supplied for this work,
+  local, not in the repository) closed A-18 in `1.14.0`: 54,056 images, cold
+  cache, 16 workers. Image comparison — the part A-18 could not previously
+  finish without exhausting memory — took **118 s** across 23,653 tiles and
+  found **63,853 image matches**; fingerprinting (A-35) took the remaining
+  ~37 of the combined ~39m25s fingerprinting-plus-comparison stage. Full
+  pipeline including the untouched name-hint/folder stages: **~50 minutes**
+  end to end, no memory exhaustion, versus A-18's own ~18 GB estimate for a
+  library little more than a third this size. See `docs/AUDIT-1.10.1.md`'s
+  "Resolution of A-18" section for the full breakdown, including the
+  synthetic 54,000-fingerprint benchmark (917 MB peak, 368 s for an
+  exhaustive comparison) this real-library run confirms.
   alongside the 105 s one (A-25).
 
 ## Development Environment
@@ -419,7 +435,7 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.13.0`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.14.0`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:
@@ -439,19 +455,25 @@ audit is in `docs/AUDIT-1.7.0.md`, and the `1.8.0` audit — which measured
 1.8.0 against the real library — is in `docs/AUDIT-1.8.0.md`. Every finding
 in both is closed.
 
-**The current audit is `docs/AUDIT-1.10.1.md`** (A-17 through A-27). It covers
-1.9.0 through 1.10.1 and re-validated the matcher on a cold-cache scan of the
-real library, which reproduced every number recorded below. Three findings are
-fixed in 1.10.2 — A-17 (settings-schema guard), A-20 (uncommitted stage
-transactions and unrecorded grid failures), A-21 (a config example that
-silently set `audio_threshold=88`). **Two High findings remain open:**
+**The current audit is `docs/AUDIT-1.10.1.md`** (A-17 through A-27, plus A-28
+and A-35 found afterward). It covers 1.9.0 through 1.10.1 and re-validated the
+matcher on a cold-cache scan of the real 276-video library, which reproduced
+every number recorded below. Fixed since: A-17 (settings-schema guard), A-20
+(uncommitted stage transactions and unrecorded grid failures), A-21 (a config
+example that silently set `audio_threshold=88`) in 1.10.2; **A-18 (image
+candidate blocking had no selectivity left at the shipped threshold) in
+1.14.0**, once the user supplied the large real image library the finding had
+been waiting on — see `docs/AUDIT-1.10.1.md`'s "Resolution of A-18" section
+for the fix (a tiled numpy comparison replacing Hamming-radius blocking
+entirely) and the fingerprint-generation speedup (A-35) found alongside it.
+**Two findings remain open:**
 
-- **A-18** — image candidate blocking generates 100% of all pairs at the
-  shipped `60.0` threshold and materialises the set (~18 GB at 20 000 images).
-  Needs a banded-LSH scheme and a large-image fixture to measure against.
 - **A-19** — audio's `duration_tolerance` widening (3 s → 120 s, A-14) made
   the bucket sweep quadratic: 800 files score 205 801 pairs where they should
   score 6 372. Needs the sorted forward sweep the video path already uses.
+  Still not reachable from the real 276-video library (no standalone audio at
+  all) or the image library that closed A-18 (no audio either) — needs a
+  standalone-audio-at-scale fixture specifically.
 - **A-28** — `close()` does not destroy a Qt window, and **one** extra
   `MainWindow` constructed at one specific point in the GUI test order makes
   the whole suite abort with a native access violation, inside Pillow worker
@@ -460,13 +482,11 @@ silently set `audio_threshold=88`). **Two High findings remain open:**
   position in the accumulated Qt object graph, not window count. Forcing the
   collection onto the GUI thread makes it *deterministic*, so the obvious fix
   is not the fix, and four standalone reproductions did not trigger it.
-  `tests/test_gui.py` carries a naming workaround meanwhile.
-
-Neither A-18 nor A-19 is reachable from the current test library: it holds 22
-images (below the blocking threshold of 250) and no standalone audio at all.
-A-28 is not reachable either, because the shipped GUI keeps one `MainWindow`
-for the life of the process; the exposure to investigate is the dialogs and
-preview panes that are created and dropped while scans run PIL worker threads.
+  `tests/test_gui.py` carries a naming workaround meanwhile. Not reachable
+  from either real-library fixture, because the shipped GUI keeps one
+  `MainWindow` for the life of the process; the exposure to investigate is the
+  dialogs and preview panes that are created and dropped while scans run PIL
+  worker threads.
 
 Two lessons worth carrying forward. From the 1.8.0 audit: every Critical
 finding in it existed because detection changes had been validated on curated
@@ -482,10 +502,11 @@ Read README.md, docs/USAGE.md, docs/CONFIG.md, docs/STATUS.md,
 docs/AUDIT-1.10.1.md, docs/AUDIT-1.8.0.md, docs/ROADMAP.md, and
 docs/ANIME_ENCODING_PRESETS.md. Inspect and preserve any existing
 working-tree changes. Verify the test suite, then choose one separately
-scoped open item — docs/AUDIT-1.10.1.md's A-18 or A-19 (both High, both
-needing a fixture the project does not have yet), a lower-severity finding
-from the same audit, or a deferred feature from docs/ROADMAP.md — while
-keeping the existing source-protection rules intact. Any change to detection
-quality or matching cost must be validated with a full scan of the real
-library, not only with the test suite.
+scoped open item — docs/AUDIT-1.10.1.md's A-19 (needs a standalone-audio-at
+-scale fixture) or A-28 (a Qt object-lifetime crash reachable only in a
+specific accumulated test order), a lower-severity finding from the same
+audit, or a deferred feature from docs/ROADMAP.md — while keeping the
+existing source-protection rules intact. Any change to detection quality or
+matching cost must be validated with a full scan of the real library, not
+only with the test suite.
 ```
