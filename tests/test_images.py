@@ -11,7 +11,9 @@ from dedupe.cache import Cache
 from dedupe.cli import main
 from dedupe.exact_hash import find_exact_duplicates
 from dedupe.folder_compare import build_cluster_assignments
+from dedupe import image_fingerprint
 from dedupe.image_fingerprint import (
+    COLOR_VETO_SIMILARITY,
     FINGERPRINT_LENGTH,
     ORIENTATION_COUNT,
     PIL_AVAILABLE,
@@ -186,6 +188,30 @@ class ImageFingerprintTests(unittest.TestCase):
             matched_names = [{Path(match.left).name, Path(match.right).name} for match in matches]
             self.assertIn({"source.png", "resized.jpg"}, matched_names)
             self.assertNotIn({"source.png", "different.png"}, matched_names)
+
+    def test_mixed_orientation_cache_finds_a_rotated_duplicate_in_either_order(self) -> None:
+        # A-36: a cache can hold both fingerprint kinds at once, because
+        # switching --image-orientations does not invalidate it. Only one
+        # direction of such a pair can see a rotation - all eight views of the
+        # left side against the right side's canonical view - so before
+        # full-orientation fingerprints were ordered first, this same pair
+        # scored 100.0 or was missed entirely depending on directory order.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source = self._textured(base / "source.png")
+            rotated_path = base / "rotated.png"
+            with Image.open(source) as opened:
+                opened.convert("RGB").rotate(90, expand=True).save(rotated_path)
+
+            for index, order in enumerate(((source, rotated_path), (rotated_path, source))):
+                with self.subTest(first=order[0].name):
+                    records = self._records(order, base)
+                    records[0].image_fingerprint = fingerprint_image(records[0], orientations="canonical")
+                    records[1].image_fingerprint = fingerprint_image(records[1], orientations="full")
+                    with Cache(base / f"cache-{index}.sqlite3") as cache:
+                        matches = find_image_matches(records, cache, threshold=90, workers=1)
+                    self.assertEqual(len(matches), 1)
+                    self.assertEqual(matches[0].similarity, 100.0)
 
     def test_letterboxing_is_trimmed_before_hashing(self) -> None:
         # A-15: bars and margins used to change the descriptor outright.
@@ -463,6 +489,64 @@ class ImageBatchComparisonTests(unittest.TestCase):
                         )
                     actual = {(match.left, match.right, match.similarity) for match in matches}
                     self.assertEqual(actual, expected)
+
+    def test_batched_comparison_agrees_at_the_colour_veto_boundary(self) -> None:
+        # The batch form solves `100 * (1 - distance/765) < COLOR_VETO_SIMILARITY`
+        # for the distance so the veto is one integer comparison instead of a
+        # second full-size float array. That rearrangement is only safe if it
+        # lands on exactly the same side of the boundary as the original, and
+        # random fingerprints are a poor way to check one specific integer -
+        # so walk every distance across it.
+        boundary = round((100.0 - COLOR_VETO_SIMILARITY) * (3 * 255) / 100.0)
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            records = []
+            for offset in range(-4, 5):
+                record = FileRecord(base / f"c{offset}.png", base, 100, 0.0, f"c{offset}")
+                # Identical structure, so only the colour veto can separate
+                # these from the reference below.
+                record.image_fingerprint = [0] * ORIENTATION_COUNT + [boundary + offset, 0, 0]
+                records.append(record)
+            reference = FileRecord(base / "reference.png", base, 100, 0.0, "reference")
+            reference.image_fingerprint = [0] * ORIENTATION_COUNT + [0, 0, 0]
+            records.append(reference)
+
+            expected = self._brute_force_matches(records, 90.0)
+            with Cache(base / "cache.sqlite3") as cache:
+                matches = find_image_matches(records, cache, threshold=90.0, workers=1, max_candidates=4)
+            self.assertEqual({(m.left, m.right, m.similarity) for m in matches}, expected)
+            # Guard the test itself: the boundary must actually fall inside
+            # the swept range, or this proves nothing.
+            self.assertEqual(image_similarity(records[0].image_fingerprint, reference.image_fingerprint), 100.0)
+            self.assertEqual(image_similarity(records[-2].image_fingerprint, reference.image_fingerprint), 0.0)
+
+    def test_oversized_tile_request_is_clamped_without_changing_results(self) -> None:
+        # A-36: `max_candidates` is a quadratic memory claim - 20,000 per side
+        # would be ~12 GB of tile buffers - so an unclamped large value is a
+        # MemoryError rather than a slow run. The clamp must bite, and must
+        # not change which pairs are found. The limit is patched down here
+        # rather than allocating a real 4096-wide tile in a unit test.
+        observed_tiles: list[tuple[int, int]] = []
+        real_batch = image_fingerprint._batch_similarity
+
+        def spy(left_hashes, left_colors, right_hashes, right_colors):  # type: ignore[no-untyped-def]
+            observed_tiles.append((left_hashes.shape[0], right_hashes.shape[0]))
+            return real_batch(left_hashes, left_colors, right_hashes, right_colors)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            records = self._random_records(60, seed=42)
+            expected = self._brute_force_matches(records, 60.0)
+            with (
+                patch.object(image_fingerprint, "IMAGE_COMPARISON_TILE_LIMIT", 8),
+                patch.object(image_fingerprint, "_batch_similarity", spy),
+                Cache(base / "cache.sqlite3") as cache,
+            ):
+                matches = find_image_matches(records, cache, threshold=60.0, workers=1, max_candidates=10**6)
+
+            self.assertEqual({(m.left, m.right, m.similarity) for m in matches}, expected)
+            self.assertTrue(observed_tiles)
+            self.assertLessEqual(max(max(pair) for pair in observed_tiles), 8)
 
     def test_exact_hash_pairs_are_excluded_even_when_perceptually_similar(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

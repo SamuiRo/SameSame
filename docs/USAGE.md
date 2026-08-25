@@ -1,6 +1,6 @@
 # Usage Guide
 
-This guide describes SameSame `1.15.0`. The current application provides a
+This guide describes SameSame `1.15.1`. The current application provides a
 report-only CLI and an optional desktop review interface with explicit,
 journaled quarantine/recycle actions and a transcoding queue. There is no
 permanent-delete command, and duplicate review cannot delete at all; the one
@@ -232,7 +232,14 @@ multi-page TIFF files are currently represented by their first decoded frame/pag
 full`). On a very large library, `--image-orientations canonical` fingerprints
 and compares faster by skipping that detection - only exact-orientation
 duplicates match. Switching modes needs `--refresh-images` to apply to files
-already in the cache.
+already in the cache; until you do, the cache holds both kinds at once and a
+rotated duplicate is only found when at least one side of the pair still has
+its rotation views. The scan warns when it sees a mixed cache.
+
+`--max-image-candidates` sets the comparison tile size and is a memory knob,
+not a speed knob - raising it makes the scan slower, not faster (see
+`docs/CONFIG.md`). The default suits every library size; lower it only on a
+very memory-constrained machine.
 
 Similar audio matches use Chromaprint and can survive codec, bitrate, container,
 and moderate volume changes. They remain manual review candidates; substantial

@@ -50,8 +50,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "refresh_names": False,
     # Tile size for the batched image comparison, not a selectivity filter
     # (A-18): every image is compared against every other, in tiles this
-    # large per side, so memory stays bounded on large libraries.
-    "max_image_candidates": 4000,
+    # large per side, so memory stays bounded on large libraries. Sized by
+    # measurement rather than intuition (A-36): a tile's working set is
+    # several arrays of tile^2 elements, so past a few hundred per side it
+    # stops fitting in cache and the comparison gets *slower* while its peak
+    # memory keeps growing quadratically. See IMAGE_COMPARISON_TILE_LIMIT.
+    "max_image_candidates": 512,
     # "full" detects rotated/mirrored duplicates (A-15); "canonical" skips
     # that to fingerprint and compare faster - see IMAGE_ORIENTATION_MODES.
     "image_orientations": "full",
@@ -346,7 +350,10 @@ def parse_args(argv: list[str] | None = None) -> Config:
         "--max-image-candidates",
         type=int,
         default=None,
-        help="Tile size (per side) for the batched image comparison; does not filter which pairs are compared.",
+        help=(
+            "Tile size (per side) for the batched image comparison; does not filter which pairs are "
+            "compared. Larger is not faster - see docs/CONFIG.md."
+        ),
     )
     parser.add_argument(
         "--image-orientations",

@@ -844,3 +844,120 @@ Verified after the fixes:
 
 A-18 is closed. A-19 (audio's quadratic bucket sweep) remains open and
 unaffected by this work - it is a different matcher with its own fixture gap.
+
+
+## A-36 — The tile size that closed A-18 was never the tile size that shipped
+
+Found reviewing `1.14.0`/`1.15.0`. A-18's fix is sound: comparing every pair
+with a tiled numpy kernel really is fast enough that no selectivity trick is
+needed. The *tile size* chosen alongside it is not, and the reasoning that
+picked it was never tested.
+
+`1.14.0` raised `max_image_candidates` from `250` to `4000` with the
+justification that a larger tile keeps "memory bounded on large libraries".
+Tiling does bound memory; the specific value does the opposite of what the
+comment implies, because a tile's cost is quadratic in it. Measured on 20,000
+fingerprints, the whole comparison, same data, same kernel:
+
+| tile | tile pairs | time | peak tile buffers |
+| --- | --- | --- | --- |
+| 100 | 20,100 | 26.8 s | 0.6 MB |
+| **250** (pre-1.14.0) | 3,240 | **30.5 s** | 3.6 MB |
+| 500 | 820 | 46.7 s | 14.3 MB |
+| 1,000 | 210 | 48.6 s | 57 MB |
+| 2,000 | 55 | 50.1 s | 228 MB |
+| **4,000** (1.14.0-1.15.0) | 15 | **53.4 s** | **912 MB** |
+
+So the raise made the comparison stage ~1.7x slower *and* ~250x more
+memory-hungry on identical input. Fewer Python-level iterations over tiles -
+the thing a bigger tile buys - is a rounding error next to the cost of a
+working set that no longer fits in cache: at 4000 per side every intermediate
+is a 128 MB array and each of the eight orientation passes streams all of it
+through main memory.
+
+The audit's own numbers already said so and were not read that way. This
+document records "~3.5 s per 4000×4000 tile"; at 54,056 images that is 105
+tile pairs, or ~368 s - against the **118 s** the real library actually took.
+The real-library run was made at tile `250`, a caveat recorded here but not
+carried into `docs/STATUS.md`, where the same figure was presented as live
+evidence for the shipped configuration. **The shipped default had never been
+measured on a real library at all.** That is the same lesson as the 1.8.0
+audit, one step sideways: a measurement is evidence only for the
+configuration it was taken in, and a default changed after the measurement
+silently invalidates it.
+
+**Three fixes.**
+
+*The comparator itself was leaving most of the win on the floor.* Written as
+expressions, `_batch_similarity` allocated roughly a dozen full-size
+intermediates per tile: `_popcount64` alone allocates seven, eight times per
+tile, and the colour veto's broadcast difference is an `(n, m, 3)` array three
+times the size of anything else in the function. Rewritten to allocate two
+uint64 buffers plus the result once per tile and write every step in place -
+with the popcount done in place and the two affine score steps folded into one
+multiply-add on a float32 buffer - it is **1.7 s and 528 MB against 3.2 s and
+784 MB** on a 4000×4000 tile, for bit-identical output. Bit-identity is not an
+approximation here: every score the calibration can produce is `100 - 3.125 *
+d` for an integer Hamming distance `d` in 0..64, so all of them are exactly
+representable in float32, and the colour veto's rearranged threshold is exact
+in binary floating point by construction. Both are asserted directly by tests
+rather than assumed.
+
+*The default is now measured, not chosen.* Re-sweeping with the rewritten
+kernel: 32.2 s at 64, 15.0 s at 128, 13.1 s at 256, **12.1 s at 512**, 12.7 s
+at 1024, 16.7 s at 2048, 17.6 s at 4000. `512` is the flat bottom of that
+curve and costs 4.6 MB of tile buffers. Combined with the rewrite, the
+comparison stage on 20,000 fingerprints goes from **53.4 s to 12.1 s** against
+what `1.14.0`/`1.15.0` shipped. `IMAGE_COMPARISON_TILE_LIMIT` (4096) now
+clamps the request, so a mistyped setting is a slow run rather than a
+`MemoryError` - `max_candidates=20000` was an unguarded ~12 GB claim.
+
+*A mixed-mode cache silently depended on directory order.* `1.15.0`'s
+`--image-orientations canonical` writes one hash into all eight fingerprint
+slots, and deliberately does not invalidate the cache, so a cache can hold
+both kinds at once. But only one direction of such a pair can see a rotation:
+the comparison reads all eight orientations of the *left* side against the
+*right* side's canonical view alone, and the tile loop only ever evaluates
+`i < j`. Measured on one rotated pair: **100.0 with the full-mode file first,
+0.0 with the canonical-mode file first** - the same two files, the same cache,
+answer decided by scan order. Canonical fingerprints are recognisable without
+being recorded anywhere (all eight slots equal), so the candidate list is now
+stably ordered to put full-orientation fingerprints first, which makes the
+left side of every mixed pair the one that has the eight views. A rotated
+duplicate is now found whenever *either* side still knows about rotations, and
+the scan warns that the cache is mixed and wants `--refresh-images`. Pairs
+where both sides agree keep the order they already had, so no existing score
+moves.
+
+Three new tests, each confirmed to fail against the unfixed code first, per
+this project's standing rule: the colour veto's exact integer boundary, the
+tile clamp actually biting, and a mixed-orientation cache finding its rotated
+duplicate in either file order.
+
+**Validated on the real library, not only on the sweep.** A full cold-cache
+scan of the 54,121-file image library (54,100 usable fingerprints, 16
+workers) found **63,853 image matches** - exactly the count the `1.14.0` run
+recorded, so detection did not move. Replaying the comparison stage alone
+over that one cached fingerprint set, shipped code against fixed code:
+
+| | tile | comparison | peak | image matches |
+| --- | --- | --- | --- | --- |
+| `1.14.0`-`1.15.0` as shipped | `4000` | 296.7 s | 926.6 MB | 63,853 |
+| same comparator, measured default | `512` | 98.9 s | 346.6 MB | 63,853 |
+| `1.15.1` | `512` | **77.6 s** | **18.2 MB** | 63,853 |
+
+The match sets were compared as sets of `(left, right, similarity)` triples
+and are identical across all three. Note the middle row: the default alone
+accounts for a 3x speedup, and the rewrite for the rest. Note also the
+926.6 MB - the shipped configuration really would have cost about what the
+synthetic benchmark predicted, which the tile-`250` real-library run had
+hidden.
+
+Verified after the fixes:
+
+| Check | Result |
+| --- | --- |
+| `python -m pytest -q` | **191 passed, 34 subtests** (3 new tests) |
+| `ruff check .` / `ruff format --check .` | clean |
+| `mypy dedupe` | 32 errors - exactly the recorded baseline, no new errors |
+| Full cold-cache scan of the 54,121-file image library | 63,853 image matches, unchanged |

@@ -120,7 +120,7 @@ class ScanOptions:
     refresh_images: bool = False
     refresh_audio: bool = False
     refresh_names: bool = False
-    max_image_candidates: int = 4000
+    max_image_candidates: int = 512
     image_orientations: str = "full"
     max_video_duration_ratio: float = DEFAULT_MAX_DURATION_RATIO
     max_video_duration_delta: float = DEFAULT_MAX_DURATION_DELTA

@@ -6,7 +6,7 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.15.0`. Stages A through E, and Stage F
+The current package version is `1.15.1`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -129,7 +129,9 @@ Implemented:
   same-number episodes from unrelated seasons becoming identical name keys;
 - numpy-vectorized, tiled image comparison that scores every candidate pair
   directly instead of pre-filtering with Hamming-radius blocking, which had
-  no selectivity left at the shipped threshold on a large library (A-18);
+  no selectivity left at the shipped threshold on a large library (A-18),
+  writing every full-size intermediate in place and sized by a measured tile
+  sweep rather than by intuition (A-36);
 - degenerate-descriptor vetoes on both image and audio: two flat colours
   and two pure tones each produce near-identical descriptors, so pairs
   whose descriptors carry no information are refused rather than scored;
@@ -271,7 +273,7 @@ quarantine-first action.
 
 ## Verification Completed
 
-**Current, as of `1.15.0`:** the suite is **188 tests plus 32 subtests**, all
+**Current, as of `1.15.1`:** the suite is **191 tests plus 34 subtests**, all
 passing under both `unittest` and pytest in the project-local Python 3.11.9
 virtual environment, with `ruff check` / `ruff format --check` clean and a
 **32-error** `mypy` baseline (one fewer than the previously documented 33;
@@ -342,20 +344,50 @@ counts above — not any number inside the list — as current (A-25).
   local, not in the repository) closed A-18 in `1.14.0`: 54,056 images, cold
   cache, 16 workers. Image comparison — the part A-18 could not previously
   finish without exhausting memory — took **118 s** across 23,653 tiles and
-  found **63,853 image matches**; fingerprinting (A-35) took the remaining
+  found **63,853 image matches**. Those 23,653 tiles are a tile size of `250`:
+  the run predates `max_image_candidates`' default being raised, so it does
+  not measure the `4000` that `1.14.0` and `1.15.0` actually shipped
+  (`docs/AUDIT-1.10.1.md` records the same caveat). A-36 later established
+  that `4000` was the slower of the two and restored a measured default.
+  Fingerprinting (A-35) took the remaining
   ~37 of the combined ~39m25s fingerprinting-plus-comparison stage. Full
   pipeline including the untouched name-hint/folder stages: **~50 minutes**
   end to end, no memory exhaustion, versus A-18's own ~18 GB estimate for a
   library little more than a third this size. See `docs/AUDIT-1.10.1.md`'s
   "Resolution of A-18" section for the full breakdown, including the
   synthetic 54,000-fingerprint benchmark (917 MB peak, 368 s for an
-  exhaustive comparison) this real-library run confirms.
+  exhaustive comparison) this real-library run confirms. A-36 re-ran the same
+  library against `1.15.1` and reproduced the 63,853 matches exactly.
 - `--image-orientations canonical` (`1.15.0`) trades detecting rotated/
   mirrored image duplicates (A-15) for speed: profiled at ~22% of per-image
   fingerprinting time and a larger share of the comparison stage, since both
   scale with orientation count. Default remains `full`; cached fingerprints
   are reused regardless of which mode produced them, so switching modes
-  needs `--refresh-images` to apply to already-cached files.
+  needs `--refresh-images` to apply to already-cached files. A cache that
+  holds both kinds no longer answers by directory order (A-36): candidates
+  are ordered so that a fingerprint which still has its rotation views is on
+  the side the comparison reads them from, and the scan warns that the cache
+  is mixed.
+- The image comparison tile (`max_image_candidates`) was re-derived by
+  measurement in `1.15.1` (A-36) after the `1.14.0` raise from `250` to
+  `4000` turned out to cost both speed and memory: on 20,000 fingerprints the
+  full comparison ran 30.5 s at `250` and 53.4 s at `4000`, with tile buffers
+  of 3.6 MB against 912 MB. `_batch_similarity` was rewritten alongside it to
+  write every full-size intermediate in place, and requests above `4096` are
+  clamped instead of becoming an unguarded multi-gigabyte allocation.
+  Re-measured on the same real 54,100-image library, comparison stage only,
+  both runs reading one cold-cache fingerprint set:
+
+  | | tile | comparison | peak | image matches |
+  | --- | --- | --- | --- | --- |
+  | `1.14.0`-`1.15.0` as shipped | `4000` | 296.7 s | 926.6 MB | 63,853 |
+  | `1.15.1` | `512` | **77.6 s** | **18.2 MB** | 63,853 |
+
+  **3.8x faster on 1/51st the memory, for a match set verified identical
+  pair-for-pair and score-for-score** - and identical to the 63,853 the
+  `1.14.0` run recorded, so nothing about detection moved. The 926.6 MB also
+  confirms what the shipped default would really have cost: close to the
+  synthetic benchmark's 917 MB, not the tile-`250` run's near-nothing.
 
 ## Development Environment
 
@@ -440,7 +472,7 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.15.0`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.15.1`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:

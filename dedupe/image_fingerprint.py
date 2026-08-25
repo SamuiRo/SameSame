@@ -184,14 +184,64 @@ _POPCOUNT_M1 = np.uint64(0x5555555555555555)
 _POPCOUNT_M2 = np.uint64(0x3333333333333333)
 _POPCOUNT_M4 = np.uint64(0x0F0F0F0F0F0F0F0F)
 _POPCOUNT_H01 = np.uint64(0x0101010101010101)
+_POPCOUNT_ONE = np.uint64(1)
+_POPCOUNT_TWO = np.uint64(2)
+_POPCOUNT_FOUR = np.uint64(4)
+_POPCOUNT_FIFTYSIX = np.uint64(56)
+
+
+def _popcount64_into(values: np.ndarray, scratch: np.ndarray) -> None:
+    """SWAR popcount of `values`, in place, using `scratch` as its only
+    temporary.
+
+    The expression form of this (`_popcount64` below) allocates a fresh
+    full-size uint64 array for each of its seven intermediate steps. At the
+    comparison tile sizes this project runs, each of those is tens to
+    hundreds of megabytes, allocated and freed eight times per tile - so the
+    in-place form is both meaningfully faster (fewer trips to main memory)
+    and the difference between a bounded and an alarming peak. Both buffers
+    are allocated once per tile by `_batch_similarity` and reused across all
+    eight orientations.
+    """
+    np.right_shift(values, _POPCOUNT_ONE, out=scratch)
+    np.bitwise_and(scratch, _POPCOUNT_M1, out=scratch)
+    np.subtract(values, scratch, out=values)
+    np.bitwise_and(values, _POPCOUNT_M2, out=scratch)
+    np.right_shift(values, _POPCOUNT_TWO, out=values)
+    np.bitwise_and(values, _POPCOUNT_M2, out=values)
+    np.add(values, scratch, out=values)
+    np.right_shift(values, _POPCOUNT_FOUR, out=scratch)
+    np.add(values, scratch, out=values)
+    np.bitwise_and(values, _POPCOUNT_M4, out=values)
+    np.multiply(values, _POPCOUNT_H01, out=values)
+    np.right_shift(values, _POPCOUNT_FIFTYSIX, out=values)
 
 
 def _popcount64(values: np.ndarray) -> np.ndarray:
-    x = values.astype(np.uint64)
-    x = x - ((x >> np.uint64(1)) & _POPCOUNT_M1)
-    x = (x & _POPCOUNT_M2) + ((x >> np.uint64(2)) & _POPCOUNT_M2)
-    x = (x + (x >> np.uint64(4))) & _POPCOUNT_M4
-    return (x * _POPCOUNT_H01) >> np.uint64(56)
+    """Non-mutating popcount, for callers that want a plain function."""
+    result = values.astype(np.uint64)
+    _popcount64_into(result, np.empty_like(result))
+    return result
+
+
+# `image_similarity`'s two affine steps - raw Hamming similarity from a
+# 0-64 bit distance, then `calibrate_similarity` - composed into one
+# multiply-add so the batch form needs a single pass over one float buffer:
+#
+#     calibrate(100 * (1 - d/64)) == 100 - d * (100/64) * (100/(100-NOISE_FLOOR))
+#
+# At the shipped NOISE_FLOOR that is `100 - 3.125 * d`. Every value it can
+# produce for an integer d in 0..64 is a multiple of 0.125 within +-100, so
+# float32 represents all of them exactly and the result is bit-identical to
+# the float64 form it replaces at half the memory.
+_CALIBRATED_SLOPE = np.float32(-(100.0 / 64.0) * (100.0 / (100.0 - NOISE_FLOOR)))
+_CALIBRATED_INTERCEPT = np.float32(100.0)
+# `100 * (1 - color_distance / (3*255)) < COLOR_VETO_SIMILARITY`, solved for
+# the distance, so the veto is one comparison against the integer distance
+# instead of a second full-size float array. Written in this order because
+# `(100 - 70) * 765 / 100` is exact in binary floating point where
+# `(1 - 70/100) * 765` is not.
+_COLOR_VETO_DISTANCE = (100.0 - COLOR_VETO_SIMILARITY) * (3 * 255) / 100.0
 
 
 def _batch_similarity(
@@ -201,8 +251,8 @@ def _batch_similarity(
     right_colors: np.ndarray,
 ) -> np.ndarray:
     """`image_similarity`, batched over every (left[i], right[j]) pair at
-    once. Verified equivalent to calling `image_similarity` pair-by-pair
-    (`tests/test_images.py`).
+    once. Verified equivalent to calling `image_similarity` pair-by-pair,
+    including at the colour veto's exact boundary (`tests/test_images.py`).
 
     `left_hashes`/`right_hashes` are `(n, 8)` uint64, one column per dihedral
     orientation; only `right_hashes[:, 0]` (the canonical view) is used, by
@@ -210,21 +260,59 @@ def _batch_similarity(
     closed, so one side's eight views against the other's own view already
     covers every relative orientation). `left_colors`/`right_colors` are
     `(n, 3)` average-colour channels.
-    """
-    canonical_right = right_hashes[:, 0]
-    min_distance = np.full((left_hashes.shape[0], right_hashes.shape[0]), 64, dtype=np.uint8)
-    for orientation in range(ORIENTATION_COUNT):
-        xor = left_hashes[:, orientation][:, None] ^ canonical_right[None, :]
-        np.minimum(min_distance, _popcount64(xor), out=min_distance)
-    structure_similarity = 100.0 * (1.0 - min_distance.astype(np.float64) / 64.0)
-    calibrated = np.clip((structure_similarity - NOISE_FLOOR) / (100.0 - NOISE_FLOOR) * 100.0, 0.0, 100.0)
 
-    color_distance = np.abs(left_colors[:, None, :].astype(np.int32) - right_colors[None, :, :].astype(np.int32)).sum(
-        axis=2
-    )
-    color_similarity = 100.0 * (1.0 - color_distance.astype(np.float64) / (3 * 255))
-    calibrated[color_similarity < COLOR_VETO_SIMILARITY] = 0.0
+    Every full-size intermediate is allocated once and written in place. The
+    expression-style version this replaced allocated roughly a dozen of them
+    per tile, which measured 784 MB peak and 3.2 s on a 4000x4000 tile
+    against 528 MB and 1.7 s here, for bit-identical output (A-36).
+    """
+    shape = (left_hashes.shape[0], right_hashes.shape[0])
+    canonical_right = right_hashes[:, 0]
+    min_distance = np.full(shape, 64, dtype=np.uint8)
+    distance = np.empty(shape, dtype=np.uint64)
+    scratch = np.empty(shape, dtype=np.uint64)
+    for orientation in range(ORIENTATION_COUNT):
+        np.bitwise_xor(left_hashes[:, orientation][:, None], canonical_right[None, :], out=distance)
+        _popcount64_into(distance, scratch)
+        np.minimum(min_distance, distance, out=min_distance)
+    del distance, scratch
+
+    calibrated = min_distance.astype(np.float32)
+    calibrated *= _CALIBRATED_SLOPE
+    calibrated += _CALIBRATED_INTERCEPT
+    np.clip(calibrated, 0.0, 100.0, out=calibrated)
+
+    # Accumulated one channel at a time: the broadcast difference of all
+    # three at once is an (n, m, 3) array, three times the size of anything
+    # else here and the single largest allocation in the old form.
+    color_distance = np.zeros(shape, dtype=np.int32)
+    channel_distance = np.empty(shape, dtype=np.int32)
+    for channel in range(3):
+        np.subtract(
+            left_colors[:, channel, None].astype(np.int32),
+            right_colors[None, :, channel].astype(np.int32),
+            out=channel_distance,
+        )
+        np.abs(channel_distance, out=channel_distance)
+        color_distance += channel_distance
+    calibrated[color_distance > _COLOR_VETO_DISTANCE] = 0.0
     return calibrated
+
+
+# Upper bound on the comparison tile size, whatever `max_candidates` asks for
+# (A-36). A tile holds several arrays of tile^2 elements, so the request is a
+# quadratic memory claim: 4096 is already ~490 MB per tile and 20,000 would
+# be ~12 GB. Nothing above a few hundred per side is faster either - measured
+# on 20,000 fingerprints, the whole comparison took 12.1 s at 512 and 17.6 s
+# at 4000, because past roughly a thousand the working set stops fitting in
+# cache and every pass goes to main memory. So this ceiling only exists to
+# turn a mistyped setting into a slow run instead of a MemoryError.
+IMAGE_COMPARISON_TILE_LIMIT = 4096
+# Chosen by measuring the full comparison across tile sizes on 20,000
+# fingerprints (A-36): 32.2 s at 64, 13.1 s at 256, **12.1 s at 512**, 12.7 s
+# at 1024, 17.6 s at 4000. 512 is the flat bottom of that curve and costs
+# 4.6 MB of tile buffers, against 272 MB at the 4000 this replaced.
+IMAGE_COMPARISON_TILE = 512
 
 
 def find_image_matches(
@@ -232,7 +320,7 @@ def find_image_matches(
     cache: Cache,
     threshold: float,
     workers: int = 4,
-    max_candidates: int = 4000,
+    max_candidates: int = IMAGE_COMPARISON_TILE,
     orientations: str = "full",
 ) -> list[ImageMatch]:
     """Fingerprint every unfingerprinted image, then compare all of them.
@@ -246,8 +334,13 @@ def find_image_matches(
     deduplicating that same near-total pair set. Comparing every pair with
     numpy, tiled so memory stays bounded, is fast enough (measured: the full
     `n^2` comparison, not a filtered subset) that no selectivity trick is
-    needed - `max_candidates` only trades tile memory for fewer Python-level
-    iterations over tiles.
+    needed.
+
+    `max_candidates` is therefore purely a memory/locality knob, and it is
+    not monotone: raising it does not buy speed (A-36). Fewer Python-level
+    iterations over tiles is a rounding error next to keeping each tile's
+    buffers in cache, so the useful range is a few hundred per side and the
+    request is clamped to `IMAGE_COMPARISON_TILE_LIMIT`.
 
     `orientations="canonical"` skips detecting rotated/mirrored duplicates
     (A-15) to fingerprint faster - see `IMAGE_ORIENTATION_MODES`. Cached
@@ -275,6 +368,33 @@ def find_image_matches(
         for record in records
         if record.image_fingerprint is not None and len(record.image_fingerprint) == FINGERPRINT_LENGTH
     ]
+    # A "canonical" fingerprint stores one hash in all eight slots, so it is
+    # recognisable without being recorded anywhere - which matters because a
+    # cache can hold both kinds at once (switching modes does not invalidate
+    # it) and only one direction of a mixed pair can see a rotation: the
+    # comparison reads all eight orientations of the left side against the
+    # right side's canonical view alone. Ordering full-orientation
+    # fingerprints first makes the left side of every mixed pair the one that
+    # has the eight views, so a rotated duplicate is still found whenever
+    # either side knows about rotations. Without this the answer depended on
+    # which file happened to come first in the scan - the same pair scoring
+    # 100.0 or 0.0 by directory order (A-36). The sort is stable, so pairs
+    # where both sides agree keep the order they already had.
+    canonical_flags: list[bool] = []
+    for record in candidates:
+        fingerprint = record.image_fingerprint
+        assert fingerprint is not None
+        canonical_flags.append(len(set(fingerprint[:ORIENTATION_COUNT])) == 1)
+    if any(canonical_flags) and not all(canonical_flags):
+        LOGGER.warning(
+            "%d of %d cached image fingerprints were built without rotation/mirror views and %d with them; "
+            "rotated duplicates between the two groups are only partly detectable. "
+            "Rerun with --refresh-images to rebuild them all in the current --image-orientations mode.",
+            sum(canonical_flags),
+            len(candidates),
+            len(candidates) - sum(canonical_flags),
+        )
+        candidates = [record for record, _ in sorted(zip(candidates, canonical_flags), key=lambda item: item[1])]
     matches: list[ImageMatch] = []
     total = len(candidates)
     if total < 2 or threshold > 100:
@@ -288,7 +408,16 @@ def find_image_matches(
         hashes[index] = fingerprint[:ORIENTATION_COUNT]
         colors[index] = fingerprint[ORIENTATION_COUNT:]
 
-    tile = max(1, max_candidates)
+    tile = max(1, min(max_candidates, IMAGE_COMPARISON_TILE_LIMIT))
+    if max_candidates > IMAGE_COMPARISON_TILE_LIMIT:
+        LOGGER.warning(
+            "Image comparison tile size %d exceeds the %d limit and would claim roughly %.1f GB per tile; "
+            "using %d instead.",
+            max_candidates,
+            IMAGE_COMPARISON_TILE_LIMIT,
+            max_candidates**2 * 29 / 1e9,
+            tile,
+        )
     tile_starts = list(range(0, total, tile))
     tile_pairs = [
         (a_start, b_start) for a_position, a_start in enumerate(tile_starts) for b_start in tile_starts[a_position:]
