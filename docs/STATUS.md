@@ -1,12 +1,12 @@
 # Project Status and Roadmap
 
-Last updated: 2026-08-03
+Last updated: 2026-08-25
 
 This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.14.0`. Stages A through E, and Stage F
+The current package version is `1.15.0`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -271,7 +271,7 @@ quarantine-first action.
 
 ## Verification Completed
 
-**Current, as of `1.14.0`:** the suite is **185 tests plus 32 subtests**, all
+**Current, as of `1.15.0`:** the suite is **188 tests plus 32 subtests**, all
 passing under both `unittest` and pytest in the project-local Python 3.11.9
 virtual environment, with `ruff check` / `ruff format --check` clean and a
 **32-error** `mypy` baseline (one fewer than the previously documented 33;
@@ -350,7 +350,12 @@ counts above — not any number inside the list — as current (A-25).
   "Resolution of A-18" section for the full breakdown, including the
   synthetic 54,000-fingerprint benchmark (917 MB peak, 368 s for an
   exhaustive comparison) this real-library run confirms.
-  alongside the 105 s one (A-25).
+- `--image-orientations canonical` (`1.15.0`) trades detecting rotated/
+  mirrored image duplicates (A-15) for speed: profiled at ~22% of per-image
+  fingerprinting time and a larger share of the comparison stage, since both
+  scale with orientation count. Default remains `full`; cached fingerprints
+  are reused regardless of which mode produced them, so switching modes
+  needs `--refresh-images` to apply to already-cached files.
 
 ## Development Environment
 
@@ -435,7 +440,7 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.14.0`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.15.0`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:

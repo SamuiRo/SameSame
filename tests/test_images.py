@@ -12,6 +12,7 @@ from dedupe.cli import main
 from dedupe.exact_hash import find_exact_duplicates
 from dedupe.folder_compare import build_cluster_assignments
 from dedupe.image_fingerprint import (
+    FINGERPRINT_LENGTH,
     ORIENTATION_COUNT,
     PIL_AVAILABLE,
     _popcount64,
@@ -140,6 +141,51 @@ class ImageFingerprintTests(unittest.TestCase):
                     view.save(target)
                     with self.subTest(transform=label):
                         self.assertEqual(image_similarity(self._fingerprint(target), original), 100.0)
+
+    def test_canonical_orientation_mode_stores_one_hash_repeated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source = self._textured(base / "source.png")
+            record = FileRecord(source, base, 0, 0.0, source.name)
+            fingerprint = fingerprint_image(record, orientations="canonical")
+            assert fingerprint is not None
+            self.assertEqual(fingerprint[:ORIENTATION_COUNT], [fingerprint[0]] * ORIENTATION_COUNT)
+            self.assertEqual(len(fingerprint), FINGERPRINT_LENGTH)
+
+    def test_canonical_orientation_mode_misses_a_rotated_duplicate(self) -> None:
+        # The speed/detection trade-off canonical mode exists for: a 90-degree
+        # rotation matches at 100.0 in the default "full" mode (A-15) but is
+        # indistinguishable from an unrelated image once only one orientation
+        # is fingerprinted per side.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source = self._textured(base / "source.png")
+            original_record = FileRecord(source, base, 0, 0.0, source.name)
+            original = fingerprint_image(original_record, orientations="canonical")
+            assert original is not None
+
+            with Image.open(source) as opened:
+                rotated_path = base / "rotated.png"
+                opened.convert("RGB").rotate(90, expand=True).save(rotated_path)
+            rotated_record = FileRecord(rotated_path, base, 0, 0.0, rotated_path.name)
+            rotated = fingerprint_image(rotated_record, orientations="canonical")
+            assert rotated is not None
+
+            self.assertEqual(image_similarity(rotated, original), 0.0)
+
+    def test_canonical_orientation_mode_still_matches_same_orientation_duplicate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source, resized, different = self._create_images(base)
+            records = self._records((source, resized, different), base)
+
+            with Cache(base / "cache.sqlite3") as cache:
+                cache.upsert_files(records)
+                matches = find_image_matches(records, cache, threshold=90, workers=1, orientations="canonical")
+
+            matched_names = [{Path(match.left).name, Path(match.right).name} for match in matches]
+            self.assertIn({"source.png", "resized.jpg"}, matched_names)
+            self.assertNotIn({"source.png", "different.png"}, matched_names)
 
     def test_letterboxing_is_trimmed_before_hashing(self) -> None:
         # A-15: bars and margins used to change the descriptor outright.

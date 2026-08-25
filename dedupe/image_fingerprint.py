@@ -89,7 +89,16 @@ def _orientations(image: Image.Image) -> list[Image.Image]:
     return views
 
 
-def fingerprint_image(record: FileRecord) -> list[int] | None:
+# Values accepted for the `orientations` parameter below and the
+# `--image-orientations` CLI/config setting. "full" is the default and only
+# mode that detects rotated/mirrored duplicates (A-15); "canonical" trades
+# that away for speed - profiled at ~22% of per-image fingerprinting time and
+# a larger share of the comparison stage, since both scale with orientation
+# count.
+IMAGE_ORIENTATION_MODES = ("full", "canonical")
+
+
+def fingerprint_image(record: FileRecord, orientations: str = "full") -> list[int] | None:
     if Image is None or ImageOps is None:
         return None
     try:
@@ -116,7 +125,18 @@ def fingerprint_image(record: FileRecord) -> list[int] | None:
             # images. See IMAGE_FINGERPRINT_VERSION for the bit-identity
             # measurement this trades against.
             grid = trimmed.resize((HASH_GRID_SIZE, HASH_GRID_SIZE), Image.Resampling.LANCZOS).convert("L")
-            hashes = [phash(view) for view in _orientations(grid)]
+            if orientations == "canonical":
+                # Skip generating and hashing the other 7 dihedral views
+                # entirely - not just skip comparing them - and fill every
+                # slot with the one computed hash. `image_similarity`/
+                # `_batch_similarity` only ever read `right_hashes[:, 0]`, so
+                # this is exactly equivalent to a single-orientation compare
+                # on both sides, at the storage format every other code path
+                # already expects.
+                canonical_hash = phash(grid)
+                hashes = [canonical_hash] * ORIENTATION_COUNT
+            else:
+                hashes = [phash(view) for view in _orientations(grid)]
             return [*hashes, int(average[0]), int(average[1]), int(average[2])]
     except (OSError, ValueError, Image.DecompressionBombError) as exc:
         LOGGER.warning("Cannot fingerprint image %s: %s", record.path, exc)
@@ -213,6 +233,7 @@ def find_image_matches(
     threshold: float,
     workers: int = 4,
     max_candidates: int = 4000,
+    orientations: str = "full",
 ) -> list[ImageMatch]:
     """Fingerprint every unfingerprinted image, then compare all of them.
 
@@ -227,11 +248,18 @@ def find_image_matches(
     `n^2` comparison, not a filtered subset) that no selectivity trick is
     needed - `max_candidates` only trades tile memory for fewer Python-level
     iterations over tiles.
+
+    `orientations="canonical"` skips detecting rotated/mirrored duplicates
+    (A-15) to fingerprint faster - see `IMAGE_ORIENTATION_MODES`. Cached
+    fingerprints from a previous run are reused as-is regardless of which
+    mode produced them (both are valid 11-element fingerprints in the same
+    format), so switching modes only changes newly computed files; rerun
+    with `--refresh-images` to apply a mode change to already-cached ones.
     """
     missing = [record for record in records if record.image_fingerprint is None]
     if missing:
         with cancellable_executor(workers) as executor:
-            futures = {executor.submit(fingerprint_image, record): record for record in missing}
+            futures = {executor.submit(fingerprint_image, record, orientations): record for record in missing}
             for future in tqdm(as_completed(futures), total=len(futures), desc="Image fingerprints", unit="file"):
                 record = futures[future]
                 fingerprint = future.result()

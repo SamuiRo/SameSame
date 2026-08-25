@@ -88,6 +88,7 @@ class ScanConfiguration(Protocol):
     refresh_audio: bool
     refresh_names: bool
     max_image_candidates: int
+    image_orientations: str
     max_video_duration_ratio: float
     max_video_duration_delta: float
     ffmpeg: str
@@ -120,6 +121,7 @@ class ScanOptions:
     refresh_audio: bool = False
     refresh_names: bool = False
     max_image_candidates: int = 4000
+    image_orientations: str = "full"
     max_video_duration_ratio: float = DEFAULT_MAX_DURATION_RATIO
     max_video_duration_delta: float = DEFAULT_MAX_DURATION_DELTA
     ffmpeg: str = "ffmpeg"
@@ -315,6 +317,7 @@ class ScanService:
                             threshold=config.image_threshold,
                             workers=config.workers,
                             max_candidates=config.max_image_candidates,
+                            orientations=config.image_orientations,
                         )
             LOGGER.info("Found %d image matches", len(image_matches))
 

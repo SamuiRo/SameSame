@@ -1,6 +1,6 @@
 # Usage Guide
 
-This guide describes SameSame `1.14.0`. The current application provides a
+This guide describes SameSame `1.15.0`. The current application provides a
 report-only CLI and an optional desktop review interface with explicit,
 journaled quarantine/recycle actions and a transcoding queue. There is no
 permanent-delete command, and duplicate review cannot delete at all; the one
@@ -227,6 +227,12 @@ Similar image matches can survive resizing, JPEG recompression, and conversion
 between supported formats. They remain review candidates: heavy crops, arbitrary
 rotation, overlays, or major edits may not match reliably. Animated GIFs and
 multi-page TIFF files are currently represented by their first decoded frame/page.
+
+90-degree rotation and mirroring are detected by default (`--image-orientations
+full`). On a very large library, `--image-orientations canonical` fingerprints
+and compares faster by skipping that detection - only exact-orientation
+duplicates match. Switching modes needs `--refresh-images` to apply to files
+already in the cache.
 
 Similar audio matches use Chromaprint and can survive codec, bitrate, container,
 and moderate volume changes. They remain manual review candidates; substantial

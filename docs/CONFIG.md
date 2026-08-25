@@ -9,7 +9,7 @@ SameSame reads settings from three places, in this order:
 CLI flags always win over the config file. This means you can keep a stable
 project config and override only one value for a specific run.
 
-This page documents the scanner configuration available in SameSame `1.14.0`.
+This page documents the scanner configuration available in SameSame `1.15.0`.
 Desktop UI state, quarantine location, review decisions, and operation history
 are managed by the GUI and its journal rather than scanner config keys. Anime
 transcoding settings are not scanner configuration keys; use the independent
@@ -108,7 +108,8 @@ For readability, these nested sections are also supported:
   },
   "images": {
     "skip": false,
-    "max_candidates": 4000
+    "max_candidates": 4000,
+    "orientations": "full"
   },
   "audio": {
     "skip": false,
@@ -245,6 +246,7 @@ $env:LMSTUDIO_MODEL = "qwen2.5-7b-instruct"
 | `refresh_audio` | `false` | Recompute audio durations and fingerprints for this run. |
 | `refresh_names` | `false` | Recompute normalized names for this run. |
 | `max_image_candidates` | `4000` | Tile size for the batched image comparison, not a selectivity filter (A-18): every image is compared against every other, in numpy-vectorized tiles of this many images per side, so memory stays bounded on large libraries. Lower it only to reduce peak memory on a constrained machine. |
+| `image_orientations` | `full` | `full` detects rotated/mirrored image duplicates (A-15). `canonical` skips generating and comparing the other 7 dihedral views to fingerprint and compare faster - profiled at ~22% of per-image fingerprinting time and a larger share of the comparison stage, since both scale with orientation count - at the cost of missing rotated/mirrored duplicates. Cached fingerprints are reused regardless of which mode produced them; switching modes needs `--refresh-images` to apply to already-cached files. |
 | `max_video_duration_ratio` | `1.5` | Reject a video candidate pair before content comparison when the longer file is more than this many times the shorter file's duration; finite, `> 1`. |
 | `max_video_duration_delta` | `900` | Reject a video candidate pair before content comparison when durations differ by more than this many seconds; finite, `>= 0`. |
 | `ffmpeg` | `ffmpeg` | ffmpeg executable path or name. |

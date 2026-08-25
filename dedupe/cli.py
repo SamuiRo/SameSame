@@ -52,6 +52,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # (A-18): every image is compared against every other, in tiles this
     # large per side, so memory stays bounded on large libraries.
     "max_image_candidates": 4000,
+    # "full" detects rotated/mirrored duplicates (A-15); "canonical" skips
+    # that to fingerprint and compare faster - see IMAGE_ORIENTATION_MODES.
+    "image_orientations": "full",
     "max_video_duration_ratio": DEFAULT_MAX_DURATION_RATIO,
     "max_video_duration_delta": DEFAULT_MAX_DURATION_DELTA,
     "inspect_cache": False,
@@ -87,6 +90,7 @@ class Config:
     refresh_audio: bool
     refresh_names: bool
     max_image_candidates: int
+    image_orientations: str
     max_video_duration_ratio: float
     max_video_duration_delta: float
     inspect_cache: bool
@@ -167,6 +171,8 @@ def _flatten_config(config: dict[str, Any]) -> dict[str, Any]:
                         assign("image_threshold", nested_value, source)
                     elif nested in {"max_candidates", "max_image_candidates"}:
                         assign("max_image_candidates", nested_value, source)
+                    elif nested in {"orientations", "image_orientations"}:
+                        assign("image_orientations", nested_value, source)
                     else:
                         assign(f"images_{nested}", nested_value, source)
             elif canonical == "audio":
@@ -340,7 +346,17 @@ def parse_args(argv: list[str] | None = None) -> Config:
         "--max-image-candidates",
         type=int,
         default=None,
-        help="Use fingerprint blocking when there are more image candidates than this.",
+        help="Tile size (per side) for the batched image comparison; does not filter which pairs are compared.",
+    )
+    parser.add_argument(
+        "--image-orientations",
+        choices=["full", "canonical"],
+        default=None,
+        help=(
+            "'full' (default) detects rotated/mirrored image duplicates. 'canonical' skips that to "
+            "fingerprint and compare faster. Switching modes needs --refresh-images to apply to "
+            "already-cached files."
+        ),
     )
     parser.add_argument(
         "--max-video-duration-ratio",
@@ -400,6 +416,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
         raise SystemExit("name_provider must be one of: auto, anthropic, lmstudio, none")
     if merged["log_level"] not in {"DEBUG", "INFO", "WARNING", "ERROR"}:
         raise SystemExit("log_level must be one of: DEBUG, INFO, WARNING, ERROR")
+    if merged["image_orientations"] not in {"full", "canonical"}:
+        raise SystemExit("image_orientations must be one of: full, canonical")
 
     try:
         max_video_duration_ratio = float(merged["max_video_duration_ratio"])
@@ -439,6 +457,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
         refresh_audio=bool(merged["refresh_audio"]),
         refresh_names=bool(merged["refresh_names"]),
         max_image_candidates=max(2, int(merged["max_image_candidates"])),
+        image_orientations=str(merged["image_orientations"]),
         max_video_duration_ratio=max_video_duration_ratio,
         max_video_duration_delta=max_video_duration_delta,
         inspect_cache=bool(merged["inspect_cache"]),
