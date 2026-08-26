@@ -9,7 +9,7 @@ SameSame reads settings from three places, in this order:
 CLI flags always win over the config file. This means you can keep a stable
 project config and override only one value for a specific run.
 
-This page documents the scanner configuration available in SameSame `1.15.1`.
+This page documents the scanner configuration available in SameSame `1.16.0`.
 Desktop UI state, quarantine location, review decisions, and operation history
 are managed by the GUI and its journal rather than scanner config keys. Anime
 transcoding settings are not scanner configuration keys; use the independent
@@ -48,7 +48,7 @@ python dedupe.py --config samesame.json
   "cache": ".cache/samesame.sqlite3",
   "extensions": [".mkv", ".mp4", ".jpg", ".jpeg", ".png", ".webp", ".mp3", ".flac"],
   "video_threshold": 20,
-  "image_threshold": 60,
+  "image_threshold": 65,
   "audio_threshold": 60,
   "folder_threshold": 50,
   "name_threshold": 92,
@@ -89,7 +89,7 @@ For readability, these nested sections are also supported:
   },
   "matching": {
     "video": 20,
-    "image": 60,
+    "image": 65,
     "audio": 60,
     "folder": 50,
     "name": 92
@@ -108,7 +108,7 @@ For readability, these nested sections are also supported:
   },
   "images": {
     "skip": false,
-    "max_candidates": 4000,
+    "max_candidates": 512,
     "orientations": "full"
   },
   "audio": {
@@ -229,7 +229,7 @@ $env:LMSTUDIO_MODEL = "qwen2.5-7b-instruct"
 | `cache` | `.dedupe_cache.sqlite3` | SQLite cache path. |
 | `extensions` | common video, image, and audio extensions | File extensions to scan; a custom list replaces the defaults. |
 | `video_threshold` | `20` | Minimum sequence-aligned video fingerprint match confidence; finite `0`–`100`. Calibrated scale: `0` = indistinguishable from unrelated content, `100` = identical (F-24) — not a naive "percent similar." See `docs/THRESHOLDS.md`. |
-| `image_threshold` | `60` | Minimum perceptual image match confidence; finite `0`–`100`. Same calibrated scale as `video_threshold`. |
+| `image_threshold` | `65` | Minimum perceptual image match confidence; finite `0`–`100`. Same calibrated scale as `video_threshold`. The score is quantised: a perceptual hash always sets ~32 of its 64 bits, so the distance between any two is even and the score can only be `100 - 3.125*d` for even `d` - 100, 93.75, 87.5, 81.25, 75, 68.75, 62.5. **Any threshold between two of those steps behaves identically**, so `65` and `68` are the same setting. Raised from `60` in `1.16.0` (A-37): on a real 54,100-image library the 62.5 band that `60` admitted was 38% of all matches, with a median independent pixel correlation of 0.324 against 0.167 for random unrelated pairs - it also chained 22% of the library into a single 11,984-file cluster. |
 | `audio_threshold` | `60` | Minimum Chromaprint audio match confidence; finite `0`–`100`. Same calibrated scale as `video_threshold`. |
 | `folder_threshold` | `50` | Minimum folder Jaccard similarity percent; finite `0`–`100`. Applies to both the directory-level comparison (default) and the collection-root roll-up (F-16). |
 | `name_threshold` | `92` | Minimum fuzzy name hint similarity percent; finite `0`–`100`. |

@@ -71,6 +71,25 @@ than three separate pairwise cases. Selecting a result loads its evidence and
 candidates into the comparison panel. Folder and name-only results are review
 hints and never enable file mutation.
 
+**Exact duplicates** is the exception to "one cluster per result": it lists
+every byte-identical group the scan found, including groups whose files are
+*also* perceptually similar to something else and therefore appear again
+inside a larger image or video cluster. Those two views of the same file are
+both true, and listing exact groups separately is what makes them reachable -
+clustering is single-linkage over all evidence, so on a large library most
+exact groups otherwise vanish inside a bigger cluster (A-37).
+
+**Quarantine all exact duplicates**, below the result list, acts on every one
+of those groups in a single confirmed pass. It keeps one copy of each group -
+the shallowest path, then the shortest, then alphabetically, so the copy
+nearest the collection root survives and a `name (1).png` beside a `name.png`
+loses - and moves the rest to quarantine. Nothing is lost: every file it moves
+is byte-identical to one that stays. The confirmation names the group count,
+the file count and the space it frees; every file is revalidated against its
+scan identity before it moves, and the whole operation is journalled and
+restorable like any other. Emptying the quarantine afterwards is the separate,
+separately confirmed purge.
+
 ### Comparison and playback
 
 | Control | Purpose |

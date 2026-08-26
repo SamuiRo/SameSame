@@ -1,6 +1,6 @@
 # Usage Guide
 
-This guide describes SameSame `1.15.1`. The current application provides a
+This guide describes SameSame `1.16.0`. The current application provides a
 report-only CLI and an optional desktop review interface with explicit,
 journaled quarantine/recycle actions and a transcoding queue. There is no
 permanent-delete command, and duplicate review cannot delete at all; the one
@@ -235,6 +235,17 @@ duplicates match. Switching modes needs `--refresh-images` to apply to files
 already in the cache; until you do, the cache holds both kinds at once and a
 rotated duplicate is only found when at least one side of the pair still has
 its rotation views. The scan warns when it sees a mixed cache.
+
+The default `image_threshold` is `65`. The score is quantised - a perceptual
+hash always sets about 32 of its 64 bits, so the distance between two of them
+is always even and the score can only be `100 - 3.125*d` for even `d`: 100,
+93.75, 87.5, 81.25, 75, 68.75, 62.5. Any threshold between two of those steps
+is the same setting, so `65` and `68` behave identically. `60` is one step
+lower and admits the 62.5 band, which on a real 54,100-image library was 38%
+of all matches and could not be told apart from unrelated pairs by an
+independent measure; it also chained 22% of the library into one cluster
+(A-37). Lower it below `65` only if you would rather sift false positives than
+miss a heavily edited duplicate.
 
 `--max-image-candidates` sets the comparison tile size and is a memory knob,
 not a speed knob - raising it makes the scan slower, not faster (see

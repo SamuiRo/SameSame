@@ -44,7 +44,14 @@ from .compression_tab import CompressionTab
 from .consolidation_tab import ConsolidationTab
 from .journal_dialog import JournalDialog
 from .preview import ComparisonWidget
-from .result_items import CATEGORY_LABELS, ReviewItem, build_review_items, category_counts
+from .result_items import (
+    CATEGORY_LABELS,
+    ExactDuplicatePlan,
+    ReviewItem,
+    build_review_items,
+    category_counts,
+    plan_exact_duplicate_quarantine,
+)
 from .transcode_dialog import TranscodeDialog
 from .worker import ActionJob, ActionWorker, ScanWorker
 
@@ -62,10 +69,17 @@ from .worker import ActionJob, ActionWorker, ScanWorker
 #    this constant at the time; a 1.9.0/1.9.1 profile therefore restored
 #    image=80 and audio=88, the latter measured as missing 16 of 20 confirmed
 #    duplicate pairs (A-17).
+# 4: image_threshold 60 -> 65 (1.16.0, A-37). A phash always sets ~32 of its
+#    64 bits, so the distance between two of them is always even and the score
+#    can only land on 100 - 3.125*d for even d. 60 admitted one band more than
+#    65 does - 62.5 - and on a real 54,100-image library that band was 38% of
+#    all matches with a median independent correlation of 0.324, against 0.167
+#    for random unrelated pairs. It also chained 22% of the library into one
+#    11,984-file cluster.
 #
 # `tests/test_gui.py` pins the shipped defaults against this number, so
 # changing a default without bumping it fails the suite rather than shipping.
-SETTINGS_SCHEMA_VERSION = 3
+SETTINGS_SCHEMA_VERSION = 4
 
 
 class MainWindow(QMainWindow):
@@ -79,6 +93,7 @@ class MainWindow(QMainWindow):
         self._action_thread: QThread | None = None
         self._action_worker: ActionWorker | None = None
         self._result: ScanResult | None = None
+        self._exact_plans: list[ExactDuplicatePlan] = []
         self._records_by_path: dict[str, FileRecord] = {}
         self._items: list[ReviewItem] = []
         self._last_report_path: Path | None = None
@@ -265,6 +280,19 @@ class MainWindow(QMainWindow):
         self.result_summary = QLabel("No scan results")
         self.result_summary.setWordWrap(True)
         layout.addWidget(self.result_summary)
+        # Byte-identical copies are the one category where the keeper choice
+        # carries no risk of losing content, and the one that scales worst
+        # through the per-cluster flow: a real library produced 1,354 exact
+        # groups, which is 1,354 select-and-confirm rounds (A-37). This does
+        # all of them in one confirmed, journalled pass.
+        self.quarantine_exact_button = QPushButton("Quarantine all exact duplicates")
+        self.quarantine_exact_button.setToolTip(
+            "Move every redundant byte-identical copy to quarantine, keeping one copy of each group in place. "
+            "Reversible from the operation journal."
+        )
+        self.quarantine_exact_button.clicked.connect(self._request_quarantine_all_exact)
+        self.quarantine_exact_button.setEnabled(False)
+        layout.addWidget(self.quarantine_exact_button)
         self._update_category_filter([])
         return panel
 
@@ -443,6 +471,7 @@ class MainWindow(QMainWindow):
         options = self._scan_options()
         self._active_ffprobe = options.ffprobe
         self._result = None
+        self._exact_plans = []
         self._records_by_path = {}
         self._items = []
         self._last_report_path = None
@@ -570,6 +599,7 @@ class MainWindow(QMainWindow):
             self._scan_failed("Scanner returned an unexpected result")
             return
         self._result = result
+        self._exact_plans = plan_exact_duplicate_quarantine(result.report)
         self._records_by_path = {record.path_key: record for record in result.records}
         self._items = build_review_items(result.report)
         self._load_review_decisions()
@@ -628,6 +658,7 @@ class MainWindow(QMainWindow):
         self.cancel_button.setEnabled(scanning)
         self.export_button.setEnabled(not scanning and self._result is not None)
         self.open_report_button.setEnabled(not scanning and self._last_report_path is not None)
+        self.quarantine_exact_button.setEnabled(not any_busy and bool(self._exact_plans))
         self.journal_button.setEnabled(
             not scanning and not action_busy and not transcode_busy and not consolidation_busy
         )
@@ -763,6 +794,75 @@ class MainWindow(QMainWindow):
         if not self._confirm_action(action_value, [record.path]):
             return
         self._start_action_worker([ActionJob(record, action_value, self._group_id(item))])
+
+    def _request_quarantine_all_exact(self) -> None:
+        if (
+            self._scan_thread is not None
+            or self._action_thread is not None
+            or self._transcode_is_busy()
+            or self.consolidation_tab.is_busy
+        ):
+            return
+        plans = self._exact_plans
+        if not plans:
+            QMessageBox.information(
+                self, "No exact duplicates", "This scan found no byte-identical copies to quarantine."
+            )
+            return
+
+        # Resolve every path to a scanned record before asking, so the count
+        # in the dialog is the count that will actually be attempted rather
+        # than an optimistic one that quietly shrinks during execution.
+        jobs: list[ActionJob] = []
+        reclaimed = 0
+        groups = 0
+        missing = 0
+        for plan in plans:
+            keeper = self._record_for_path(plan.keeper)
+            removals = [record for path in plan.removals for record in [self._record_for_path(path)] if record]
+            missing += len(plan.removals) - len(removals)
+            if keeper is None or not removals:
+                continue
+            groups += 1
+            reclaimed += plan.size * len(removals)
+            group_id = f"exact-bulk:{plan.keeper}"
+            jobs.append(ActionJob(keeper, FileAction.KEEP, group_id))
+            jobs.extend(ActionJob(record, FileAction.QUARANTINE, group_id, keeper) for record in removals)
+        if not jobs:
+            QMessageBox.information(
+                self, "Nothing to quarantine", "The exact duplicates from this scan are no longer available."
+            )
+            return
+
+        removal_count = sum(1 for job in jobs if job.action is FileAction.QUARANTINE)
+        skipped = f"\n\n{missing} file(s) are no longer available and will be skipped." if missing else ""
+        answer = QMessageBox.question(
+            self,
+            "Confirm bulk quarantine",
+            f"Move {removal_count} redundant file(s) from {groups} byte-identical group(s) to quarantine?\n\n"
+            "One copy of every group stays in place, so no content is lost - these are exact copies of a file "
+            f"that remains.\nThis frees about {self._format_size(reclaimed)}.\n\n"
+            "Every file is revalidated against its scan identity before it moves, and the whole operation is "
+            f"journalled and restorable.{skipped}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._append_log(
+            f"Bulk quarantine: {removal_count} redundant copies from {groups} exact groups "
+            f"({self._format_size(reclaimed)})"
+        )
+        self._start_action_worker(jobs)
+
+    @staticmethod
+    def _format_size(size: int) -> str:
+        value = float(size)
+        for unit in ("B", "KB", "MB", "GB"):
+            if value < 1024 or unit == "GB":
+                return f"{value:,.1f} {unit}" if unit != "B" else f"{int(value):,} B"
+            value /= 1024
+        return f"{value:,.1f} GB"
 
     def _request_batch_quarantine(self, paths_value: object, keep_path: str) -> None:
         if (

@@ -961,3 +961,113 @@ Verified after the fixes:
 | `ruff check .` / `ruff format --check .` | clean |
 | `mypy dedupe` | 32 errors - exactly the recorded baseline, no new errors |
 | Full cold-cache scan of the 54,121-file image library | 63,853 image matches, unchanged |
+
+
+## A-37 — The default threshold admitted a noise band, and it hid the exact duplicates
+
+Found reviewing image dedup quality on the same real 54,100-image library
+after A-36. Two separate defects, one shared cause: nothing had ever measured
+what the *shipped* configuration actually produces on a library this size.
+
+### The score can only take seven values, and the default admitted one too many
+
+`phash` sets a bit per DCT coefficient above the median of the other 63, so
+every hash has essentially exactly 32 of its 64 bits set. The Hamming distance
+between two equal-weight hashes is always even. The calibrated score is
+therefore not continuous at all - it can only be `100 - 3.125*d` for even `d`:
+
+    100, 93.75, 87.5, 81.25, 75, 68.75, 62.5
+
+Confirmed on the real library: all 63,853 matches take exactly those seven
+values and no others. A consequence worth knowing on its own is that any
+threshold between two steps is the same matcher - `63`, `65` and `68` are one
+setting, not three.
+
+The shipped `image_threshold = 60` admitted one band that `65` does not: 62.5,
+`d = 12`. Scored with a measure sharing no code with the matcher - Pearson
+correlation of contrast-normalised 64x64 grayscale pixels, maximised over the
+8 dihedral views - against a 300-pair random control:
+
+| reported | n | median r | r < 0.5 |
+| --- | --- | --- | --- |
+| 100.00 | 80 | 1.000 | 0% |
+| 93.75 | 80 | 0.991 | 0% |
+| 87.50 | 80 | 0.971 | 0% |
+| 81.25 | 80 | 0.939 | 0% |
+| 75.00 | 80 | 0.924 | 2.5% |
+| 68.75 | 80 | 0.813 | 27.5% |
+| **62.50** | 80 | **0.324** | **85%** |
+| *random unrelated control* | 300 | *0.167* | *100%* |
+
+The control's 95th percentile is **0.333**. The 62.5 band's *median* is below
+it - the band is not a weak signal, it is indistinguishable from noise. It was
+also **24,413 of 63,853 matches, 38% of everything the scan reported**.
+
+The damage is not merely a long list to sift. Content clustering is
+single-linkage, so a noise band chains: at the shipped default one cluster
+held **11,984 files - 22% of the entire library** - at "62.5% min confidence".
+That is not a duplicate group anyone can review or act on.
+
+| threshold | matches | largest cluster | files implicated |
+| --- | --- | --- | --- |
+| 60 (shipped) | 63,853 | **11,984** | 36,058 |
+| **65** | 39,440 | **159** | 23,933 |
+| 70 | 34,289 | 29 | 21,912 |
+
+`image_threshold` is now `65`, and `SETTINGS_SCHEMA_VERSION` moves `3` -> `4`
+so a returning GUI profile does not silently restore `60` - the A-17 guard
+doing its job, and `tests/test_gui.py` failed exactly as designed when the
+default changed without it.
+
+### The category that exists for risk-free deletions was hiding 80% of them
+
+`build_content_clusters` is single-linkage over *all* evidence at once, so an
+exact group whose files are also perceptually similar to a third file is
+absorbed into that larger cluster and its level becomes `image`. That is right
+for clustering - the files really are all related - but it meant the GUI's
+"Exact duplicates" category showed only the exact groups that happened not to
+touch anything else: **265 of 1,354 on the real library**. The other 1,089
+were reachable only by finding them inside an image cluster, some inside the
+11,984-file one.
+
+Byte-identical copies are the one category where choosing a keeper cannot lose
+content, so they are the obvious first thing to clear - and they were the
+hardest to get at. `build_review_items` now lists every exact group from the
+report directly, in addition to the clusters. A file legitimately appears in
+both: it is both a byte-identical copy of one file and a near-duplicate of
+others.
+
+Acting on them was the other half. The existing batch quarantine is
+per-cluster with a hand-picked keeper - 1,354 select-and-confirm rounds. A
+**Quarantine all exact duplicates** button now does all of them in one
+confirmed pass, over a plan computed by a pure function
+(`plan_exact_duplicate_quarantine`) so the arithmetic in the confirmation
+dialog and the jobs that run are the same list. The keeper rule is shallowest
+path, then shortest, then lexicographic: total and order-independent, so two
+runs never disagree about which copy survives, and on the real library it
+keeps `name.png` over `name (1).png` without that being a special case. On the
+real report: **1,354 groups, 1,592 redundant files, 1.49 GB**, with keepers
+and removals verified disjoint.
+
+Nothing about the safety model changes - quarantine, not deletion; every file
+revalidated against its scan identity before it moves; the whole operation
+journalled and restorable; freeing the space is still the separate confirmed
+purge.
+
+### Tests
+
+Four new tests, each confirmed to fail against the unfixed code first: an
+exact group absorbed into an image cluster is still listed, the keeper is the
+shallowest path and the plan covers every group, the keeper choice is
+order-independent, and a one-file group yields no removals. The GUI wiring
+itself was verified headlessly outside the suite - A-28 is still open, and an
+extra `MainWindow` at the wrong position in the suite aborts the whole run.
+
+### The lesson, again
+
+A-36 found a default that had never been measured on a real library. A-37
+found two more things the same gap was hiding, in the same place, and neither
+needed new code to detect - only running the shipped configuration on a real
+library and looking at what came out. Match *counts* were being checked;
+whether the matches were any good, and whether the results were usable, were
+not.

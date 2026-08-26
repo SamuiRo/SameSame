@@ -8,7 +8,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from dedupe.gui.result_items import CATEGORY_LABELS, build_review_items, category_counts
+from dedupe.gui.result_items import (
+    CATEGORY_LABELS,
+    build_review_items,
+    category_counts,
+    exact_duplicate_keeper,
+    plan_exact_duplicate_quarantine,
+)
 from dedupe.models import (
     AudioMatch,
     DedupeReport,
@@ -43,6 +49,73 @@ class ResultItemTests(unittest.TestCase):
         self.assertEqual({item.category for item in items}, set(CATEGORY_LABELS) - {"all"})
         self.assertEqual(counts["all"], 7)
         self.assertTrue(all(counts[category] == 1 for category in CATEGORY_LABELS if category != "all"))
+
+
+class ExactDuplicateBulkTests(unittest.TestCase):
+    """A-37: exact groups are the one category where a keeper choice risks
+    nothing - the copies are byte-identical - and the one that scaled worst,
+    because content clustering hid most of them and the only bulk action was
+    per-cluster.
+    """
+
+    def _report(self) -> DedupeReport:
+        # "a" is byte-identical to "b", and "b" is *also* perceptually similar
+        # to "c". Single-linkage clustering therefore swallows the exact pair
+        # into a three-file image cluster, which is exactly how a real library
+        # lost 1,089 of its 1,354 exact groups from the "exact" category.
+        return DedupeReport(
+            scanned_files=4,
+            exact_duplicates=[
+                ExactDuplicateGroup("hash-1", ["/lib/sub/a.png", "/lib/b.png"], 1000),
+                ExactDuplicateGroup("hash-2", ["/lib/x/y/d.png", "/lib/e.png"], 500),
+            ],
+            video_matches=[],
+            image_matches=[ImageMatch("/lib/b.png", "/lib/c.png", 90.0)],
+            audio_matches=[],
+            folder_pairs=[],
+            name_hints=[],
+        )
+
+    def test_an_exact_group_absorbed_into_an_image_cluster_is_still_listed(self) -> None:
+        items = build_review_items(self._report())
+        exact_paths = {item.paths for item in items if item.category == "exact"}
+        self.assertIn(("/lib/b.png", "/lib/sub/a.png"), exact_paths)
+        self.assertIn(("/lib/e.png", "/lib/x/y/d.png"), exact_paths)
+        self.assertEqual(category_counts(items)["exact"], 2)
+        # The perceptual cluster that absorbed it is still reported too - the
+        # file is genuinely both things - but it is no longer the only way in.
+        image_items = [item for item in items if item.category == "image"]
+        self.assertEqual(len(image_items), 1)
+        self.assertEqual(len(image_items[0].paths), 3)
+
+    def test_the_keeper_is_the_shallowest_path_and_the_plan_covers_every_group(self) -> None:
+        plans = plan_exact_duplicate_quarantine(self._report())
+        self.assertEqual([plan.keeper for plan in plans], ["/lib/b.png", "/lib/e.png"])
+        self.assertEqual([plan.removals for plan in plans], [("/lib/sub/a.png",), ("/lib/x/y/d.png",)])
+        self.assertEqual(sum(plan.reclaimed_bytes for plan in plans), 1500)
+
+    def test_the_keeper_choice_is_total_and_order_independent(self) -> None:
+        # Whatever order the scan happened to walk the directories in, the
+        # same copy has to survive, or two runs disagree about which file to
+        # delete.
+        paths = ["/lib/b/x.png", "/lib/a/x.png", "/lib/x.png", "/lib/a/b/x.png"]
+        for rotation in range(len(paths)):
+            rotated = paths[rotation:] + paths[:rotation]
+            with self.subTest(first=rotated[0]):
+                self.assertEqual(exact_duplicate_keeper(rotated), "/lib/x.png")
+
+    def test_a_single_file_group_yields_no_removals(self) -> None:
+        report = DedupeReport(
+            scanned_files=1,
+            exact_duplicates=[ExactDuplicateGroup("hash", ["/lib/only.png"], 10)],
+            video_matches=[],
+            image_matches=[],
+            audio_matches=[],
+            folder_pairs=[],
+            name_hints=[],
+        )
+        self.assertEqual(plan_exact_duplicate_quarantine(report), [])
+        self.assertEqual(category_counts(build_review_items(report))["exact"], 0)
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 GUI extra is not installed")
@@ -113,6 +186,13 @@ class GuiSmokeTests(unittest.TestCase):
             3: {
                 "video_threshold": 20.0,
                 "image_threshold": 60.0,
+                "audio_threshold": 60.0,
+                "folder_threshold": 50.0,
+                "name_threshold": 92.0,
+            },
+            4: {
+                "video_threshold": 20.0,
+                "image_threshold": 65.0,
                 "audio_threshold": 60.0,
                 "folder_threshold": 50.0,
                 "name_threshold": 92.0,

@@ -6,7 +6,7 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.15.1`. Stages A through E, and Stage F
+The current package version is `1.16.0`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -273,7 +273,7 @@ quarantine-first action.
 
 ## Verification Completed
 
-**Current, as of `1.15.1`:** the suite is **191 tests plus 34 subtests**, all
+**Current, as of `1.16.0`:** the suite is **195 tests plus 38 subtests**, all
 passing under both `unittest` and pytest in the project-local Python 3.11.9
 virtual environment, with `ruff check` / `ruff format --check` clean and a
 **32-error** `mypy` baseline (one fewer than the previously documented 33;
@@ -358,6 +358,25 @@ counts above — not any number inside the list — as current (A-25).
   synthetic 54,000-fingerprint benchmark (917 MB peak, 368 s for an
   exhaustive comparison) this real-library run confirms. A-36 re-ran the same
   library against `1.15.1` and reproduced the 63,853 matches exactly.
+- Image matching quality was measured end to end for the first time in
+  `1.16.0` (A-37), against an independent pixel-correlation score with a
+  random-pair control. Detection is strong from `75` up (median independent
+  correlation 0.924-1.000) and mixed at `68.75`, but the `62.5` band the old
+  `image_threshold = 60` admitted had a median of **0.324** against **0.333**
+  for the 95th percentile of random unrelated pairs - indistinguishable from
+  noise, and 38% of all reported matches. Because a phash always sets ~32 of
+  64 bits, scores can only be `100 - 3.125*d` for even `d`, so that band is
+  removed simply by moving the default to `65`; on the real library the
+  largest cluster falls from **11,984 files (22% of the library) to 159**.
+  `SETTINGS_SCHEMA_VERSION` moves `3` -> `4` accordingly (A-17).
+- Every byte-identical group is now listed under "Exact duplicates" in the
+  GUI, not only those that no perceptual match absorbed - single-linkage
+  clustering had been hiding **1,089 of 1,354** exact groups on the real
+  library (A-37). **Quarantine all exact duplicates** clears all of them in
+  one confirmed, journalled pass, keeping the shallowest-path copy of each
+  group: on the real library **1,354 groups, 1,592 files, 1.49 GB**, with no
+  content lost because every file it moves is byte-identical to one that
+  stays.
 - `--image-orientations canonical` (`1.15.0`) trades detecting rotated/
   mirrored image duplicates (A-15) for speed: profiled at ~22% of per-image
   fingerprinting time and a larger share of the comparison stage, since both
@@ -472,7 +491,7 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.15.1`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.16.0`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:

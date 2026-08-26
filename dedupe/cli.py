@@ -31,8 +31,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # against 720 transformed duplicates (A-06), and audio_threshold from the
     # real audio tracks of confirmed duplicate videos (A-14). All three are
     # now measured rather than carried over from the pre-F-24 scale.
+    # image_threshold was raised 60 -> 65 in 1.16.0 (A-37). Because a phash
+    # always sets ~32 of its 64 bits, the Hamming distance between any two of
+    # them is even, so the calibrated score can only take the values
+    # 100 - 3.125*d for even d: 100, 93.75, 87.5, 81.25, 75, 68.75, 62.5. A
+    # threshold of 60 admitted exactly one band the old one did not justify -
+    # 62.5, d=12 - and on a real 54,100-image library that band was 38% of
+    # all matches and statistically indistinguishable from unrelated pairs.
+    # Any threshold in (62.5, 68.75] is the same matcher; 65 is the midpoint.
     "video_threshold": 20.0,
-    "image_threshold": 60.0,
+    "image_threshold": 65.0,
     "audio_threshold": 60.0,
     "folder_threshold": 50.0,
     "name_threshold": 92.0,
