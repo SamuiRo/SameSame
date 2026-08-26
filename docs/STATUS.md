@@ -369,6 +369,21 @@ counts above — not any number inside the list — as current (A-25).
   removed simply by moving the default to `65`; on the real library the
   largest cluster falls from **11,984 files (22% of the library) to 159**.
   `SETTINGS_SCHEMA_VERSION` moves `3` -> `4` accordingly (A-17).
+- Both `1.16.0` changes were re-validated end to end on the same real
+  library with the shipped defaults, warm cache (A-37):
+
+  | | `1.15.0` defaults | `1.16.0` defaults |
+  | --- | --- | --- |
+  | Image matches | 63,853 | **39,440** |
+  | Largest content cluster | **11,984 files** | **159 files** |
+  | Content clusters | 6,778 | 7,785 |
+  | Files implicated as duplicates | 36,058 | 24,913 |
+  | Exact groups reachable in the GUI | 265 of 1,354 | **1,354 of 1,354** |
+  | Bulk exact-duplicate plan | not available | 1,354 groups, 1,592 files, 1.49 GB |
+  | Image stage, warm | - | 91.1 s, 16.5 MB numpy peak |
+
+  The reported scores now span only 100, 93.75, 87.5, 81.25, 75 and 68.75 -
+  the 62.5 band is gone entirely, and clusters separate instead of chaining.
 - Every byte-identical group is now listed under "Exact duplicates" in the
   GUI, not only those that no perceptual match absorbed - single-linkage
   clustering had been hiding **1,089 of 1,354** exact groups on the real
