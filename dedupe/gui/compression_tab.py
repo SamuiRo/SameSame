@@ -37,6 +37,7 @@ from ..transcode.models import MediaInfo, OutputLayout
 from ..transcode.presets import PRESETS, TranscodePreset
 from ..transcode.probe import ProbeError, probe_media
 from ..transcode.source_cleanup import cleanup_frees_source_space
+from .transcode_dialog import add_builtin_presets
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,8 +278,8 @@ class CompressionTab(QWidget):
         preset_group = QGroupBox("Compression settings")
         preset_layout = QVBoxLayout(preset_group)
         self.preset_combo = QComboBox()
-        for preset in PRESETS.values():
-            self.preset_combo.addItem(f"{preset.name} — {preset.description}", preset.preset_id)
+        add_builtin_presets(self.preset_combo)
+        self.preset_combo.insertSeparator(self.preset_combo.count())
         self.preset_combo.addItem("Custom settings…", "custom")
         self.preset_combo.setCurrentIndex(self.preset_combo.findData("anime_x265_balanced"))
         self.preset_combo.currentIndexChanged.connect(self._preset_changed)

@@ -413,6 +413,20 @@ class GuiSmokeTests(unittest.TestCase):
                 window.close()
                 self.application.processEvents()
 
+    def test_builtin_presets_are_grouped_by_content_family(self) -> None:
+        from PySide6.QtWidgets import QComboBox
+
+        from dedupe.gui.transcode_dialog import add_builtin_presets
+        from dedupe.transcode.presets import PRESETS
+
+        combo = QComboBox()
+        add_builtin_presets(combo)
+        listed = [combo.itemData(index) for index in range(combo.count())]
+        # Separators carry no data: anime | film | video.
+        self.assertEqual([item for item in listed if item is not None], list(PRESETS))
+        self.assertEqual(listed.count(None), 2)
+        self.assertEqual(listed[listed.index(None) + 1], "film_x265_max")
+
     def test_compression_filters_and_custom_preset(self) -> None:
         from dedupe.gui.compression_tab import (
             CompressionVideo,

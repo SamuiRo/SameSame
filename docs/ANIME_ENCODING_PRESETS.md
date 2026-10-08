@@ -179,6 +179,8 @@ Implementation defaults:
 - in `1.6.1`, the dedicated video-compression tab can apply these presets to a
   checked folder batch or create a request-scoped custom preset without
   changing the four stable built-in preset IDs.
+- in `1.17.0`, live-action film and general video presets were added beside
+  these; see `FILM_ENCODING_PRESETS.md`. The anime presets are unchanged.
 
 ---
 

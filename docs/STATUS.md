@@ -1,12 +1,12 @@
 # Project Status and Roadmap
 
-Last updated: 2026-08-25
+Last updated: 2026-10-09
 
 This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.16.0`. Stages A through E, and Stage F
+The current package version is `1.17.0`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -273,11 +273,11 @@ quarantine-first action.
 
 ## Verification Completed
 
-**Current, as of `1.16.0`:** the suite is **195 tests plus 38 subtests**, all
+**Current, as of `1.17.0`:** the suite is **196 tests plus 38 subtests**, all
 passing under both `unittest` and pytest in the project-local Python 3.11.9
 virtual environment, with `ruff check` / `ruff format --check` clean and a
 **32-error** `mypy` baseline (one fewer than the previously documented 33;
-unrelated to this release).
+unrelated to these releases).
 
 The itemised list below describes what that coverage verifies. It was written
 at the `1.7.0` release and the individual entries still hold, but treat the
@@ -369,6 +369,15 @@ counts above — not any number inside the list — as current (A-25).
   removed simply by moving the default to `65`; on the real library the
   largest cluster falls from **11,984 files (22% of the library) to 159**.
   `SETTINGS_SCHEMA_VERSION` moves `3` -> `4` accordingly (A-17).
+- `1.17.0` adds eight live-action presets beside the unchanged anime ones:
+  six `film_*` (x265 max/balanced/heavy-grain, SVT-AV1 with grain
+  synthesis, AV1 and HEVC NVENC) and two `video_*` for phone, camera,
+  screen, and web video. All film presets stay 10-bit, NVENC included. Each
+  was run end to end through `samesame-transcode`. The same release fixes
+  the encoder capability check, whose 64x64 test frame is below current
+  NVENC's minimum size, so every NVENC preset (anime included) was reported
+  unavailable on an RTX 5070 Ti; it now probes 256x256. Specification:
+  `docs/FILM_ENCODING_PRESETS.md`.
 - Both `1.16.0` changes were re-validated end to end on the same real
   library with the shipped defaults, warm cache (A-37):
 
@@ -506,7 +515,7 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.16.0`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.17.0`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:

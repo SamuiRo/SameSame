@@ -1,6 +1,6 @@
 # SameSame
 
-SameSame `1.16.0` finds duplicate and similar media files through a command-line
+SameSame `1.17.0` finds duplicate and similar media files through a command-line
 scanner or an optional desktop review interface. It scans one or more folder
 trees recursively and writes reports for manual review.
 
@@ -342,7 +342,8 @@ selected review file.
 
 The implementation order, safety requirements, and complexity estimates are in
 the [Development roadmap](docs/ROADMAP.md). The exact initial encoding presets
-are specified in [Anime encoding presets](docs/ANIME_ENCODING_PRESETS.md).
+are specified in [Anime encoding presets](docs/ANIME_ENCODING_PRESETS.md) and
+[Film and video encoding presets](docs/FILM_ENCODING_PRESETS.md).
 
 ## Documentation
 
@@ -352,6 +353,7 @@ are specified in [Anime encoding presets](docs/ANIME_ENCODING_PRESETS.md).
 - [Threshold benchmarking](docs/THRESHOLDS.md)
 - [Development roadmap](docs/ROADMAP.md)
 - [Anime encoding preset specification](docs/ANIME_ENCODING_PRESETS.md)
+- [Film and video encoding preset specification](docs/FILM_ENCODING_PRESETS.md)
 - [Example config](docs/samesame.example.json)
 - [Project status and handoff](docs/STATUS.md)
 - [Project audit](docs/AUDIT.md)

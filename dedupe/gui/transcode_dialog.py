@@ -49,6 +49,16 @@ _CLEANUP_PAST_TENSE = {
 }
 
 
+def add_builtin_presets(combo: QComboBox) -> None:
+    """List the built-in presets, a separator between each content family."""
+    previous: str | None = None
+    for preset in PRESETS.values():
+        if previous is not None and preset.category != previous:
+            combo.insertSeparator(combo.count())
+        combo.addItem(f"{preset.name} — {preset.description}", preset.preset_id)
+        previous = preset.category
+
+
 class TranscodeDialog(QDialog):
     journal_changed = Signal()
     busy_changed = Signal(bool)
@@ -181,8 +191,7 @@ class TranscodeDialog(QDialog):
     def _build_ui(self) -> None:
         settings = QHBoxLayout()
         self.preset_combo = QComboBox()
-        for preset in PRESETS.values():
-            self.preset_combo.addItem(f"{preset.name} — {preset.description}", preset.preset_id)
+        add_builtin_presets(self.preset_combo)
         self.preset_combo.setCurrentIndex(self.preset_combo.findData("anime_x265_balanced"))
         self.preset_combo.currentIndexChanged.connect(self._check_capability)
         self.capability_label = QLabel("Checking encoder…")

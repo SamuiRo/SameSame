@@ -8,6 +8,9 @@ from .models import EncoderCapability
 from .presets import TranscodePreset
 from .probe import ProbeError, list_encoders
 
+#: Large enough for every hardware encoder's minimum, small enough to be instant.
+_PROBE_FRAME_SIZE = "256x256"
+
 
 def check_encoder_capability(
     preset: TranscodePreset,
@@ -47,7 +50,10 @@ def check_encoder_capability(
         "-f",
         "lavfi",
         "-i",
-        "color=c=black:s=64x64:r=1:d=0.1",
+        # Hardware encoders have a minimum frame size, and current NVENC
+        # rejects 64x64 outright ("Frame dimensions are less than the minimum
+        # supported value"), which made every working GPU look unavailable.
+        f"color=c=black:s={_PROBE_FRAME_SIZE}:r=1:d=0.1",
         *preset.video_args,
         "-frames:v",
         "1",

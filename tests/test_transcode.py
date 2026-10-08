@@ -48,7 +48,7 @@ def media(path: Path, *, size: int = 1000, duration: float = 60.0) -> MediaInfo:
 
 
 class PresetAndPlanTests(unittest.TestCase):
-    def test_all_four_presets_have_the_documented_encoder_settings(self) -> None:
+    def test_all_presets_have_the_documented_encoder_settings(self) -> None:
         self.assertEqual(
             set(PRESETS),
             {
@@ -56,8 +56,21 @@ class PresetAndPlanTests(unittest.TestCase):
                 "anime_x265_balanced",
                 "anime_av1_nvenc",
                 "anime_hevc_nvenc",
+                "film_x265_max",
+                "film_x265_balanced",
+                "film_x265_grain",
+                "film_svtav1",
+                "film_av1_nvenc",
+                "film_hevc_nvenc",
+                "video_x265_compact",
+                "video_hevc_nvenc_fast",
             },
         )
+        for preset_id, preset in PRESETS.items():
+            self.assertEqual(preset.preset_id, preset_id)
+            self.assertEqual(preset.category, preset_id.split("_", 1)[0])
+            self.assertEqual(preset.hardware, preset.encoder.endswith("_nvenc"))
+            self.assertEqual(preset.video_args[:2], ("-c:v", preset.encoder))
         self.assertIn(
             ("-crf", "20"),
             list(zip(PRESETS["anime_x265_max"].video_args[::2], PRESETS["anime_x265_max"].video_args[1::2])),
@@ -68,6 +81,12 @@ class PresetAndPlanTests(unittest.TestCase):
         )
         self.assertIn("fullres", PRESETS["anime_av1_nvenc"].video_args)
         self.assertEqual(PRESETS["anime_hevc_nvenc"].encoder, "hevc_nvenc")
+        # Live-action presets keep 10 bits everywhere, including NVENC, so
+        # skies and dark gradients do not band and 10-bit sources survive.
+        for preset_id in ("film_x265_max", "film_svtav1", "film_av1_nvenc", "film_hevc_nvenc"):
+            self.assertIn(PRESETS[preset_id].video_args[-1], {"yuv420p10le", "p010le"})
+        self.assertIn("film-grain=8", " ".join(PRESETS["film_svtav1"].video_args))
+        self.assertIn("grain", PRESETS["film_x265_grain"].video_args)
 
     def test_each_preset_is_included_verbatim_in_its_command(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

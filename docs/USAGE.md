@@ -1,6 +1,6 @@
 # Usage Guide
 
-This guide describes SameSame `1.16.0`. The current application provides a
+This guide describes SameSame `1.17.0`. The current application provides a
 report-only CLI and an optional desktop review interface with explicit,
 journaled quarantine/recycle actions and a transcoding queue. There is no
 permanent-delete command, and duplicate review cannot delete at all; the one
@@ -333,7 +333,8 @@ paths are free.
 The desktop interface includes a dedicated **Video compression** tab. Choose a
 folder to probe its supported videos recursively at any directory depth, then check individual files
 or use the extension, size, and duration filters to select a batch. The tab
-offers the four anime presets from `ANIME_ENCODING_PRESETS.md` plus custom
+offers anime presets (`ANIME_ENCODING_PRESETS.md`), film and general video
+presets (`FILM_ENCODING_PRESETS.md`), plus custom
 libx265, AV1 NVENC, and HEVC NVENC settings. An optional output directory can
 be selected before opening the queue.
 
@@ -366,6 +367,8 @@ Run a CPU encode or queue several inputs sequentially:
 samesame-transcode "D:\Anime\Episode 01.mkv" --preset anime_x265_balanced
 samesame-transcode "D:\Anime\01.mkv" "D:\Anime\02.mkv" `
   --preset anime_x265_max --output-dir "D:\Anime\Encoded"
+samesame-transcode "D:\Films\Movie.mkv" --preset film_x265_balanced
+samesame-transcode "D:\Phone\clip.mp4" --preset video_hevc_nvenc_fast
 ```
 
 The transcoder probes each input, writes a unique temporary MKV, encodes only
@@ -373,4 +376,5 @@ video, and copies audio, subtitles, chapters, metadata, and attachments. It
 then probes and decodes the result before assigning the final name. The source
 is always retained. Use `--dry-run` to inspect the planned command,
 `--json-output` for automation, and `--keep-temporary-on-failure` for debugging.
-The exact settings are in `docs/ANIME_ENCODING_PRESETS.md`.
+The exact settings are in `docs/ANIME_ENCODING_PRESETS.md` and
+`docs/FILM_ENCODING_PRESETS.md`.

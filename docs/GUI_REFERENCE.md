@@ -164,8 +164,9 @@ still fails when the queue starts.
 
 ### Compression settings
 
-The preset dropdown contains the four presets from
-`ANIME_ENCODING_PRESETS.md` and **Custom settings…**.
+The preset dropdown contains the built-in presets grouped by content, anime
+(`ANIME_ENCODING_PRESETS.md`), then film and general video
+(`FILM_ENCODING_PRESETS.md`), followed by **Custom settings…**.
 
 | Custom control | Purpose |
 | --- | --- |
