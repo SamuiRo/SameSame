@@ -6,7 +6,7 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.17.0`. Stages A through E, and Stage F
+The current package version is `1.18.0`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -273,7 +273,7 @@ quarantine-first action.
 
 ## Verification Completed
 
-**Current, as of `1.17.0`:** the suite is **196 tests plus 38 subtests**, all
+**Current, as of `1.18.0`:** the suite is **197 tests plus 38 subtests**, all
 passing under both `unittest` and pytest in the project-local Python 3.11.9
 virtual environment, with `ruff check` / `ruff format --check` clean and a
 **32-error** `mypy` baseline (one fewer than the previously documented 33;
@@ -378,6 +378,12 @@ counts above — not any number inside the list — as current (A-25).
   NVENC's minimum size, so every NVENC preset (anime included) was reported
   unavailable on an RTX 5070 Ti; it now probes 256x256. Specification:
   `docs/FILM_ENCODING_PRESETS.md`.
+- `1.18.0` adds four `game_*` presets for gameplay recordings (AV1 and HEVC
+  NVENC, x265, SVT-AV1; 10-bit, frame rate never forced, no grain
+  synthesis), each run end to end. Every preset now carries a plain-language
+  `usage` line, shown as a tooltip on each dropdown entry and on a round "?"
+  beside both preset dropdowns, and printed by `--list-presets`. Tooltips are
+  styled white app-wide.
 - Both `1.16.0` changes were re-validated end to end on the same real
   library with the shipped defaults, warm cache (A-37):
 
@@ -515,7 +521,7 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.17.0`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.18.0`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:

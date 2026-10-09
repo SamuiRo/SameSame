@@ -37,7 +37,7 @@ from ..transcode.models import MediaInfo, OutputLayout
 from ..transcode.presets import PRESETS, TranscodePreset
 from ..transcode.probe import ProbeError, probe_media
 from ..transcode.source_cleanup import cleanup_frees_source_space
-from .transcode_dialog import add_builtin_presets
+from .transcode_dialog import add_builtin_presets, preset_help_label
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,9 +281,17 @@ class CompressionTab(QWidget):
         add_builtin_presets(self.preset_combo)
         self.preset_combo.insertSeparator(self.preset_combo.count())
         self.preset_combo.addItem("Custom settings…", "custom")
+        self.preset_combo.setItemData(
+            self.preset_combo.count() - 1,
+            "Your own encoder, quality and speed, set in <b>Custom preset</b> below.",
+            Qt.ItemDataRole.ToolTipRole,
+        )
         self.preset_combo.setCurrentIndex(self.preset_combo.findData("anime_x265_balanced"))
         self.preset_combo.currentIndexChanged.connect(self._preset_changed)
-        preset_layout.addWidget(self.preset_combo)
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(self.preset_combo, 1)
+        preset_row.addWidget(preset_help_label(self.preset_combo))
+        preset_layout.addLayout(preset_row)
 
         self.custom_group = QGroupBox("Custom preset")
         custom_layout = QFormLayout(self.custom_group)

@@ -11,9 +11,11 @@ class TranscodePreset:
     video_args: tuple[str, ...]
     hardware: bool = False
     description: str = ""
-    #: Content family the preset is tuned for: "anime", "film" or "video".
-    #: Request-scoped custom presets are "custom".
+    #: Content family the preset is tuned for: "anime", "film", "game" or
+    #: "video". Request-scoped custom presets are "custom".
     category: str = "custom"
+    #: Plain-language "what is this for", shown as the preset's help tooltip.
+    usage: str = ""
 
 
 #: x265 tuning for live action. Unlike anime's flat colours and line art, film
@@ -21,6 +23,11 @@ class TranscodePreset:
 #: instead of smoothing it into blur, SAO stays off for the same reason, and a
 #: slightly gentler AQ avoids starving bright areas to feed the dark ones.
 _FILM_X265_PARAMS = "aq-mode=3:aq-strength=0.9:psy-rd=2.0:psy-rdoq=1.5:no-sao=1:deblock=-1,-1"
+
+#: x265 tuning for gameplay. Game footage is clean rendered imagery with sharp
+#: HUD text and fast camera motion: no grain to keep, so psy-rd is milder than
+#: film, while SAO off and lighter deblocking keep text and edges crisp.
+_GAME_X265_PARAMS = "aq-mode=3:psy-rd=1.5:no-sao=1:deblock=-1,-1"
 
 
 PRESETS: dict[str, TranscodePreset] = {
@@ -42,6 +49,7 @@ PRESETS: dict[str, TranscodePreset] = {
         ),
         description="CPU · CRF 20 · slower · 10-bit",
         category="anime",
+        usage="Anime you want to keep for good, at the best quality. Protects line art and flat colours. The slowest option.",
     ),
     "anime_x265_balanced": TranscodePreset(
         preset_id="anime_x265_balanced",
@@ -61,6 +69,7 @@ PRESETS: dict[str, TranscodePreset] = {
         ),
         description="CPU · CRF 22 · slow · 10-bit",
         category="anime",
+        usage="The default for anime: almost the quality of Maximum in about half the time.",
     ),
     "anime_av1_nvenc": TranscodePreset(
         preset_id="anime_av1_nvenc",
@@ -83,6 +92,7 @@ PRESETS: dict[str, TranscodePreset] = {
         hardware=True,
         description="NVIDIA RTX 40+ · CQ 22 · p7",
         category="anime",
+        usage="Anime on an RTX 40/50 GPU when speed matters. Several times faster than CPU, files a little larger.",
     ),
     "anime_hevc_nvenc": TranscodePreset(
         preset_id="anime_hevc_nvenc",
@@ -103,6 +113,7 @@ PRESETS: dict[str, TranscodePreset] = {
         hardware=True,
         description="NVIDIA · CQ 22 · p7",
         category="anime",
+        usage="Big anime batches on any NVIDIA GPU. The fastest anime preset, largest files, 8-bit.",
     ),
     "film_x265_max": TranscodePreset(
         preset_id="film_x265_max",
@@ -122,6 +133,7 @@ PRESETS: dict[str, TranscodePreset] = {
         ),
         description="CPU · CRF 20 · slower · 10-bit",
         category="film",
+        usage="Movies and live-action series to archive. Keeps texture, skin and fine detail instead of smoothing it. Very slow.",
     ),
     "film_x265_balanced": TranscodePreset(
         preset_id="film_x265_balanced",
@@ -141,6 +153,7 @@ PRESETS: dict[str, TranscodePreset] = {
         ),
         description="CPU · CRF 22 · slow · 10-bit",
         category="film",
+        usage="The default for movies and live-action series: good detail and good savings at a reasonable speed.",
     ),
     "film_x265_grain": TranscodePreset(
         preset_id="film_x265_grain",
@@ -160,6 +173,7 @@ PRESETS: dict[str, TranscodePreset] = {
         ),
         description="CPU · CRF 20 · slow · tune grain · 10-bit · old/grainy film, smaller savings",
         category="film",
+        usage="Old or visibly grainy films (35mm transfers, classics) where the grain must survive. Saves the least space.",
     ),
     "film_svtav1": TranscodePreset(
         preset_id="film_svtav1",
@@ -179,6 +193,7 @@ PRESETS: dict[str, TranscodePreset] = {
         ),
         description="CPU · AV1 CRF 28 · preset 4 · grain synthesis · 10-bit",
         category="film",
+        usage="Movies when the smallest file matters most. AV1 recreates the film grain on playback. Slow (CPU), needs an AV1-capable player.",
     ),
     "film_av1_nvenc": TranscodePreset(
         preset_id="film_av1_nvenc",
@@ -207,6 +222,7 @@ PRESETS: dict[str, TranscodePreset] = {
         hardware=True,
         description="NVIDIA RTX 40+ · CQ 26 · p7 · AQ · 10-bit",
         category="film",
+        usage="Movies on an RTX 40/50 GPU: fast, good quality, 10-bit. Needs an AV1-capable player.",
     ),
     "film_hevc_nvenc": TranscodePreset(
         preset_id="film_hevc_nvenc",
@@ -237,6 +253,107 @@ PRESETS: dict[str, TranscodePreset] = {
         hardware=True,
         description="NVIDIA · CQ 24 · p7 · AQ · 10-bit",
         category="film",
+        usage="Movies on any NVIDIA GPU: fast, 10-bit, plays on almost every TV and device.",
+    ),
+    "game_x265_balanced": TranscodePreset(
+        preset_id="game_x265_balanced",
+        name="Game x265 balanced",
+        encoder="libx265",
+        video_args=(
+            "-c:v",
+            "libx265",
+            "-crf",
+            "22",
+            "-preset",
+            "slow",
+            "-x265-params",
+            _GAME_X265_PARAMS,
+            "-pix_fmt",
+            "yuv420p10le",
+        ),
+        description="CPU · CRF 22 · slow · 10-bit",
+        category="game",
+        usage="Gameplay recordings (OBS, ShadowPlay, console capture) to keep on CPU. Sharp HUD and text, keeps 60+ fps. Slow on long sessions.",
+    ),
+    "game_svtav1": TranscodePreset(
+        preset_id="game_svtav1",
+        name="Game SVT-AV1 compact",
+        encoder="libsvtav1",
+        video_args=(
+            "-c:v",
+            "libsvtav1",
+            "-crf",
+            "30",
+            "-preset",
+            "6",
+            "-svtav1-params",
+            "tune=0",
+            "-pix_fmt",
+            "yuv420p10le",
+        ),
+        description="CPU · AV1 CRF 30 · preset 6 · 10-bit",
+        category="game",
+        usage="Gameplay archive with the smallest files. Slow (CPU), needs an AV1-capable player.",
+    ),
+    "game_av1_nvenc": TranscodePreset(
+        preset_id="game_av1_nvenc",
+        name="Game NVIDIA AV1",
+        encoder="av1_nvenc",
+        video_args=(
+            "-c:v",
+            "av1_nvenc",
+            "-cq",
+            "28",
+            "-preset",
+            "p7",
+            "-tune",
+            "hq",
+            "-multipass",
+            "fullres",
+            "-rc-lookahead",
+            "32",
+            "-spatial-aq",
+            "1",
+            "-temporal-aq",
+            "1",
+            "-pix_fmt",
+            "p010le",
+        ),
+        hardware=True,
+        description="NVIDIA RTX 40+ · CQ 28 · p7 · AQ · 10-bit",
+        category="game",
+        usage="The usual best choice for gameplay recordings on an RTX 40/50 GPU: fast, and huge recordings shrink several times.",
+    ),
+    "game_hevc_nvenc": TranscodePreset(
+        preset_id="game_hevc_nvenc",
+        name="Game NVIDIA HEVC",
+        encoder="hevc_nvenc",
+        video_args=(
+            "-c:v",
+            "hevc_nvenc",
+            "-cq",
+            "25",
+            "-preset",
+            "p7",
+            "-tune",
+            "hq",
+            "-multipass",
+            "fullres",
+            "-rc-lookahead",
+            "32",
+            "-spatial-aq",
+            "1",
+            "-temporal-aq",
+            "1",
+            "-profile:v",
+            "main10",
+            "-pix_fmt",
+            "p010le",
+        ),
+        hardware=True,
+        description="NVIDIA · CQ 25 · p7 · AQ · 10-bit",
+        category="game",
+        usage="Gameplay recordings on any NVIDIA GPU: fast, plays everywhere HEVC does.",
     ),
     "video_x265_compact": TranscodePreset(
         preset_id="video_x265_compact",
@@ -256,6 +373,7 @@ PRESETS: dict[str, TranscodePreset] = {
         ),
         description="CPU · CRF 24 · medium · 10-bit · phone, camera, screen, web video",
         category="video",
+        usage="Everyday video: phone and camera clips, screen recordings, web downloads. Small files, moderate speed.",
     ),
     "video_hevc_nvenc_fast": TranscodePreset(
         preset_id="video_hevc_nvenc_fast",
@@ -284,6 +402,7 @@ PRESETS: dict[str, TranscodePreset] = {
         hardware=True,
         description="NVIDIA · CQ 27 · p5 · AQ · 10-bit · large batches of everyday video",
         category="video",
+        usage="Large piles of everyday video on an NVIDIA GPU. The quickest way to reclaim space; not for archiving.",
     ),
 }
 

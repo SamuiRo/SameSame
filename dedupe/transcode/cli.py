@@ -77,6 +77,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.list_presets:
         for preset in PRESETS.values():
             print(f"{preset.preset_id:24} {preset.description}")
+            if preset.usage:
+                print(f"{'':24} {preset.usage}")
         if not args.inputs and not args.check_capabilities:
             return 0
     if args.check_capabilities:

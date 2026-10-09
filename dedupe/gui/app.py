@@ -38,6 +38,11 @@ def main(argv: list[str] | None = None) -> int:
     QCoreApplication.setApplicationName("SameSame")
     application = QApplication(argv if argv is not None else sys.argv)
     application.setApplicationDisplayName("SameSame")
+    # Tooltips carry real guidance (preset help, destructive-action warnings),
+    # so give them one readable look on every platform and theme.
+    application.setStyleSheet(
+        "QToolTip { color: #1a1a1a; background-color: #ffffff; border: 1px solid #a0a0a0; padding: 6px; }"
+    )
     _install_excepthook()
     window = MainWindow()
     window.show()

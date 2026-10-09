@@ -166,7 +166,9 @@ still fails when the queue starts.
 
 The preset dropdown contains the built-in presets grouped by content, anime
 (`ANIME_ENCODING_PRESETS.md`), then film and general video
-(`FILM_ENCODING_PRESETS.md`), followed by **Custom settings…**.
+(`FILM_ENCODING_PRESETS.md`), followed by **Custom settings…**. Hover
+any entry in the open list, or the round **?** beside the dropdown, for a white
+tooltip saying what the preset is for and its exact settings.
 
 | Custom control | Purpose |
 | --- | --- |

@@ -62,6 +62,10 @@ class PresetAndPlanTests(unittest.TestCase):
                 "film_svtav1",
                 "film_av1_nvenc",
                 "film_hevc_nvenc",
+                "game_x265_balanced",
+                "game_svtav1",
+                "game_av1_nvenc",
+                "game_hevc_nvenc",
                 "video_x265_compact",
                 "video_hevc_nvenc_fast",
             },
@@ -71,6 +75,7 @@ class PresetAndPlanTests(unittest.TestCase):
             self.assertEqual(preset.category, preset_id.split("_", 1)[0])
             self.assertEqual(preset.hardware, preset.encoder.endswith("_nvenc"))
             self.assertEqual(preset.video_args[:2], ("-c:v", preset.encoder))
+            self.assertTrue(preset.usage, f"{preset_id} has no help text")
         self.assertIn(
             ("-crf", "20"),
             list(zip(PRESETS["anime_x265_max"].video_args[::2], PRESETS["anime_x265_max"].video_args[1::2])),
@@ -87,6 +92,13 @@ class PresetAndPlanTests(unittest.TestCase):
             self.assertIn(PRESETS[preset_id].video_args[-1], {"yuv420p10le", "p010le"})
         self.assertIn("film-grain=8", " ".join(PRESETS["film_svtav1"].video_args))
         self.assertIn("grain", PRESETS["film_x265_grain"].video_args)
+        # Game footage is clean render: no grain to synthesize, and the frame
+        # rate is never forced, so 60/120 fps recordings stay smooth.
+        for preset_id in ("game_x265_balanced", "game_svtav1", "game_av1_nvenc", "game_hevc_nvenc"):
+            args = PRESETS[preset_id].video_args
+            self.assertNotIn("-r", args)
+            self.assertNotIn("film-grain", " ".join(args))
+            self.assertIn(args[-1], {"yuv420p10le", "p010le"})
 
     def test_each_preset_is_included_verbatim_in_its_command(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -1,10 +1,11 @@
-# FFmpeg Presets for Films and General Video
+# FFmpeg Presets for Films, Gameplay, and General Video
 
 ## Status
 
 Added in `1.17.0` alongside the four anime presets in
 `ANIME_ENCODING_PRESETS.md`, which are unchanged. These are the source
-specification for the `film_*` and `video_*` preset IDs. The queue, safety,
+specification for the `film_*`, `game_*` (added in `1.18.0`), and `video_*`
+preset IDs. The queue, safety,
 stream copying, and validation rules are identical for every preset: audio,
 subtitles, chapters, metadata, and attachments are copied, the source is kept,
 and an output that is not smaller than its source is skipped.
@@ -48,6 +49,24 @@ plastic. The film presets therefore:
 ```
 aq-mode=3:aq-strength=0.9:psy-rd=2.0:psy-rdoq=1.5:no-sao=1:deblock=-1,-1
 ```
+
+## Gameplay presets (OBS, ShadowPlay, console capture)
+
+Game recordings are usually captured at very high bitrates, so they shrink
+more than anything else. The footage is clean rendered imagery with sharp HUD
+text and fast camera motion: there is no grain to preserve or synthesize, and
+the frame rate (60, 120, 144 fps, or variable) is never forced, so motion stays
+smooth. Multiple audio tracks (game + microphone) are copied as they are.
+
+| Preset ID | Encoder | Key settings | Use when |
+| --- | --- | --- | --- |
+| `game_av1_nvenc` | `av1_nvenc` | CQ 28, `p7`, `hq`, multipass fullres, lookahead 32, spatial+temporal AQ, `p010le` | **Default for gameplay** on RTX 40/50 |
+| `game_hevc_nvenc` | `hevc_nvenc` | CQ 25, `p7`, `hq`, multipass fullres, lookahead 32, spatial+temporal AQ, `main10`, `p010le` | Any NVIDIA GPU, widest playback |
+| `game_x265_balanced` | `libx265` | CRF 22, `slow`, `aq-mode=3:psy-rd=1.5:no-sao=1:deblock=-1,-1`, 10-bit | No suitable GPU; slow on multi-hour sessions |
+| `game_svtav1` | `libsvtav1` | CRF 30, preset 6, `tune=0`, 10-bit | Smallest gameplay archive on CPU |
+
+Compared with film, x265 psy-rd is milder (1.5): there is no grain texture to
+protect, and stronger psy-rd would spend bits on noise around fast motion.
 
 ## General video presets (phone, camera, screen recordings, web video)
 

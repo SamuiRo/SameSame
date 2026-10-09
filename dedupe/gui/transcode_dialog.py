@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Qt, QUrl, Signal
@@ -49,6 +50,16 @@ _CLEANUP_PAST_TENSE = {
 }
 
 
+def preset_tooltip(preset: TranscodePreset) -> str:
+    """Rich-text help for a preset: what it is for first, then its settings."""
+    usage = f"<p>{html.escape(preset.usage)}</p>" if preset.usage else ""
+    # A fixed-width table is how Qt rich text wraps a tooltip at a sane width.
+    return (
+        f"<table width=360><tr><td><b>{html.escape(preset.name)}</b>{usage}"
+        f"<p style='color:#555'>{html.escape(preset.description)}</p></td></tr></table>"
+    )
+
+
 def add_builtin_presets(combo: QComboBox) -> None:
     """List the built-in presets, a separator between each content family."""
     previous: str | None = None
@@ -56,7 +67,31 @@ def add_builtin_presets(combo: QComboBox) -> None:
         if previous is not None and preset.category != previous:
             combo.insertSeparator(combo.count())
         combo.addItem(f"{preset.name} — {preset.description}", preset.preset_id)
+        combo.setItemData(combo.count() - 1, preset_tooltip(preset), Qt.ItemDataRole.ToolTipRole)
         previous = preset.category
+
+
+def preset_help_label(combo: QComboBox) -> QLabel:
+    """A round "?" beside a preset combo whose tooltip explains the current pick.
+
+    Each dropdown entry carries the same tooltip, so hovering an entry in the
+    open list explains it before choosing.
+    """
+    label = QLabel("?")
+    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    label.setFixedSize(20, 20)
+    label.setCursor(Qt.CursorShape.WhatsThisCursor)
+    label.setStyleSheet(
+        "QLabel { border: 1px solid #8a8a8a; border-radius: 10px; font-weight: 600; color: palette(text); }"
+    )
+
+    def update() -> None:
+        tooltip = combo.itemData(combo.currentIndex(), Qt.ItemDataRole.ToolTipRole)
+        label.setToolTip(str(tooltip) if tooltip else "")
+
+    combo.currentIndexChanged.connect(update)
+    update()
+    return label
 
 
 class TranscodeDialog(QDialog):
@@ -175,6 +210,7 @@ class TranscodeDialog(QDialog):
         if index < 0:
             self.preset_combo.addItem(f"{preset.name} — {preset.description}", preset.preset_id)
             index = self.preset_combo.count() - 1
+            self.preset_combo.setItemData(index, preset_tooltip(preset), Qt.ItemDataRole.ToolTipRole)
         self.preset_combo.setCurrentIndex(index)
 
     def _selected_preset(self) -> TranscodePreset:
@@ -200,6 +236,7 @@ class TranscodeDialog(QDialog):
         self.check_button.clicked.connect(self._check_capability)
         settings.addWidget(QLabel("Preset"))
         settings.addWidget(self.preset_combo, 1)
+        settings.addWidget(preset_help_label(self.preset_combo))
         settings.addWidget(self.capability_label, 1)
         settings.addWidget(self.check_button)
 

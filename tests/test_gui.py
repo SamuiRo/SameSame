@@ -422,10 +422,27 @@ class GuiSmokeTests(unittest.TestCase):
         combo = QComboBox()
         add_builtin_presets(combo)
         listed = [combo.itemData(index) for index in range(combo.count())]
-        # Separators carry no data: anime | film | video.
+        # Separators carry no data: anime | film | game | video.
         self.assertEqual([item for item in listed if item is not None], list(PRESETS))
-        self.assertEqual(listed.count(None), 2)
+        self.assertEqual(listed.count(None), 3)
         self.assertEqual(listed[listed.index(None) + 1], "film_x265_max")
+
+    def test_preset_help_explains_the_entry_and_the_current_choice(self) -> None:
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QComboBox
+
+        from dedupe.gui.transcode_dialog import add_builtin_presets, preset_help_label
+        from dedupe.transcode.presets import PRESETS
+
+        combo = QComboBox()
+        add_builtin_presets(combo)
+        help_label = preset_help_label(combo)
+        for preset_id, preset in PRESETS.items():
+            index = combo.findData(preset_id)
+            self.assertIn(preset.usage.split(".")[0], combo.itemData(index, Qt.ItemDataRole.ToolTipRole))
+        combo.setCurrentIndex(combo.findData("game_av1_nvenc"))
+        self.assertIn("gameplay recordings", help_label.toolTip())
+        self.assertIn("CQ 28", help_label.toolTip())
 
     def test_compression_filters_and_custom_preset(self) -> None:
         from dedupe.gui.compression_tab import (
