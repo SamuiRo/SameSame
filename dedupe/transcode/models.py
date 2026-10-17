@@ -49,6 +49,8 @@ class StreamInfo:
     channels: int | None = None
     language: str | None = None
     title: str | None = None
+    frame_rate: float | None = None
+    bit_rate: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

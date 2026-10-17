@@ -21,6 +21,32 @@ def _optional_int(value: object) -> int | None:
         return None
 
 
+def _frame_rate(raw: dict[str, Any]) -> float | None:
+    for key in ("avg_frame_rate", "r_frame_rate"):
+        value = str(raw.get(key) or "")
+        numerator, _, denominator = value.partition("/")
+        try:
+            rate = float(numerator) / float(denominator or 1)
+        except (ValueError, ZeroDivisionError):
+            continue
+        if 0 < rate < 1000:
+            return rate
+    return None
+
+
+def _bit_rate(raw: dict[str, Any], tags: Any) -> int | None:
+    value = _optional_int(raw.get("bit_rate"))
+    if value:
+        return value
+    # Matroska keeps per-stream bitrate in mkvmerge's statistics tags.
+    for key, tag in tags.items():
+        if str(key).upper() in {"BPS", "BPS-ENG"}:
+            value = _optional_int(tag)
+            if value:
+                return value
+    return None
+
+
 def _stream(raw: dict[str, Any]) -> StreamInfo:
     tags = raw.get("tags") if isinstance(raw.get("tags"), dict) else {}
     return StreamInfo(
@@ -32,6 +58,8 @@ def _stream(raw: dict[str, Any]) -> StreamInfo:
         channels=_optional_int(raw.get("channels")),
         language=str(tags["language"]) if tags.get("language") else None,
         title=str(tags["title"]) if tags.get("title") else None,
+        frame_rate=_frame_rate(raw) if raw.get("codec_type") == "video" else None,
+        bit_rate=_bit_rate(raw, tags),
     )
 
 

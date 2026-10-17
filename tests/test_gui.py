@@ -556,6 +556,61 @@ class GuiSmokeTests(unittest.TestCase):
                 window.close()
                 self.application.processEvents()
 
+    def test_compression_tab_rates_each_video_and_filters_by_verdict(self) -> None:
+        from PySide6.QtCore import Qt
+
+        from dedupe.gui.compression_tab import CompressionTab, CompressionVideo
+        from dedupe.transcode.assessment import AudioTrack
+
+        def episode(name: str, mbps: float, width: int, height: int) -> CompressionVideo:
+            duration = 24 * 60
+            return CompressionVideo(
+                Path(name),
+                round(mbps * 1e6 * duration / 8),
+                duration,
+                "h264",
+                f"{width}×{height}",
+                width=width,
+                height=height,
+                frame_rate=23.976,
+                audio=(AudioTrack("aac", 192_000),),
+            )
+
+        tab = CompressionTab()
+        try:
+            tab._add_video(episode("compact.mkv", 1.1, 1280, 720))
+            tab._add_video(episode("bdrip.mkv", 12.6, 1920, 1080))
+            tab._add_video(episode("webrip.mkv", 2.6, 1280, 720))
+            verdicts = {tab.table.item(row, 1).text(): tab.table.item(row, 8).text() for row in range(3)}
+            self.assertTrue(verdicts["bdrip.mkv"].startswith("Worth it · −"))
+            self.assertTrue(verdicts["webrip.mkv"].startswith("Maybe"))
+            self.assertEqual(verdicts["compact.mkv"], "Skip")
+            self.assertIn("Mb/s", tab.table.item(0, 7).text())
+            self.assertIn("estimate", tab.table.item(0, 8).toolTip())
+            self.assertIn("Worth it</b>: 1", tab.verdict_overview.text())
+
+            # Sorting by the expected saving puts the rawest file first.
+            tab.table.sortItems(8, Qt.SortOrder.DescendingOrder)
+            self.assertEqual(tab.table.item(0, 1).text(), "bdrip.mkv")
+
+            tab.verdict_filter.setCurrentIndex(tab.verdict_filter.findText("Worth it only"))
+            tab._select_matching()
+            checked = {
+                tab.table.item(row, 1).text()
+                for row in range(tab.table.rowCount())
+                if tab.table.item(row, 0).checkState() == Qt.CheckState.Checked
+            }
+            self.assertEqual(checked, {"bdrip.mkv"})
+            self.assertIn("expected to free", tab.summary_label.text())
+
+            # A different preset re-rates every row.
+            before = tab.table.item(0, 8).text()
+            tab.preset_combo.setCurrentIndex(tab.preset_combo.findData("film_x265_max"))
+            self.assertNotEqual(tab.table.item(0, 8).text(), before)
+            self.assertIn("Film", tab.verdict_overview.text())
+        finally:
+            tab.close()
+
     def test_compression_cleanup_modes_reach_the_queue_and_flag_a_useless_quarantine(self) -> None:
         from PySide6.QtCore import Qt
 

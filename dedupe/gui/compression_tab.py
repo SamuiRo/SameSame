@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import os
 import threading
 from collections.abc import Callable
@@ -8,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -33,6 +35,7 @@ from PySide6.QtWidgets import (
 
 from ..actions import FileAction
 from ..scanner import VIDEO_EXTENSIONS
+from ..transcode.assessment import AudioTrack, CompressionAssessment, Verdict, assess_compression
 from ..transcode.models import MediaInfo, OutputLayout
 from ..transcode.presets import PRESETS, TranscodePreset
 from ..transcode.probe import ProbeError, probe_media
@@ -48,12 +51,74 @@ class CompressionVideo:
     codec: str
     resolution: str
     probe_error: str = ""
+    width: int | None = None
+    height: int | None = None
+    frame_rate: float | None = None
+    audio: tuple[AudioTrack, ...] = ()
 
     @classmethod
     def from_media_info(cls, info: MediaInfo) -> CompressionVideo:
         video = next(stream for stream in info.streams if stream.kind == "video")
         resolution = f"{video.width}×{video.height}" if video.width and video.height else "—"
-        return cls(info.path, info.size, info.duration, video.codec or "unknown", resolution)
+        audio = tuple(
+            AudioTrack(stream.codec or "unknown", stream.bit_rate) for stream in info.streams if stream.kind == "audio"
+        )
+        return cls(
+            info.path,
+            info.size,
+            info.duration,
+            video.codec or "unknown",
+            resolution,
+            width=video.width,
+            height=video.height,
+            frame_rate=video.frame_rate,
+            audio=audio,
+        )
+
+    def assess(self, preset: TranscodePreset) -> CompressionAssessment | None:
+        if self.probe_error:
+            return None
+        return assess_compression(
+            size=self.size,
+            duration=self.duration,
+            codec=self.codec,
+            width=self.width,
+            height=self.height,
+            frame_rate=self.frame_rate,
+            audio=self.audio,
+            category=preset.category,
+            encoder=preset.encoder,
+        )
+
+
+#: Choices for the "Worth compressing" quick filter: label, minimum verdict rank.
+VERDICT_FILTERS = (
+    ("Any verdict", 0),
+    ("Maybe or Worth it", Verdict.MAYBE.rank),
+    ("Worth it only", Verdict.WORTH.rank),
+)
+
+#: Translucent tints that read on both light and dark palettes.
+_VERDICT_TINT = {
+    Verdict.WORTH: QColor(46, 160, 67, 70),
+    Verdict.MAYBE: QColor(210, 150, 20, 70),
+    Verdict.SKIP: QColor(128, 128, 128, 40),
+}
+_VERDICT_DOT = {Verdict.WORTH: "#2e9e46", Verdict.MAYBE: "#c98a00", Verdict.SKIP: "#888888"}
+
+#: Item data roles on the "Use" cell, and the numeric sort key of any cell.
+_ASSESSMENT_ROLE = Qt.ItemDataRole.UserRole + 2
+SORT_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
+class SortableItem(QTableWidgetItem):
+    """Sorts by the numeric key in SORT_ROLE when both cells have one, else by text."""
+
+    def __lt__(self, other: QTableWidgetItem) -> bool:
+        mine, theirs = self.data(SORT_ROLE), other.data(SORT_ROLE)
+        if mine is not None and theirs is not None:
+            return float(mine) < float(theirs)
+        return super().__lt__(other)
 
 
 def discover_video_paths(folder: Path, on_error: Callable[[str], None] | None = None) -> list[Path]:
@@ -94,11 +159,17 @@ def matches_filters(
     maximum_size_mb: float = 0.0,
     minimum_duration_minutes: float = 0.0,
     maximum_duration_minutes: float = 0.0,
+    assessment: CompressionAssessment | None = None,
+    minimum_verdict_rank: int = 0,
 ) -> bool:
     size_mb = video.size / (1024 * 1024)
     duration_minutes = video.duration / 60.0
+    verdict_ok = minimum_verdict_rank <= 0 or (
+        assessment is not None and assessment.verdict.rank >= minimum_verdict_rank
+    )
     return bool(
-        video.path.suffix.casefold() in extensions
+        verdict_ok
+        and video.path.suffix.casefold() in extensions
         and size_mb >= minimum_size_mb
         and (maximum_size_mb <= 0 or size_mb <= maximum_size_mb)
         and duration_minutes >= minimum_duration_minutes
@@ -264,6 +335,13 @@ class CompressionTab(QWidget):
         filter_layout.addRow("Maximum size (0 = any)", self.maximum_size)
         filter_layout.addRow("Minimum duration", self.minimum_duration)
         filter_layout.addRow("Maximum duration (0 = any)", self.maximum_duration)
+        self.verdict_filter = QComboBox()
+        for label, rank in VERDICT_FILTERS:
+            self.verdict_filter.addItem(label, rank)
+        self.verdict_filter.setToolTip(
+            "Keep only videos whose estimate says a re-encode with the preset chosen below pays off."
+        )
+        filter_layout.addRow("Worth compressing", self.verdict_filter)
         layout.addWidget(filters)
 
         selection_row = QHBoxLayout()
@@ -461,10 +539,24 @@ class CompressionTab(QWidget):
 
     def _build_video_panel(self) -> QVBoxLayout:
         layout = QVBoxLayout()
-        self.table = QTableWidget(0, 7)
+        self.verdict_overview = QLabel()
+        self.verdict_overview.setWordWrap(True)
+        self.verdict_overview.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self.verdict_overview)
+
+        self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels(
-            ("Use", "Video", "Folder", "Ext", "Size", "Duration", "Codec / resolution")
+            ("Use", "Video", "Folder", "Ext", "Size", "Duration", "Codec / resolution", "Bitrate", "Worth compressing?")
         )
+        self.table.horizontalHeaderItem(7).setToolTip(
+            "Total bitrate and how raw the video is — Raw, Heavy, Moderate or Compact — measured against an "
+            "efficient encode in the file's own codec at its resolution and frame rate."
+        )
+        self.table.horizontalHeaderItem(8).setToolTip(
+            "Estimate for the selected preset: the share and amount of space a re-encode would likely free. "
+            "Click the header to sort by the expected saving."
+        )
+        self.table.setSortingEnabled(True)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.itemChanged.connect(self._update_summary)
@@ -472,7 +564,7 @@ class CompressionTab(QWidget):
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        for column in (3, 4, 5, 6):
+        for column in (3, 4, 5, 6, 7, 8):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self.table, 1)
 
@@ -520,6 +612,8 @@ class CompressionTab(QWidget):
             QMessageBox.information(self, "Folder required", "Choose an existing folder before loading videos.")
             return
         self.folder_path.setText(str(folder.resolve()))
+        # Rows stream in during the load; sorting resumes once it finishes.
+        self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
         self._videos.clear()
         self.warning_label.clear()
@@ -550,6 +644,9 @@ class CompressionTab(QWidget):
         if not isinstance(value, CompressionVideo):
             return
         self._videos.append(value)
+        sorting = self.table.isSortingEnabled()
+        # A sorting table would move the row while its cells are being filled.
+        self.table.setSortingEnabled(False)
         row = self.table.rowCount()
         self.table.insertRow(row)
         check = QTableWidgetItem()
@@ -560,13 +657,138 @@ class CompressionTab(QWidget):
         self.table.setItem(row, 1, QTableWidgetItem(value.path.name))
         self.table.setItem(row, 2, QTableWidgetItem(str(value.path.parent)))
         self.table.setItem(row, 3, QTableWidgetItem(value.path.suffix.casefold()))
-        self.table.setItem(row, 4, QTableWidgetItem(self._format_size(value.size)))
-        self.table.setItem(row, 5, QTableWidgetItem(self._format_duration(value.duration)))
+        size_item = SortableItem(self._format_size(value.size))
+        size_item.setData(SORT_ROLE, value.size)
+        self.table.setItem(row, 4, size_item)
+        duration_item = SortableItem(self._format_duration(value.duration))
+        duration_item.setData(SORT_ROLE, value.duration)
+        self.table.setItem(row, 5, duration_item)
         metadata_item = QTableWidgetItem(f"{value.codec} · {value.resolution}")
         if value.probe_error:
             metadata_item.setToolTip(value.probe_error)
             metadata_item.setForeground(Qt.GlobalColor.red)
         self.table.setItem(row, 6, metadata_item)
+        self.table.setItem(row, 7, SortableItem())
+        self.table.setItem(row, 8, SortableItem())
+        # Filling the estimate edits cells already in the table; without this
+        # every row would re-run the whole-table summary through itemChanged.
+        self.table.blockSignals(True)
+        try:
+            self._show_assessment(row, value, self._assessment_preset())
+        finally:
+            self.table.blockSignals(False)
+        self.table.setSortingEnabled(sorting)
+        if not self.is_loading:
+            self._update_verdict_overview()
+
+    def _assessment_preset(self) -> TranscodePreset:
+        try:
+            return self._selected_preset()
+        except ValueError:
+            # A half-edited custom preset still deserves an estimate.
+            return PRESETS["anime_x265_balanced"]
+
+    def _show_assessment(self, row: int, video: CompressionVideo, preset: TranscodePreset) -> None:
+        assessment = video.assess(preset)
+        self.table.item(row, 0).setData(_ASSESSMENT_ROLE, assessment)
+        bitrate_item = self.table.item(row, 7)
+        verdict_item = self.table.item(row, 8)
+        if assessment is None:
+            for item in (bitrate_item, verdict_item):
+                item.setText("—")
+                item.setData(SORT_ROLE, -1.0)
+                item.setBackground(QColor(0, 0, 0, 0))
+                item.setToolTip("No estimate: the duration or resolution could not be read.")
+            return
+        bitrate_item.setText(f"{assessment.total_bps / 1e6:.1f} Mb/s · {assessment.rawness_label}")
+        bitrate_item.setData(SORT_ROLE, assessment.total_bps)
+        if assessment.verdict == Verdict.SKIP:
+            verdict_item.setText(assessment.verdict.label)
+        else:
+            verdict_item.setText(
+                f"{assessment.verdict.label} · −{assessment.saving_fraction * 100:.0f}% "
+                f"(≈{self._format_size(assessment.estimated_saving)})"
+            )
+        verdict_item.setData(SORT_ROLE, float(assessment.estimated_saving))
+        tooltip = self._assessment_tooltip(video, assessment, preset)
+        for item in (bitrate_item, verdict_item):
+            item.setBackground(_VERDICT_TINT[assessment.verdict])
+            item.setToolTip(tooltip)
+
+    def _assessment_tooltip(
+        self, video: CompressionVideo, assessment: CompressionAssessment, preset: TranscodePreset
+    ) -> str:
+        reasons = {
+            Verdict.WORTH: "The video carries far more data than an efficient encode needs, so a re-encode "
+            "frees a lot of space without visible loss.",
+            Verdict.MAYBE: "Space can be won, but the file is already encoded sensibly for its codec. "
+            "Compressing it again risks banding in gradients and dark scenes — test one episode first.",
+            Verdict.SKIP: "Already compact: a re-encode would free little space and only cost quality.",
+        }
+        lines = [
+            f"<b>{assessment.verdict.label}</b> · {assessment.rawness_label} "
+            f"({assessment.rawness:.1f}× an efficient {html.escape(video.codec)} encode)",
+            reasons[assessment.verdict],
+            f"Video now ≈ {assessment.video_bps / 1e6:.1f} Mb/s; {html.escape(preset.name)} typically needs "
+            f"≈ {assessment.target_video_bps / 1e6:.1f} Mb/s at {html.escape(video.resolution)}.",
+            f"Estimated result ≈ {self._format_size(assessment.estimated_output_size)}, "
+            f"saving ≈ {self._format_size(assessment.estimated_saving)}.",
+        ]
+        if assessment.lossless_audio_bps:
+            lines.append(
+                f"Lossless audio (≈ {assessment.lossless_audio_bps / 1e3:.0f} kb/s) is copied unchanged and "
+                "stays in the output."
+            )
+        lines.append("<i>An estimate from bitrates, not a measurement.</i>")
+        return "<table width=380><tr><td>" + "<br>".join(lines) + "</td></tr></table>"
+
+    def _row_assessment(self, row: int) -> CompressionAssessment | None:
+        value = self.table.item(row, 0).data(_ASSESSMENT_ROLE)
+        return value if isinstance(value, CompressionAssessment) else None
+
+    def _refresh_assessments(self) -> None:
+        preset = self._assessment_preset()
+        sorting = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
+        self.table.blockSignals(True)
+        try:
+            for row in range(self.table.rowCount()):
+                video = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+                if isinstance(video, CompressionVideo):
+                    self._show_assessment(row, video, preset)
+        finally:
+            self.table.blockSignals(False)
+            self.table.setSortingEnabled(sorting)
+        self._update_verdict_overview()
+        self._update_summary()
+
+    def _update_verdict_overview(self) -> None:
+        totals = {verdict: [0, 0, 0] for verdict in Verdict}
+        for row in range(self.table.rowCount()):
+            video = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+            assessment = self._row_assessment(row)
+            if assessment is None or not isinstance(video, CompressionVideo):
+                continue
+            bucket = totals[assessment.verdict]
+            bucket[0] += 1
+            bucket[1] += video.size
+            bucket[2] += assessment.estimated_saving
+        if not any(bucket[0] for bucket in totals.values()):
+            self.verdict_overview.clear()
+            return
+        parts = []
+        for verdict in Verdict:
+            count, size, saving = totals[verdict]
+            detail = self._format_size(size)
+            if verdict != Verdict.SKIP:
+                detail += f", ≈{self._format_size(saving)} to free"
+            parts.append(
+                f"<span style='color:{_VERDICT_DOT[verdict]}'>●</span> <b>{verdict.label}</b>: {count} ({detail})"
+            )
+        self.verdict_overview.setText(
+            " &nbsp;·&nbsp; ".join(parts) + f" &nbsp;<span style='color:#888888'>— estimated for "
+            f"{html.escape(self._assessment_preset().name)}</span>"
+        )
 
     def _loading_progress(self, current: int, total: int, name: str) -> None:
         self.progress.setRange(0, max(1, total))
@@ -583,7 +805,9 @@ class CompressionTab(QWidget):
     def _loading_finished(self) -> None:
         self._thread = None
         self._worker = None
+        self.table.setSortingEnabled(True)
         self._set_loading(False)
+        self._update_verdict_overview()
         self._update_summary()
         # Only now are the real source paths known, so the quarantine
         # same-volume verdict can be recomputed against them.
@@ -624,6 +848,8 @@ class CompressionTab(QWidget):
                     maximum_size_mb=self.maximum_size.value(),
                     minimum_duration_minutes=self.minimum_duration.value(),
                     maximum_duration_minutes=self.maximum_duration.value(),
+                    assessment=self._row_assessment(row),
+                    minimum_verdict_rank=int(self.verdict_filter.currentData() or 0),
                 )
                 item.setCheckState(Qt.CheckState.Checked if match else Qt.CheckState.Unchecked)
         finally:
@@ -651,13 +877,23 @@ class CompressionTab(QWidget):
     def _update_summary(self, *_args: object) -> None:
         selected = self._checked_videos()
         selected_size = sum(video.size for video in selected)
+        expected_saving = 0
+        for row in range(self.table.rowCount()):
+            assessment = self._row_assessment(row)
+            if assessment is not None and self.table.item(row, 0).checkState() == Qt.CheckState.Checked:
+                expected_saving += assessment.estimated_saving
+        saving_text = f" · ≈{self._format_size(expected_saving)} expected to free" if selected else ""
         self.summary_label.setText(
-            f"{len(self._videos)} video(s) loaded · {len(selected)} checked · {self._format_size(selected_size)} selected"
+            f"{len(self._videos)} video(s) loaded · {len(selected)} checked · "
+            f"{self._format_size(selected_size)} selected{saving_text}"
         )
         self.queue_button.setEnabled(not self.is_loading and bool(selected))
 
     def _preset_changed(self, *_args: object) -> None:
         self.custom_group.setEnabled(self.preset_combo.currentData() == "custom")
+        # The estimate depends on the preset's content family and encoder.
+        if hasattr(self, "table"):
+            self._refresh_assessments()
 
     def _encoder_changed(self, encoder: str) -> None:
         current = self.speed_combo.currentText()
@@ -673,6 +909,8 @@ class CompressionTab(QWidget):
         self.pixel_format_combo.setCurrentIndex(self.pixel_format_combo.findText(preferred_pixel_format))
         self.x265_params.setEnabled(is_x265)
         self.multipass.setEnabled(encoder == "av1_nvenc")
+        if hasattr(self, "table") and self.preset_combo.currentData() == "custom":
+            self._refresh_assessments()
 
     def _selected_preset(self) -> TranscodePreset:
         preset_id = str(self.preset_combo.currentData())

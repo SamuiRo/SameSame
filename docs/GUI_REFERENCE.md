@@ -152,6 +152,22 @@ A red metadata cell means the file was discovered but FFprobe could not read
 it. It remains selectable, but the transcode job will fail safely if probing
 still fails when the queue starts.
 
+### Is it worth compressing?
+
+Every loaded video gets an estimate of how raw it is and whether a re-encode
+with the **selected preset** pays off. Changing the preset re-rates every row.
+The estimate comes from bitrates (`dedupe/transcode/assessment.py`) and is a
+triage aid, not a measurement.
+
+| Element | Meaning |
+| --- | --- |
+| **Bitrate** column | Total bitrate plus a rawness label: **Raw** (3×+ the bitrate an efficient encode in the file's own codec needs at its resolution and frame rate), **Heavy** (1.6×+), **Moderate** (1.15×+) or **Compact**. |
+| **Worth compressing?** column | **Worth it** (green): a large saving from a genuinely bloated file. **Maybe** (amber): space can be won, but only by re-compressing an already sensible encode, so test one episode first. **Skip** (grey): under 15% to gain. Shows the expected saving as a share and in MiB/GiB. |
+| Row tooltip | The reasoning: current versus target video bitrate, estimated output size, and a note when lossless audio (FLAC, TrueHD, DTS, PCM) is present — audio is copied unchanged, so it stays in the output. |
+| Overview line above the table | Count, size and expected saving per verdict across the whole folder. |
+| Column headers | Click to sort; **Size**, **Duration**, **Bitrate** and **Worth compressing?** sort numerically, the last by expected saving. |
+| Status line | Adds the expected saving of the checked videos. |
+
 ### Quick selection filters
 
 | Control | Purpose |
@@ -159,7 +175,8 @@ still fails when the queue starts.
 | Extension checklist | Chooses which containers can match the quick-selection rule. |
 | **Minimum / Maximum size** | Filters by MiB. A maximum of zero means no upper limit. |
 | **Minimum / Maximum duration** | Filters by minutes. A maximum of zero means no upper limit. |
-| **Select matching** | Checks files satisfying every active extension, size, and duration rule; nonmatching rows are unchecked. |
+| **Worth compressing** | **Any verdict**, **Maybe or Worth it**, or **Worth it only**, judged for the selected preset. |
+| **Select matching** | Checks files satisfying every active extension, size, duration, and verdict rule; nonmatching rows are unchecked. |
 | **Clear** | Unchecks every loaded video. |
 
 ### Compression settings

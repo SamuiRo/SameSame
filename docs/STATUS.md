@@ -6,7 +6,7 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.18.0`. Stages A through E, and Stage F
+The current package version is `1.19.0`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -273,7 +273,7 @@ quarantine-first action.
 
 ## Verification Completed
 
-**Current, as of `1.18.0`:** the suite is **197 tests plus 38 subtests**, all
+**Current, as of `1.19.0`:** the suite is **208 tests plus 38 subtests**, all
 passing under both `unittest` and pytest in the project-local Python 3.11.9
 virtual environment, with `ruff check` / `ruff format --check` clean and a
 **32-error** `mypy` baseline (one fewer than the previously documented 33;
@@ -384,6 +384,17 @@ counts above — not any number inside the list — as current (A-25).
   `usage` line, shown as a tooltip on each dropdown entry and on a round "?"
   beside both preset dropdowns, and printed by `--list-presets`. Tooltips are
   styled white app-wide.
+- `1.19.0` rates every video in the compression tab: a **Bitrate** column
+  with a Raw / Heavy / Moderate / Compact label and a colour-coded **Worth
+  compressing?** verdict (Worth it / Maybe / Skip) with the expected saving,
+  re-estimated for whichever preset is selected; a **Worth compressing**
+  quick filter; a per-verdict overview line; numeric column sorting; and the
+  expected saving of the checked videos in the status line. Probing now
+  records video frame rate and per-stream bitrate (including Matroska `BPS`
+  tags). Run over the real 1.1 TB / 2,302-file anime library with the
+  default `anime_x265_balanced` preset: 242 Worth it (267 GB, ~159 GB
+  expected saving), 1,050 Maybe (512 GB), 1,010 Skip (345 GB). Logic:
+  `dedupe/transcode/assessment.py`.
 - Both `1.16.0` changes were re-validated end to end on the same real
   library with the shipped defaults, warm cache (A-37):
 
@@ -521,7 +532,7 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.18.0`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.19.0`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:
