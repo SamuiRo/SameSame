@@ -6,7 +6,7 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.19.0`. Stages A through E, and Stage F
+The current package version is `1.20.0`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -395,6 +395,17 @@ counts above — not any number inside the list — as current (A-25).
   default `anime_x265_balanced` preset: 242 Worth it (267 GB, ~159 GB
   expected saving), 1,050 Maybe (512 GB), 1,010 Skip (345 GB). Logic:
   `dedupe/transcode/assessment.py`.
+- `1.20.0` ships SameSame as a Windows program: a per-user installer
+  (`SameSame-<ver>-win64-setup.exe`, Start menu entry, uninstaller in
+  *Settings > Apps*, optional `samesame-cli` on PATH) and a no-install zip,
+  both with Python and Qt bundled (PyInstaller one-folder build, 210 MB
+  unpacked, 69 MB installer). FFmpeg stays an external requirement and the
+  GUI now reports on startup when it is missing. The uninstaller offers to
+  delete settings, cache, and journal, and never deletes the quarantine.
+  `samesame --version` was added. Built and published to GitHub and starbase
+  by `tools/release.ps1`; see `docs/RELEASING.md`. Verified: silent install,
+  CLI and GUI launch from the install, silent uninstall leaving no program
+  files, PATH entry, shortcut, or Apps entry behind.
 - Both `1.16.0` changes were re-validated end to end on the same real
   library with the shipped defaults, warm cache (A-37):
 
@@ -532,7 +543,7 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.19.0`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.20.0`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>SameSame — shared cut</title>
+  <rect width="256" height="256" rx="56" fill="#292d30"/>
+  <path fill="#f6f1e6" d="M56 46H88V76H116V204Q116 208 112 208H56L28 180V74Z"/>
+  <path fill="#ff4a32" d="M144 46H202V76H228V172Q228 208 192 208H144Q140 208 140 204V50Q140 46 144 46Z"/>
+</svg>

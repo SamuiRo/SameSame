@@ -40,6 +40,7 @@ from ..report import write_html_report, write_json_report
 from ..service import ScanOptions, ScanResult
 from ..transcode.models import OutputLayout
 from ..transcode.presets import TranscodePreset
+from ..video_fingerprint import check_video_tools
 from .compression_tab import CompressionTab
 from .consolidation_tab import ConsolidationTab
 from .journal_dialog import JournalDialog
@@ -113,6 +114,7 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._restore_settings()
+        self._report_missing_video_tools()
         self._scan_status_timer = QTimer(self)
         self._scan_status_timer.setInterval(1_000)
         self._scan_status_timer.timeout.connect(self._refresh_scan_status)
@@ -317,6 +319,21 @@ class MainWindow(QMainWindow):
     def _remove_folders(self) -> None:
         for item in self.folder_list.selectedItems():
             self.folder_list.takeItem(self.folder_list.row(item))
+
+    def _report_missing_video_tools(self) -> None:
+        # The packaged build does not ship FFmpeg, so a fresh install on a
+        # machine without it would otherwise only learn about it mid-scan.
+        ffmpeg, ffprobe = check_video_tools(
+            self.ffmpeg_path.text().strip() or "ffmpeg",
+            self.ffprobe_path.text().strip() or "ffprobe",
+        )
+        missing = [name for name, found in (("ffmpeg", ffmpeg), ("ffprobe", ffprobe)) if not found]
+        if missing:
+            self._append_log(
+                f"{' and '.join(missing)} not found. Video and audio matching and compression need FFmpeg; "
+                "exact, image, and name matching still work. Install it with "
+                "'winget install Gyan.FFmpeg' and restart SameSame, or set the paths in Settings."
+            )
 
     def _cache_path(self) -> Path:
         base = self._application_data_path()

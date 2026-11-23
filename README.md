@@ -25,15 +25,57 @@ can identity-check and quarantine it before promoting the validated MKV.
 Exact, video, image, and audio results are content-backed. Name-only results
 are hints and must not be treated as deletion evidence.
 
-## Requirements
+## Install on Windows
+
+Download from the latest release on
+[GitHub](https://github.com/SamuiRo/SameSame/releases) or starbase:
+
+- `SameSame-<version>-win64-setup.exe`: the installer. It installs for the
+  current user without an administrator prompt, adds SameSame to the Start
+  menu (and optionally the desktop), and registers an uninstaller under
+  *Settings > Apps*. Installing a newer version over an older one upgrades it.
+- `SameSame-<version>-win64.zip`: the same program without installing. Unzip
+  anywhere and run `SameSame.exe`.
+
+Both include Python and Qt, so nothing else needs installing except FFmpeg
+for video and audio matching:
+
+```powershell
+winget install Gyan.FFmpeg
+```
+
+SameSame tells you on startup when it cannot find FFmpeg. Exact, image, and
+name matching work without it.
+
+The installed folder also contains `samesame-cli.exe`, the command-line
+interface. Tick *Add samesame-cli to PATH* during setup to call it from any
+terminal.
+
+The build is not code-signed, so Windows SmartScreen may warn about an unknown
+publisher on the first run: choose *More info > Run anyway*.
+
+### Where SameSame keeps its data
+
+| What | Where |
+| --- | --- |
+| Program | `%LOCALAPPDATA%\Programs\SameSame` (installer default) |
+| Scan cache and operations journal | `%LOCALAPPDATA%\SameSame` |
+| Settings | registry, `HKEY_CURRENT_USER\Software\SameSame` |
+| Quarantined files | `Documents\SameSame Quarantine` (or the folder you chose) |
+
+The uninstaller removes the program and asks whether to also delete the
+settings, cache, and journal. It never deletes the quarantine folder, because
+that holds your own files; it tells you where it is instead.
+
+## Install from source
+
+Requirements:
 
 - Python 3.11 or newer;
 - `ffmpeg` and `ffprobe` for video and audio matching;
 - optional Anthropic API access or LM Studio for title normalization.
 
 Pillow and the other Python dependencies are installed with SameSame.
-
-## Install
 
 From the project directory in PowerShell:
 
@@ -355,5 +397,6 @@ are specified in [Anime encoding presets](docs/ANIME_ENCODING_PRESETS.md) and
 - [Anime encoding preset specification](docs/ANIME_ENCODING_PRESETS.md)
 - [Film, gameplay, and video encoding preset specification](docs/FILM_ENCODING_PRESETS.md)
 - [Example config](docs/samesame.example.json)
+- [Building and releasing](docs/RELEASING.md)
 - [Project status and handoff](docs/STATUS.md)
 - [Project audit](docs/AUDIT.md)

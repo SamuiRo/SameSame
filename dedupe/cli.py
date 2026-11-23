@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import __version__
 from .cache import Cache
 from .models import DedupeReport
 from .name_normalizer import LMSTUDIO_MODEL, LMSTUDIO_URL
@@ -253,6 +254,7 @@ def _merge_config(file_config: dict[str, Any], cli_overrides: dict[str, Any]) ->
 
 def parse_args(argv: list[str] | None = None) -> Config:
     parser = argparse.ArgumentParser(description="Find duplicate and near-duplicate media files across folders.")
+    parser.add_argument("--version", action="version", version=f"samesame {__version__}")
     parser.add_argument("--folders", nargs="+", help="Folders to scan.")
     parser.add_argument("--config", type=Path, help="JSON/YAML config file.")
     parser.add_argument("--output", type=Path, default=None, help="HTML report path.")

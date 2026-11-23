@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import traceback
+from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)
 
@@ -24,9 +26,20 @@ def _install_excepthook() -> None:
     sys.excepthook = handle
 
 
+def _ensure_standard_streams() -> None:
+    # A windowed (no console) packaged build starts with sys.stdout and
+    # sys.stderr set to None, and the first print, warning, or tqdm write
+    # would raise. Point them at the null device instead.
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name) is None:
+            setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
+
+
 def main(argv: list[str] | None = None) -> int:
+    _ensure_standard_streams()
     try:
         from PySide6.QtCore import QCoreApplication
+        from PySide6.QtGui import QIcon
         from PySide6.QtWidgets import QApplication
     except ImportError:
         print("SameSame GUI requires PySide6. Install it with: pip install -e .[gui]", file=sys.stderr)
@@ -38,6 +51,7 @@ def main(argv: list[str] | None = None) -> int:
     QCoreApplication.setApplicationName("SameSame")
     application = QApplication(argv if argv is not None else sys.argv)
     application.setApplicationDisplayName("SameSame")
+    application.setWindowIcon(QIcon(str(Path(__file__).parent / "assets" / "samesame.ico")))
     # Tooltips carry real guidance (preset help, destructive-action warnings),
     # so give them one readable look on every platform and theme.
     application.setStyleSheet(
