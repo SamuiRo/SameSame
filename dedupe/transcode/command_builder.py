@@ -27,6 +27,93 @@ def _log_path(output_path: Path) -> Path:
     raise PlanError(f"Cannot allocate a diagnostic log path for {output_path}")
 
 
+#: Image codecs FFmpeg can write back out as a plain picture file, with the
+#: extension and MIME type a Matroska attachment of that picture should carry.
+_COVER_FORMATS: dict[str, tuple[str, str]] = {
+    "mjpeg": (".jpg", "image/jpeg"),
+    "png": (".png", "image/png"),
+    "bmp": (".bmp", "image/bmp"),
+    "gif": (".gif", "image/gif"),
+    "webp": (".webp", "image/webp"),
+}
+
+
+def _cover_art(
+    input_info: MediaInfo,
+    source: Path,
+    output: Path,
+    job_id: str,
+    executable: str,
+) -> tuple[tuple[tuple[str, ...], ...], tuple[Path, ...], tuple[str, ...]]:
+    """Carry cover art over as real attachments instead of encoding it.
+
+    Matroska stores cover art (`cover.jpg`) as an attachment, which FFmpeg
+    exposes as a one-frame "attached picture" video stream. Mapped with `0:v`,
+    that picture would be fed to the preset's video encoder: wasteful at best,
+    and a cover with odd dimensions (423x600, say) is rejected outright by 4:2:0
+    encoders, failing the whole job with "Invalid argument". Stream-copying it is
+    no better, because FFmpeg's Matroska muxer then writes it as a separate
+    MJPEG video *track* rather than an attachment.
+
+    So the main command maps only real video (`0:V`), and each picture is first
+    extracted byte-for-byte to a scratch file, then re-attached with `-attach`
+    under its original name and MIME type. The result has the same layout as
+    the source, which is what the validation step's stream count checks.
+    """
+    attachments_before = input_info.stream_count("attachment")
+    preparation: list[tuple[str, ...]] = []
+    scratch: list[Path] = []
+    attach_args: list[str] = []
+    for stream in input_info.streams:
+        if stream.kind != "video" or not stream.attached_pic:
+            continue
+        known = _COVER_FORMATS.get(stream.codec or "")
+        if known is None:
+            raise PlanError(
+                f"Cover art stream #{stream.index} uses {stream.codec or 'an unknown codec'}, "
+                "which cannot be carried into the output as an attachment"
+            )
+        extension, mimetype = known
+        number = len(scratch)
+        picture = output.with_name(f".{output.stem}.{job_id[:12]}.cover{number}{extension}")
+        if picture.exists():
+            raise PlanError(f"Temporary cover-art path already exists: {picture}")
+        preparation.append(
+            (
+                executable,
+                "-hide_banner",
+                "-nostdin",
+                "-v",
+                "error",
+                "-n",
+                "-i",
+                str(source),
+                "-map",
+                f"0:{stream.index}",
+                "-c",
+                "copy",
+                "-frames:v",
+                "1",
+                "-f",
+                "image2",
+                str(picture),
+            )
+        )
+        scratch.append(picture)
+        target = attachments_before + number
+        attach_args.extend(
+            (
+                "-attach",
+                str(picture),
+                f"-metadata:s:t:{target}",
+                f"mimetype={stream.mimetype or mimetype}",
+                f"-metadata:s:t:{target}",
+                f"filename={stream.filename or f'cover{extension}'}",
+            )
+        )
+    return tuple(preparation), tuple(scratch), tuple(attach_args)
+
+
 def replacement_target(input_path: Path) -> Path:
     """The path a REPLACE job finally occupies: the source's own, as an MKV."""
     source = input_path.expanduser()
@@ -87,6 +174,7 @@ def build_plan(
     temporary = output.with_name(f".{output.stem}.{job_id[:12]}.part.mkv")
     if temporary.exists():
         raise PlanError(f"Temporary output path already exists: {temporary}")
+    preparation, scratch, attach_args = _cover_art(input_info, source, output, job_id, executable)
     command = (
         executable,
         "-hide_banner",
@@ -95,7 +183,8 @@ def build_plan(
         "-i",
         str(source),
         "-map",
-        "0:v?",
+        # Capital V: real video only. Cover art is handled by _cover_art().
+        "0:V?",
         "-map",
         "0:a?",
         "-map",
@@ -113,6 +202,7 @@ def build_plan(
         "copy",
         "-c:t",
         "copy",
+        *attach_args,
         "-progress",
         "pipe:1",
         "-nostats",
@@ -127,4 +217,6 @@ def build_plan(
         preset_id=preset.preset_id,
         input_info=input_info,
         command=command,
+        preparation_commands=preparation,
+        scratch_paths=scratch,
     )

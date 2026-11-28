@@ -47,8 +47,18 @@ def _bit_rate(raw: dict[str, Any], tags: Any) -> int | None:
     return None
 
 
+def _tag(tags: dict[str, Any], name: str) -> str | None:
+    # Matroska attachment tags come back as `filename` or `FILENAME` depending
+    # on whether the file holds a real attachment or a cover-art video stream.
+    for key, value in tags.items():
+        if str(key).casefold() == name and value:
+            return str(value)
+    return None
+
+
 def _stream(raw: dict[str, Any]) -> StreamInfo:
     tags = raw.get("tags") if isinstance(raw.get("tags"), dict) else {}
+    disposition = raw.get("disposition")
     return StreamInfo(
         index=_optional_int(raw.get("index")) or 0,
         kind=str(raw.get("codec_type") or "unknown"),
@@ -60,6 +70,9 @@ def _stream(raw: dict[str, Any]) -> StreamInfo:
         title=str(tags["title"]) if tags.get("title") else None,
         frame_rate=_frame_rate(raw) if raw.get("codec_type") == "video" else None,
         bit_rate=_bit_rate(raw, tags),
+        attached_pic=bool(disposition.get("attached_pic")) if isinstance(disposition, dict) else False,
+        filename=_tag(tags, "filename"),
+        mimetype=_tag(tags, "mimetype"),
     )
 
 

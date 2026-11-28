@@ -5,6 +5,7 @@ import time
 from collections.abc import Callable, Iterable
 from queue import Empty, Queue
 from threading import Thread
+from typing import TextIO
 
 from .. import process
 from ..events import CancellationToken
@@ -55,17 +56,57 @@ def _read_lines(stream: Iterable[str], lines: Queue[str | None]) -> None:
         lines.put(None)
 
 
+def _remove_scratch(plan: TranscodePlan) -> None:
+    for path in plan.scratch_paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _prepare(plan: TranscodePlan, log_file: TextIO) -> str | None:
+    """Run the plan's preparation commands; return an error message on failure."""
+    for command in plan.preparation_commands:
+        try:
+            completed = process.run(command, capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return f"Cannot extract cover art: {exc}"
+        if completed.stderr:
+            log_file.write(completed.stderr)
+        if completed.returncode != 0:
+            diagnostic = (completed.stderr or "").strip().splitlines()
+            detail = diagnostic[-1] if diagnostic else f"FFmpeg exited with code {completed.returncode}"
+            return f"Cannot extract cover art: {detail}; see {plan.log_path}"
+    return None
+
+
 def run_transcode(
     plan: TranscodePlan,
     *,
     cancellation: CancellationToken | None = None,
     progress_callback: ProgressCallback | None = None,
 ) -> RunnerResult:
+    try:
+        return _run_transcode(plan, cancellation=cancellation, progress_callback=progress_callback)
+    finally:
+        _remove_scratch(plan)
+
+
+def _run_transcode(
+    plan: TranscodePlan,
+    *,
+    cancellation: CancellationToken | None,
+    progress_callback: ProgressCallback | None,
+) -> RunnerResult:
     token = cancellation or CancellationToken()
     started = time.monotonic()
     plan.log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with plan.log_path.open("w", encoding="utf-8", errors="replace") as log_file:
+            preparation_error = _prepare(plan, log_file)
+            if preparation_error is not None:
+                return RunnerResult(JobStatus.FAILED, None, time.monotonic() - started, preparation_error)
+            log_file.flush()
             ffmpeg_process = process.popen(
                 plan.command,
                 stdout=subprocess.PIPE,

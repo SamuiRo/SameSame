@@ -6,7 +6,7 @@ This document is the handoff point for continuing SameSame development in a new
 chat or work session. Read it together with the root `README.md`,
 `docs/USAGE.md`, and `docs/CONFIG.md`.
 
-The current package version is `1.20.0`. Stages A through E, and Stage F
+The current package version is `1.20.1`. Stages A through E, and Stage F
 except its corpus-dependent items, are implemented — see
 `docs/AUDIT-1.7.0.md` for full findings, fixes, and regression coverage.
 
@@ -406,6 +406,19 @@ counts above — not any number inside the list — as current (A-25).
   by `tools/release.ps1`; see `docs/RELEASING.md`. Verified: silent install,
   CLI and GUI launch from the install, silent uninstall leaving no program
   files, PATH entry, shortcut, or Apps entry behind.
+- `1.20.1` fixes two transcode-queue failures found on the real library.
+  (1) Matroska cover art (`cover.jpg`, exposed by FFmpeg as an attached-picture
+  video stream) was mapped by `0:v` and fed to the video encoder; a 423x600
+  cover made libx265 fail every *86* episode with "Invalid argument". Real video
+  is now mapped with `0:V`, and each cover is extracted byte-for-byte and
+  re-attached with `-attach` under its own name and MIME type, so the output
+  keeps the source's layout (a stream copy would have turned it into an MJPEG
+  video track). (2) Permanent delete failed with "[WinError 5] Access is
+  denied" on originals with the read-only attribute, leaving validated
+  `.samesame-new.mkv` encodes beside them. Delete now clears the attribute
+  (restoring it if the delete still fails); quarantine and restore move
+  read-only files too and keep the attribute. 217 tests pass, including a
+  real-FFmpeg regression with an odd-sized cover.
 - Both `1.16.0` changes were re-validated end to end on the same real
   library with the shipped defaults, warm cache (A-37):
 
@@ -543,7 +556,7 @@ Ongoing matching work remains evidence-driven:
 
 ## Working Tree Handoff
 
-Phases 0 through 5 are implemented, and the current package version is `1.20.0`. The scanner CLI
+Phases 0 through 5 are implemented, and the current package version is `1.20.1`. The scanner CLI
 delegates to the reusable service, the optional PySide6 interface consumes the
 same scan service, journaled actions, and independent transcode backend. A new
 session should begin with:

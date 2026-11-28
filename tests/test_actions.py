@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -336,6 +338,60 @@ class FileActionTests(unittest.TestCase):
 
             self.assertEqual(outcome.status, OperationStatus.FAILED)
             self.assertTrue(source.exists(), "an unrecognised file must never be erased")
+
+    def test_permanent_delete_removes_a_read_only_file(self) -> None:
+        """Windows answers "[WinError 5] Access is denied" for read-only files."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source = base / "episode.mkv"
+            source.write_bytes(b"content")
+            os.chmod(source, stat.S_IREAD)
+            service = FileActionService(base / "journal.sqlite3", base / "quarantine", allow_permanent_delete=True)
+
+            outcome = service.perform(self._record(source, base), FileAction.DELETE)
+
+            self.assertEqual(outcome.status, OperationStatus.COMPLETED, outcome.message)
+            self.assertFalse(source.exists())
+
+    def test_quarantine_and_restore_keep_a_read_only_file_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source = base / "collection" / "episode.mkv"
+            source.parent.mkdir()
+            source.write_bytes(b"episode data")
+            os.chmod(source, stat.S_IREAD)
+            service = self._service(base)
+            try:
+                outcome = service.perform(self._record(source, base / "collection"), FileAction.QUARANTINE)
+                self.assertEqual(outcome.status, OperationStatus.COMPLETED, outcome.message)
+                assert outcome.destination is not None
+                self.assertFalse(os.stat(outcome.destination).st_mode & stat.S_IWRITE)
+
+                restored = service.restore(outcome.operation_id)
+                self.assertEqual(restored.status, OperationStatus.COMPLETED, restored.message)
+                self.assertTrue(source.is_file())
+                self.assertFalse(os.stat(source).st_mode & stat.S_IWRITE, "restore must give back the attribute")
+            finally:
+                for path in base.rglob("*"):
+                    if path.is_file():
+                        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+
+    @patch("dedupe.actions.service.shutil.move")
+    def test_failed_move_of_a_read_only_file_puts_the_attribute_back(self, move_mock: Mock) -> None:
+        move_mock.side_effect = OSError("disk full")
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source = base / "collection" / "episode.mkv"
+            source.parent.mkdir()
+            source.write_bytes(b"episode data")
+            os.chmod(source, stat.S_IREAD)
+            try:
+                outcome = self._service(base).perform(self._record(source, base / "collection"), FileAction.QUARANTINE)
+                self.assertEqual(outcome.status, OperationStatus.FAILED)
+                self.assertTrue(source.is_file())
+                self.assertFalse(os.stat(source).st_mode & stat.S_IWRITE)
+            finally:
+                os.chmod(source, stat.S_IWRITE | stat.S_IREAD)
 
 
 if __name__ == "__main__":

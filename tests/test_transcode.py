@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -127,11 +128,77 @@ class PresetAndPlanTests(unittest.TestCase):
             self.assertEqual(plan.output_path, output.resolve())
             self.assertNotEqual(plan.temporary_path, plan.output_path)
             self.assertTrue(plan.temporary_path.name.endswith(".part.mkv"))
-            for mapping in ("0:v?", "0:a?", "0:s?", "0:t?"):
+            for mapping in ("0:V?", "0:a?", "0:s?", "0:t?"):
                 self.assertIn(mapping, command)
             self.assertIn("-map_metadata", command)
             self.assertIn("-map_chapters", command)
             self.assertIn("copy", command)
+
+    def test_cover_art_is_extracted_and_reattached_instead_of_encoded(self) -> None:
+        """A 423x600 cover.jpg fed to libx265 at 4:2:0 failed every 86 episode."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "episode.mkv"
+            source.write_bytes(b"source")
+            info = MediaInfo(
+                path=source,
+                size=1000,
+                duration=60.0,
+                format_name="matroska",
+                streams=(
+                    StreamInfo(0, "video", "h264"),
+                    StreamInfo(1, "audio", "aac"),
+                    StreamInfo(2, "attachment", "ttf"),
+                    StreamInfo(3, "attachment", "ttf"),
+                    StreamInfo(4, "video", "mjpeg", 423, 600, attached_pic=True, filename="cover.jpg"),
+                ),
+            )
+            plan = build_plan(info, root / "out.mkv", PRESETS["anime_x265_balanced"], ffmpeg=sys.executable)
+            command = plan.command
+            self.assertIn("0:V?", command, "cover art must not reach the video encoder")
+            self.assertNotIn("0:v?", command)
+            self.assertEqual(len(plan.preparation_commands), 1)
+            extract = plan.preparation_commands[0]
+            self.assertIn("0:4", extract)
+            self.assertEqual(extract[extract.index("-c") + 1], "copy")
+            self.assertEqual(len(plan.scratch_paths), 1)
+            cover = plan.scratch_paths[0]
+            self.assertEqual(cover.suffix, ".jpg")
+            self.assertEqual(cover.parent, plan.output_path.parent)
+            self.assertEqual(str(cover), extract[-1])
+            attach = command.index("-attach")
+            self.assertEqual(command[attach + 1], str(cover))
+            # Two input attachments come first, so the cover is attachment #2.
+            self.assertEqual(
+                command[attach + 2 : attach + 6],
+                ("-metadata:s:t:2", "mimetype=image/jpeg", "-metadata:s:t:2", "filename=cover.jpg"),
+            )
+            self.assertLess(attach, command.index("-progress"))
+
+    def test_plan_without_cover_art_has_no_preparation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "episode.mkv"
+            source.write_bytes(b"source")
+            plan = build_plan(media(source), root / "out.mkv", PRESETS["anime_x265_balanced"], ffmpeg=sys.executable)
+            self.assertEqual(plan.preparation_commands, ())
+            self.assertEqual(plan.scratch_paths, ())
+            self.assertNotIn("-attach", plan.command)
+
+    def test_cover_art_in_an_unknown_codec_is_refused_up_front(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "episode.mkv"
+            source.write_bytes(b"source")
+            info = MediaInfo(
+                path=source,
+                size=1000,
+                duration=60.0,
+                format_name="matroska",
+                streams=(StreamInfo(0, "video", "h264"), StreamInfo(1, "video", "tiff", attached_pic=True)),
+            )
+            with self.assertRaisesRegex(PlanError, "Cover art"):
+                build_plan(info, root / "out.mkv", PRESETS["anime_x265_balanced"], ffmpeg=sys.executable)
 
     def test_plan_rejects_existing_output_source_overwrite_and_non_mkv(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -287,6 +354,38 @@ class RunnerAndValidationTests(unittest.TestCase):
             self.assertEqual(result.status, JobStatus.COMPLETED)
             self.assertEqual(len(events), 1)
             self.assertEqual(events[0].percent, 50.0)
+
+    def test_runner_runs_preparation_first_and_always_removes_scratch_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cover = root / ".cover0.jpg"
+            make_cover = (sys.executable, "-c", f"open({str(cover)!r}, 'wb').write(b'jpg')")
+            check_cover = (
+                sys.executable,
+                "-c",
+                f"import os,sys; sys.exit(0 if os.path.exists({str(cover)!r}) else 3)",
+            )
+            plan = replace(
+                self._plan(root, check_cover),
+                preparation_commands=(make_cover,),
+                scratch_paths=(cover,),
+            )
+            result = run_transcode(plan)
+            self.assertEqual(result.status, JobStatus.COMPLETED, result.message)
+            self.assertFalse(cover.exists(), "the extracted cover must not be left behind")
+
+    def test_runner_fails_without_encoding_when_preparation_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "encoded"
+            failing = (sys.executable, "-c", "import sys; sys.stderr.write('bad cover'); sys.exit(1)")
+            encode = (sys.executable, "-c", f"open({str(marker)!r}, 'w').close()")
+            plan = replace(self._plan(root, encode), preparation_commands=(failing,))
+            result = run_transcode(plan)
+            self.assertEqual(result.status, JobStatus.FAILED)
+            self.assertIn("Cannot extract cover art: bad cover", result.message)
+            self.assertFalse(marker.exists(), "the encode must not run after a failed preparation")
+            self.assertIn("bad cover", plan.log_path.read_text(encoding="utf-8"))
 
     def test_runner_honours_pre_cancelled_token(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

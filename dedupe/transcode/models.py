@@ -51,6 +51,12 @@ class StreamInfo:
     title: str | None = None
     frame_rate: float | None = None
     bit_rate: int | None = None
+    #: A still image carried as a video stream: Matroska cover art (`cover.jpg`
+    #: attachments) or an MP4 thumbnail. It is part of the file, not the video.
+    attached_pic: bool = False
+    #: Attachment name and MIME type from the stream tags (Matroska attachments).
+    filename: str | None = None
+    mimetype: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +94,10 @@ class TranscodePlan:
     preset_id: str
     input_info: MediaInfo
     command: tuple[str, ...]
+    #: Commands that must succeed before `command` runs (cover-art extraction).
+    preparation_commands: tuple[tuple[str, ...], ...] = ()
+    #: Scratch files the preparation commands create; removed after the encode.
+    scratch_paths: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

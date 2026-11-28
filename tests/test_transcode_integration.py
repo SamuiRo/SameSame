@@ -106,6 +106,56 @@ class TranscodeIntegrationTests(unittest.TestCase):
             self.assertEqual(after.chapter_count, before.chapter_count)
             self.assertTrue(results[0].log_path and results[0].log_path.is_file())
 
+    def test_odd_sized_cover_art_is_kept_as_an_attachment_and_does_not_break_the_encode(self) -> None:
+        """Regression: a 423x600 cover.jpg made libx265 fail with "Invalid argument"."""
+        assert FFMPEG is not None
+        assert FFPROBE is not None
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cover = root / "cover.jpg"
+            subprocess.run(
+                [FFMPEG, "-hide_banner", "-nostdin", "-v", "error", "-f", "lavfi", "-i",
+                 "color=c=red:size=423x601", "-frames:v", "1", str(cover)],
+                check=True,
+                timeout=60,
+            )
+            font = root / "font.ttf"
+            font.write_bytes(b"synthetic font")
+            source = root / "episode.mkv"
+            subprocess.run(
+                [
+                    FFMPEG, "-hide_banner", "-nostdin", "-v", "error",
+                    "-f", "lavfi", "-i", "testsrc2=size=128x72:rate=10:duration=1.5",
+                    "-f", "lavfi", "-i", "sine=frequency=440:duration=1.5",
+                    "-c:v", "mpeg4", "-q:v", "5", "-c:a", "aac",
+                    "-attach", str(font), "-metadata:s:t:0", "mimetype=application/x-truetype-font",
+                    "-attach", str(cover), "-metadata:s:t:1", "mimetype=image/jpeg",
+                    "-metadata:s:t:1", "filename=cover.jpg",
+                    str(source),
+                ],
+                check=True,
+                timeout=60,
+            )
+            before = probe_media(source, FFPROBE)
+            self.assertTrue(any(stream.attached_pic for stream in before.streams), "fixture must carry cover art")
+
+            output = root / "encoded.mkv"
+            results = TranscodeQueue(ffmpeg=FFMPEG, ffprobe=FFPROBE).run(
+                [TranscodeRequest(source, output, "anime_x265_balanced")]
+            )
+
+            self.assertEqual(results[0].status, JobStatus.COMPLETED, results[0].message)
+            after = probe_media(output, FFPROBE)
+            for kind in ("video", "audio", "subtitle", "attachment"):
+                self.assertEqual(after.stream_count(kind), before.stream_count(kind), kind)
+            covers = [stream for stream in after.streams if stream.attached_pic]
+            self.assertEqual(len(covers), 1, "the cover must stay an attachment, not become a video track")
+            self.assertEqual(covers[0].filename, "cover.jpg")
+            self.assertEqual(covers[0].codec, "mjpeg")
+            main = [stream for stream in after.streams if stream.kind == "video" and not stream.attached_pic]
+            self.assertEqual(main[0].codec, "hevc")
+            self.assertEqual([path.name for path in root.iterdir() if ".cover" in path.name], [])
+
     def test_an_already_efficient_source_is_skipped_instead_of_growing_on_disk(self) -> None:
         """Re-encoding an x265 source at CRF 0 can only inflate it; nothing may be committed."""
         assert FFMPEG is not None

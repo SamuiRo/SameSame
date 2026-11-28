@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
+import stat
 import time
 import uuid
 from dataclasses import dataclass, replace
@@ -38,6 +40,69 @@ def _retry_sharing_violation(operation: Callable[[], None], attempts: int = 8, d
             if getattr(exc, "winerror", None) != 32 or attempt + 1 >= attempts:
                 raise
             time.sleep(delay)
+
+
+def _is_read_only(path: Path) -> bool:
+    try:
+        return not path.stat().st_mode & stat.S_IWRITE
+    except OSError:
+        return False
+
+
+def _set_read_only(path: Path, read_only: bool) -> None:
+    mode = path.stat().st_mode
+    os.chmod(path, (mode & ~stat.S_IWRITE) if read_only else (mode | stat.S_IWRITE))
+
+
+def _unlink(path: Path) -> None:
+    """Remove a file the user asked to remove, including a read-only one.
+
+    Windows refuses to delete a file with the read-only attribute
+    ("[WinError 5] Access is denied"), which is common on media copied off
+    discs or out of some download clients. The attribute guards against
+    accidental edits, not against a delete the user explicitly confirmed, so it
+    is cleared and put back if the delete still fails.
+    """
+    try:
+        path.unlink()
+        return
+    except PermissionError:
+        if not _is_read_only(path):
+            raise
+    _set_read_only(path, False)
+    try:
+        path.unlink()
+    except BaseException:
+        try:
+            _set_read_only(path, True)
+        except OSError:
+            pass
+        raise
+
+
+def _move(source: Path, destination: Path) -> None:
+    """shutil.move() that also works for a read-only file and keeps the attribute.
+
+    A move across volumes is a copy plus a delete, and the delete fails on a
+    read-only source after the copy was already made. The attribute is lifted
+    for the move and restored on whichever file survives it, so a quarantined
+    and later restored file comes back exactly as it was.
+    """
+    if not _is_read_only(source):
+        shutil.move(str(source), str(destination))
+        return
+    _set_read_only(source, False)
+    try:
+        shutil.move(str(source), str(destination))
+    except BaseException:
+        for leftover in (source, destination):
+            if leftover.exists():
+                try:
+                    _set_read_only(leftover, True)
+                except OSError:
+                    pass
+        raise
+    _set_read_only(destination, True)
 
 
 class FileActionService:
@@ -191,7 +256,7 @@ class FileActionService:
                     if destination.exists():
                         destination = self._available_path(destination)
                     destination.parent.mkdir(parents=True, exist_ok=True)
-                    _retry_sharing_violation(lambda: shutil.move(str(request.source), str(destination)))
+                    _retry_sharing_violation(lambda: _move(request.source, destination))
                     try:
                         verify_content(destination, request.identity)
                     except Exception as exc:
@@ -248,7 +313,7 @@ class FileActionService:
                     # The identity check is the only safeguard left: there is no
                     # destination to verify afterwards and no journal restore.
                     verify_identity(request.source, request.identity)
-                    _retry_sharing_violation(lambda: request.source.unlink())
+                    _retry_sharing_violation(lambda: _unlink(request.source))
                     if request.source.exists():
                         raise RuntimeError(f"Delete returned but the source still exists: {request.source}")
                     outcome = ActionOutcome(
@@ -266,7 +331,7 @@ class FileActionService:
                         raise PreflightError(f"Cannot restore because the original path exists: {request.destination}")
                     verify_content(request.source, request.identity)
                     request.destination.parent.mkdir(parents=True, exist_ok=True)
-                    _retry_sharing_violation(lambda: shutil.move(str(request.source), str(request.destination)))
+                    _retry_sharing_violation(lambda: _move(request.source, request.destination))
                     try:
                         verify_content(request.destination, request.identity)
                     except Exception as exc:
@@ -397,7 +462,7 @@ class FileActionService:
                     continue
                 size = resolved.stat().st_size
                 try:
-                    _retry_sharing_violation(resolved.unlink)
+                    _retry_sharing_violation(lambda: _unlink(resolved))
                 except OSError as exc:
                     failures.append(f"{resolved}: {exc}")
                     continue
@@ -456,7 +521,7 @@ class FileActionService:
             return "rollback failed because the moved file is unavailable"
         try:
             original.parent.mkdir(parents=True, exist_ok=True)
-            _retry_sharing_violation(lambda: shutil.move(str(current), str(original)))
+            _retry_sharing_violation(lambda: _move(current, original))
             verify_content(original, identity)
             return "source restored to its original location"
         except Exception as exc:  # noqa: BLE001 - preserve the primary failure while reporting rollback state.
